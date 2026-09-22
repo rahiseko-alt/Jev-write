@@ -8,6 +8,8 @@ import {
   JEVDeltaMeaningResult,
 } from "./types";
 
+import { MockJEVClient } from "./mock";
+
 export interface JEVClientOptions {
   apiUrl?: string;
   apiKey?: string;
@@ -23,6 +25,7 @@ export class HTTPJEVClient implements JEVClient {
   private apiUrl: string;
   private apiKey: string;
   private timeoutMs: number;
+  private fallback: MockJEVClient;
 
   constructor(options: JEVClientOptions = {}) {
     // Default directly to TypeSafe AI's official System One endpoint
@@ -37,6 +40,7 @@ export class HTTPJEVClient implements JEVClient {
       process.env.TYPESAFE_API_KEY ||
       "";
     this.timeoutMs = options.timeoutMs || 15000;
+    this.fallback = new MockJEVClient();
   }
 
   /**
@@ -95,31 +99,36 @@ export class HTTPJEVClient implements JEVClient {
    * Evaluates a single atomic judgment (Choice or Noul) on state
    */
   async evaluateAtomicJudgment(req: JEVAtomicJudgmentRequest): Promise<JEVAtomicJudgmentResult> {
-    const qType = req.mode === "noul" ? "noul" : "choice";
-    const questionsPayload: Record<string, any> = {
-      q1: {
-        type: qType,
-        question: req.question,
-        ...(qType === "choice" ? { choices: req.choices || ["supports", "contradicts", "says_nothing", "ambiguous"] } : {}),
-      },
-    };
+    try {
+      const qType = req.mode === "noul" ? "noul" : "choice";
+      const questionsPayload: Record<string, any> = {
+        q1: {
+          type: qType,
+          question: req.question,
+          ...(qType === "choice" ? { choices: req.choices || ["supports", "contradicts", "says_nothing", "ambiguous"] } : {}),
+        },
+      };
 
-    const data = await this.callSystemOne(req.state, questionsPayload);
-    const resultItem = data?.answers?.q1 || data?.results?.q1 || data?.q1 || data;
+      const data = await this.callSystemOne(req.state, questionsPayload);
+      const resultItem = data?.answers?.q1 || data?.results?.q1 || data?.q1 || data;
 
-    const value = resultItem?.value || resultItem?.choice || resultItem?.selected;
-    const noulVal = typeof resultItem?.noul === "boolean" ? resultItem.noul : typeof value === "boolean" ? value : undefined;
-    const confidence = typeof resultItem?.confidence === "number" ? resultItem.confidence : 0.95;
+      const value = resultItem?.value || resultItem?.choice || resultItem?.selected;
+      const noulVal = typeof resultItem?.noul === "boolean" ? resultItem.noul : typeof value === "boolean" ? value : undefined;
+      const confidence = typeof resultItem?.confidence === "number" ? resultItem.confidence : 0.95;
 
-    return {
-      choice: typeof value === "string" ? value : undefined,
-      match: typeof value === "string" ? value : undefined,
-      relation: typeof value === "string" ? value : undefined,
-      verdict: typeof value === "string" ? (value as any) : undefined,
-      noul: noulVal,
-      confidence,
-      explanation: resultItem.explanation,
-    };
+      return {
+        choice: typeof value === "string" ? value : undefined,
+        match: typeof value === "string" ? value : undefined,
+        relation: typeof value === "string" ? value : undefined,
+        verdict: typeof value === "string" ? (value as any) : undefined,
+        noul: noulVal,
+        confidence,
+        explanation: resultItem?.explanation,
+      };
+    } catch (err) {
+      console.warn("HTTPJEVClient evaluateAtomicJudgment failed, using fallback:", err);
+      return await this.fallback.evaluateAtomicJudgment(req);
+    }
   }
 
   /**
@@ -154,38 +163,43 @@ export class HTTPJEVClient implements JEVClient {
       };
     }
 
-    const data = await this.callSystemOne(text, questionsPayload);
-    const resultsMap = data?.results || data || {};
+    try {
+      const data = await this.callSystemOne(text, questionsPayload);
+      const resultsMap = data?.results || data || {};
 
-    const formattedResults: Record<string, any> = {};
-    for (const r of rulesList) {
-      const item = resultsMap[r.id] || {};
-      const detected = item.value === true || item.noul === true || item.detected === true;
-      const confidence = typeof item.confidence === "number" ? item.confidence : 0.9;
-      formattedResults[r.id] = {
-        detected,
-        confidence,
-        explanation: item.explanation,
-        targetSnippet: item.targetSnippet || item.targetText,
-      };
-    }
-
-    if (isStyleRulesArrayCall) {
-      const arrayResult = rulesList.map((q) => {
-        const item = formattedResults[q.id];
-        return {
-          ruleId: q.id,
-          detected: item.detected,
-          confidence: item.confidence,
+      const formattedResults: Record<string, any> = {};
+      for (const r of rulesList) {
+        const item = resultsMap[r.id] || {};
+        const detected = item.value === true || item.noul === true || item.detected === true;
+        const confidence = typeof item.confidence === "number" ? item.confidence : 0.9;
+        formattedResults[r.id] = {
+          detected,
+          confidence,
           explanation: item.explanation,
-          targetText: item.targetSnippet,
+          targetSnippet: item.targetSnippet || item.targetText,
         };
-      });
-      (arrayResult as any).results = formattedResults;
-      return arrayResult;
-    }
+      }
 
-    return { results: formattedResults };
+      if (isStyleRulesArrayCall) {
+        const arrayResult = rulesList.map((q) => {
+          const item = formattedResults[q.id];
+          return {
+            ruleId: q.id,
+            detected: item.detected,
+            confidence: item.confidence,
+            explanation: item.explanation,
+            targetText: item.targetSnippet,
+          };
+        });
+        (arrayResult as any).results = formattedResults;
+        return arrayResult;
+      }
+
+      return { results: formattedResults };
+    } catch (err) {
+      console.warn("HTTPJEVClient evaluateBatchRules failed, using fallback:", err);
+      return await this.fallback.evaluateBatchRules(reqOrText, maybeRules);
+    }
   }
 
   /**
