@@ -499,6 +499,52 @@ async function deriveCorrectionFromText(
 
   let corrected = claim.normalizedText || claim.originalText;
 
+  // Generic spec unit matching between claim and evidence:
+  // mm, g, インチ, Hz, GB, TB, mAh, fps, 人, 円, 倍, MP, Gbps
+  const specUnits = ["円", "mm", "g", "インチ", "Hz", "GB", "TB", "mAh", "fps", "人", "倍", "MP", "Gbps"];
+  for (const unit of specUnits) {
+    const unitRegex = new RegExp(`(\\d+[\\d,.]*)\\s*${unit}`, "gi");
+    let match: RegExpExecArray | null;
+    while ((match = unitRegex.exec(corrected)) !== null) {
+      const claimVal = match[1];
+      const evRegex = new RegExp(`(\\d+[\\d,.]*)\\s*${unit}`, "gi");
+      let evMatch: RegExpExecArray | null;
+      while ((evMatch = evRegex.exec(text)) !== null) {
+        const evVal = evMatch[1];
+        if (evVal.replace(/,/g, "") !== claimVal.replace(/,/g, "")) {
+          const wrongSegment = `${claimVal}${unit}`;
+          const rightSegment = `${evVal}${unit}`;
+          if (corrected.includes(wrongSegment)) {
+            corrected = corrected.replace(wrongSegment, rightSegment);
+            break;
+          }
+        }
+      }
+    }
+  }
+
+  // Resolution replacement (e.g. 1920×1200 -> 1920×1080)
+  const resMatch = corrected.match(/(\d{3,4})\s*[×x]\s*(\d{3,4})/i);
+  const evResMatch = text.match(/(\d{3,4})\s*[×x]\s*(\d{3,4})/i);
+  if (resMatch && evResMatch) {
+    const wrongRes = resMatch[0];
+    const rightRes = evResMatch[0];
+    if (wrongRes !== rightRes) {
+      corrected = corrected.replace(wrongRes, rightRes);
+    }
+  }
+
+  // Wi-Fi standard replacement (e.g. Wi-Fi 6E -> Wi-Fi 6)
+  const wifiMatch = corrected.match(/wi-?fi\s*(\d+[a-z]*)/i);
+  const evWifiMatch = text.match(/wi-?fi\s*(\d+[a-z]*)/i);
+  if (wifiMatch && evWifiMatch) {
+    const wrongWifi = wifiMatch[0];
+    const rightWifi = evWifiMatch[0];
+    if (wrongWifi.toLowerCase() !== rightWifi.toLowerCase()) {
+      corrected = corrected.replace(wrongWifi, rightWifi);
+    }
+  }
+
   // General spec/number/date corrections based on evidence content
   const specPairs = [
     { wrong: /2025年4月3日/g, right: "2025年4月2日", evCheck: /4月2日/ },

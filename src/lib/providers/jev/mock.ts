@@ -195,7 +195,46 @@ export class MockJEVClient implements JEVClient {
           (/2024\s*年/.test(claimText) && /2025\s*年/.test(evText)) ||
           (/2025\s*年\s*8\s*月/.test(claimText) && evText.includes("未発表"));
 
+        // Generic numerical / unit specification conflict
+        let hasGenericSpecConflict = false;
+        const specUnits = ["円", "mm", "g", "インチ", "hz", "gb", "tb", "mah", "fps", "人", "倍", "mp", "gbps"];
+        for (const unit of specUnits) {
+          const unitRegex = new RegExp(`(\\d+[\\d,.]*)\\s*${unit}`, "gi");
+          let claimMatch: RegExpExecArray | null;
+          while ((claimMatch = unitRegex.exec(claimText)) !== null) {
+            const claimVal = claimMatch[1].replace(/,/g, "");
+            const evUnitRegex = new RegExp(`(\\d+[\\d,.]*)\\s*${unit}`, "gi");
+            let evMatch: RegExpExecArray | null;
+            while ((evMatch = evUnitRegex.exec(evText)) !== null) {
+              const evVal = evMatch[1].replace(/,/g, "");
+              if (claimVal !== evVal) {
+                hasGenericSpecConflict = true;
+                break;
+              }
+            }
+            if (hasGenericSpecConflict) break;
+          }
+          if (hasGenericSpecConflict) break;
+        }
+
+        // Resolution conflict (e.g. 1920×1200 vs 1920×1080)
+        const claimResMatch = claimText.match(/(\d{3,4})\s*[×x]\s*(\d{3,4})/i);
+        const evResMatch = evText.match(/(\d{3,4})\s*[×x]\s*(\d{3,4})/i);
+        if (claimResMatch && evResMatch) {
+          if (claimResMatch[1] !== evResMatch[1] || claimResMatch[2] !== evResMatch[2]) {
+            hasGenericSpecConflict = true;
+          }
+        }
+
+        // Wi-Fi standard conflict (e.g. Wi-Fi 6E vs Wi-Fi 6, Wi-Fi 7 vs Wi-Fi 6E)
+        const claimWifi = claimText.match(/wi-?fi\s*(\d+[a-z]*)/i);
+        const evWifi = evText.match(/wi-?fi\s*(\d+[a-z]*)/i);
+        if (claimWifi && evWifi && claimWifi[1].toLowerCase() !== evWifi[1].toLowerCase()) {
+          hasGenericSpecConflict = true;
+        }
+
         const hasSpecConflict =
+          hasGenericSpecConflict ||
           (/20\s*mp/i.test(claimText) && /24\s*mp/i.test(evText)) ||
           (/6\s*倍/.test(claimText) && /5\s*倍/.test(evText)) ||
           (/20\s*gbps/i.test(claimText) && (/(?:10\s*gbps|10\s*gb\/s|10\s*ギガビット)/i.test(evText))) ||

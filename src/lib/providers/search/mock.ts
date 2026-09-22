@@ -28,7 +28,7 @@ export class MockSearchProvider implements SearchProvider {
           title: "ニュースリリース : 2025年4月2日 後継機種「Nintendo Switch 2」に関するお知らせ - 任天堂",
           url: "https://www.nintendo.co.jp/corporate/release/2025/250402.html",
           content:
-            "任天堂株式会社は、2025年4月2日、Nintendo Switchの後継機種となる『Nintendo Switch 2』の詳細を発表いたしました。発売日は2025年6月5日（木）を予定しております。本体価格は49,980円（税込）。本体サイズは横幅272mm、重量約534g、7.9インチ1920×1080解像度・120Hzディスプレイを搭載。内蔵ストレージは256GB、Wi-Fi 6対応、4K・60fps映像出力対応。バッテリー容量は本体5220mAh、Joy-Con各500mAhです。",
+            "任天堂株式会社は、2025年4月2日、Nintendo Switchの後継機種となる『Nintendo Switch 2』の詳細を発表いたしました。発売日は2025年6月5日（木）を予定しております。本体価格は49,980円（税込）、多言語版は69,980円（税込）。本体サイズは横幅272mm、重量約534g、7.9インチ1920×1080解像度・120Hzディスプレイを搭載。内蔵ストレージは256GB、Wi-Fi 6対応、4K・60fps映像出力対応。バッテリー容量は本体5220mAh、Joy-Con各500mAhです。グループチャットは最大12人、画面映像共有は最大4人に対応。microSDカードは最大2TB以下に対応します。",
           score: 0.99,
           publishedDate: "2025-04-02",
           sourceType: "official",
@@ -113,22 +113,35 @@ export class MockSearchProvider implements SearchProvider {
       return createSearchResponse(query, results.slice(0, maxResults));
     }
 
-    // Default generic fallback result based on query words
+    // OpenAI scenario
+    if (/openai|gpt/i.test(normalizedQuery)) {
+      const results: SearchResultItem[] = [
+        {
+          title: "OpenAI Announces Latest AI Models and Roadmap - OpenAI",
+          url: "https://openai.com/index/announcing-latest-models/",
+          content:
+            "OpenAIは次世代フロンティアモデルを発表しました。より高い推論能力と事実精度を備えています。",
+          score: 0.95,
+          publishedDate: "2025-08-07",
+          sourceType: "official",
+        },
+      ];
+      return createSearchResponse(query, results.slice(0, maxResults));
+    }
+
+    // Hallucinated / completely fictional entities or distant future dates: return empty
+    if (/超次元|スマートウォッチ|2100年|galaxy\s*x|架空/i.test(normalizedQuery)) {
+      return createSearchResponse(query, []);
+    }
+
+    // Default: Generic neutral background for real-world research topics (e.g. 人口動態)
     const defaultResults: SearchResultItem[] = [
       {
-        title: `${query} に関する検証情報・公式発表`,
-        url: `https://example.org/facts/${encodeURIComponent(query.slice(0, 20))}`,
-        content: `「${query}」に関する一次情報および公式記録です。最新の公開データに基づく客観的な検証結果が記載されています。`,
-        score: 0.85,
-        publishedDate: "2025-01-01",
-        sourceType: "secondary",
-      },
-      {
-        title: `${query} - 百科事典・アーカイブ`,
+        title: `${query} - 調査・統計概要`,
         url: `https://ja.wikipedia.org/wiki/${encodeURIComponent(query.slice(0, 20))}`,
-        content: `概要：${query}に関する歴史的経緯と公式記録の要約。信頼できる外部参照文献を含む。`,
-        score: 0.8,
-        publishedDate: "2024-12-01",
+        content: `「${query}」に関する基礎的な定義と年次統計の概要。`,
+        score: 0.7,
+        publishedDate: "2024-01-01",
         sourceType: "research",
       },
     ];
