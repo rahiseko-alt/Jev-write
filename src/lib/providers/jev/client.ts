@@ -124,6 +124,13 @@ export class HTTPJEVClient implements JEVClient {
       }
       const confidence = typeof resultItem?.confidence === "number" ? resultItem.confidence : 0.95;
 
+      // Objective Invariant Guard: If deterministic evaluation detects a clear date/spec contradiction,
+      // override any lenient or ambiguous external model response.
+      const fallbackResult = await this.fallback.evaluateAtomicJudgment(req);
+      if (fallbackResult.choice === "contradicts") {
+        return fallbackResult;
+      }
+
       return {
         choice: typeof value === "string" ? value : undefined,
         match: typeof value === "string" ? value : undefined,

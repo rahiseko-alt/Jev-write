@@ -364,6 +364,12 @@ async function verifyClaim(params: {
           if (relation === "contradicts" && !correctedClaim) {
             correctedClaim = await deriveCorrectionFromText(content, claim, llm);
           }
+
+          // If official/primary source confirms the claim, stop searching lower-priority sources
+          const sType = mapDomainToSourceType(fetched.url);
+          if (relation === "supports" && (sType === "official" || sType === "primary")) {
+            break;
+          }
         }
       } catch (err) {
         console.warn(`Fetch failed for ${res.url}:`, err);
