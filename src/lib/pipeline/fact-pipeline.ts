@@ -727,7 +727,14 @@ function extractRelevantExcerpt(content: string, claim: Claim, maxLength = 2500)
 function mapDomainToSourceType(url: string): SourceType {
   try {
     const hostname = new URL(url).hostname.toLowerCase();
-    if (hostname.includes("apple.com") || hostname.includes("go.jp") || hostname.includes(".gov")) {
+    if (
+      hostname.includes("apple.com") ||
+      hostname.includes("nintendo.co.jp") ||
+      hostname.includes("nintendo.com") ||
+      hostname.includes("sony.com") ||
+      hostname.includes("go.jp") ||
+      hostname.includes(".gov")
+    ) {
       return "official";
     }
     if (hostname.includes("factcheck") || hostname.includes("reuters.com")) {

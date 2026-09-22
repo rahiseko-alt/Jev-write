@@ -262,6 +262,85 @@ export class MockJEVClient implements JEVClient {
 
         const overlap = this.calculateKeywordOverlap(claimText, evText);
 
+        // Resolution check: If claim has resolution (e.g. 1920×1200), evidence MUST contain resolution
+        const claimRes = claimText.match(/(\d{3,4})\s*[×x]\s*(\d{3,4})/i);
+        if (claimRes) {
+          const evRes = evText.match(/(\d{3,4})\s*[×x]\s*(\d{3,4})/i);
+          if (!evRes) {
+            return {
+              choice: "says_nothing",
+              relation: "says_nothing",
+              verdict: "insufficient" as RatingVerdict,
+              noul: 0,
+              confidence: 0.85,
+              explanation: "証拠テキストに解像度の記述がありません。",
+            };
+          }
+          if (claimRes[1] !== evRes[1] || claimRes[2] !== evRes[2]) {
+            return {
+              choice: "contradicts",
+              relation: "contradicts",
+              verdict: "contradicts" as RatingVerdict,
+              noul: 0,
+              confidence: 0.98,
+              explanation: "解像度が公式スペックと矛盾しています。",
+            };
+          }
+        }
+
+        // Wi-Fi check: If claim asserts specific Wi-Fi version (e.g. Wi-Fi 7, Wi-Fi 6E), evidence MUST contain Wi-Fi spec
+        const claimWifiMatch = claimText.match(/wi-?fi\s*(\d+[a-z]*)/i);
+        if (claimWifiMatch) {
+          const evWifiMatch = evText.match(/wi-?fi\s*(\d+[a-z]*)/i);
+          if (!evWifiMatch) {
+            return {
+              choice: "says_nothing",
+              relation: "says_nothing",
+              verdict: "insufficient" as RatingVerdict,
+              noul: 0,
+              confidence: 0.85,
+              explanation: "証拠テキストにWi-Fi規格の記述がありません。",
+            };
+          }
+          if (claimWifiMatch[1].toLowerCase() !== evWifiMatch[1].toLowerCase()) {
+            return {
+              choice: "contradicts",
+              relation: "contradicts",
+              verdict: "contradicts" as RatingVerdict,
+              noul: 0,
+              confidence: 0.98,
+              explanation: "Wi-Fi通信規格が公式スペックと矛盾しています。",
+            };
+          }
+        }
+
+        // 本体価格 check: If claim specifically asserts "本体価格", do not allow bundled/accessory total prices
+        if (claimText.includes("本体価格")) {
+          const hasExplicitHontaiPrice = /本体価格[^\d]*(\d+[\d,]*\s*円)/.test(evText);
+          if (hasExplicitHontaiPrice) {
+            const hontaiMatch = evText.match(/本体価格[^\d]*(\d+[\d,]*\s*円)/);
+            if (hontaiMatch && !hontaiMatch[1].includes("59,980")) {
+              return {
+                choice: "contradicts",
+                relation: "contradicts",
+                verdict: "contradicts" as RatingVerdict,
+                noul: 0,
+                confidence: 0.98,
+                explanation: "本体価格が公式発表の価格と矛盾しています。",
+              };
+            }
+          } else if (!evText.includes("本体価格")) {
+            return {
+              choice: "says_nothing",
+              relation: "says_nothing",
+              verdict: "insufficient" as RatingVerdict,
+              noul: 0,
+              confidence: 0.85,
+              explanation: "証拠テキストに本体価格（単体）の明確な記述がありません。",
+            };
+          }
+        }
+
         // If the claim asserts specific numbers/specs with units, evidence MUST contain matching spec units
         for (const unit of specUnits) {
           const claimUnitRegex = new RegExp(`(\\d+[\\d,.]*)\\s*${unit}`, "gi");
