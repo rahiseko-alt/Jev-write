@@ -11,12 +11,12 @@ export * from "./mock";
  * otherwise returns a MockSearchProvider for offline development and testing.
  */
 export function getSearchProvider(options: TavilySearchOptions = {}): SearchProvider {
-  const apiKey = options.apiKey !== undefined ? options.apiKey : process.env.TAVILY_API_KEY;
+  const apiKey = options.apiKey !== undefined ? options.apiKey : (process.env.TAVILY_API_KEY || process.env.tavily);
   if (apiKey && apiKey.trim().length > 0) {
-    return new TavilySearchProvider(options);
+    return new TavilySearchProvider({ ...options, apiKey });
   }
   if (process.env.NODE_ENV === 'production') {
-    throw new Error('TAVILY_API_KEY is required in production.');
+    throw new Error('Tavily API key is required in production. Set TAVILY_API_KEY or tavily.');
   }
   return new MockSearchProvider();
 }
