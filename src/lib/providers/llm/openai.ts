@@ -9,6 +9,7 @@ export interface OpenAILLMOptions {
 }
 
 export class OpenAILLMProvider implements LLMProvider {
+  private static hasQuotaExhausted = false;
   private apiKey: string;
   private model: string;
   private baseUrl: string;
@@ -22,6 +23,10 @@ export class OpenAILLMProvider implements LLMProvider {
   }
 
   private async callChatCompletion(messages: Array<{ role: string; content: string }>, jsonMode = false): Promise<string> {
+    if (OpenAILLMProvider.hasQuotaExhausted) {
+      throw new Error("OpenAI API quota exhausted (cached). Falling back to mock.");
+    }
+
     if (!this.apiKey) {
       throw new Error("OpenAI API key is missing. Set OPENAI_API_KEY in environment or constructor.");
     }
@@ -47,6 +52,13 @@ export class OpenAILLMProvider implements LLMProvider {
 
     if (!response.ok) {
       const errorText = await response.text().catch(() => "");
+      if (
+        response.status === 429 ||
+        errorText.includes("credit_balance_exhausted") ||
+        errorText.includes("insufficient_quota")
+      ) {
+        OpenAILLMProvider.hasQuotaExhausted = true;
+      }
       throw new Error(`OpenAI API error (${response.status} ${response.statusText}): ${errorText}`);
     }
 

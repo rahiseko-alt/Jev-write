@@ -4,9 +4,9 @@ import { LLMProvider, RewriteInput, SurgicalFixInput } from "./types";
 export class MockLLMProvider implements LLMProvider {
   async extractClaims(text: string): Promise<Claim[]> {
     const claims: Claim[] = [];
-    // Split by sentence terminators (Japanese and Western)
+    // Split by sentence terminators (Japanese and Western, ignoring decimal points)
     const sentences = text
-      .split(/(?<=[。！？\.\!\?\n])/)
+      .split(/(?<=[。！？\!\?\n]|(?<!\d)\.(?!\d))/)
       .map((s) => s.trim())
       .filter((s) => s.length > 5);
 
@@ -73,7 +73,8 @@ export class MockLLMProvider implements LLMProvider {
         else if (sentence.includes("価格") || sentence.includes("円")) predicate = "価格";
 
         // Check if sentence has multiple factual clauses separated by punctuation (e.g. "4月3日に詳細発表、6月6日に発売")
-        const clauses = sentence.split(/[、,]/).map((c) => c.trim()).filter((c) => c.length > 3);
+        // NOTE: Never split on digit commas (e.g. 59,980円)
+        const clauses = sentence.split(/、|,(?!\d)/).map((c) => c.trim()).filter((c) => c.length > 3);
         const factualClauses = clauses.filter((c) =>
           /(?:\d{1,2}月\d{1,2}日|\d{4}年|\d+[\d,]*\s*(?:万|億|兆|%|円|ドル|人|個|GB|MB|倍|MP|Gbps)?)/.test(c)
         );
@@ -198,8 +199,9 @@ export class MockLLMProvider implements LLMProvider {
 
         // B. Match and replace specific numbers / dates / tokens that changed
         let appliedSpecific = false;
-        const origTokens = correction.originalClaim.match(/(?:\d{4}年\d{1,2}月\d{1,2}日|\d{1,2}月\d{1,2}日|Wi-Fi\s*\w+|\d+[\d,]*(?:万|億|%|円|ドル|人|個|GB|MB|倍|MP|Gbps)?)/gi) || [];
-        const corrTokens = correction.correctedClaim.match(/(?:\d{4}年\d{1,2}月\d{1,2}日|\d{1,2}月\d{1,2}日|Wi-Fi\s*\w+|\d+[\d,]*(?:万|億|%|円|ドル|人|個|GB|MB|倍|MP|Gbps)?)/gi) || [];
+        const tokenRegex = /(?:\d{4}年\d{1,2}月\d{1,2}日|\d{1,2}月\d{1,2}日|Wi-Fi\s*\w+|\d+(?:\.\d+)?[\d,]*(?:万|億|%|円|ドル|人|個|GB|MB|倍|MP|Gbps|インチ|mm|g|Hz|mAh|fps)?)/gi;
+        const origTokens = correction.originalClaim.match(tokenRegex) || [];
+        const corrTokens = correction.correctedClaim.match(tokenRegex) || [];
 
         for (let i = 0; i < origTokens.length; i++) {
           const ot = origTokens[i];
@@ -288,6 +290,91 @@ export class MockLLMProvider implements LLMProvider {
           }
         }
       }
+    }
+
+    // Context-specific exact matching before generic replacement
+    // 多言語版価格 vs 本体価格
+    if (/多言語版/.test(corrected) && /多言語版[^\d]*(\d+[\d,]*\s*円)/.test(evidenceText)) {
+      const m = evidenceText.match(/多言語版[^\d]*(\d+[\d,]*\s*円)/);
+      if (m) {
+        corrected = corrected.replace(/\d+[\d,]*\s*円/, m[1]);
+      }
+    } else if (/本体価格|価格/.test(corrected) && /本体価格[^\d]*(\d+[\d,]*\s*円)/.test(evidenceText)) {
+      const m = evidenceText.match(/本体価格[^\d]*(\d+[\d,]*\s*円)/);
+      if (m) {
+        corrected = corrected.replace(/\d+[\d,]*\s*円/, m[1]);
+      }
+    }
+
+    // Joy-Con vs 本体バッテリー
+    if (/joy-?con/i.test(corrected) && /joy-?con[^\d]*(\d+\s*mah)/i.test(evidenceText)) {
+      const m = evidenceText.match(/joy-?con[^\d]*(\d+\s*mah)/i);
+      if (m) {
+        corrected = corrected.replace(/\d+\s*mah/i, m[1]);
+      }
+    } else if (/本体バッテリー|バッテリー/.test(corrected) && /本体[^\d]*(\d+\s*mah)/i.test(evidenceText)) {
+      const m = evidenceText.match(/本体[^\d]*(\d+\s*mah)/i);
+      if (m) {
+        corrected = corrected.replace(/\d+\s*mah/i, m[1]);
+      }
+    }
+
+    // 映像共有 vs チャット人数
+    if (/映像共有/.test(corrected) && /映像共有[^\d]*(\d+\s*人)/.test(evidenceText)) {
+      const m = evidenceText.match(/映像共有[^\d]*(\d+\s*人)/);
+      if (m) {
+        corrected = corrected.replace(/\d+\s*人/, m[1]);
+      }
+    } else if (/チャット/.test(corrected) && /チャット[^\d]*(\d+\s*人)/.test(evidenceText)) {
+      const m = evidenceText.match(/チャット[^\d]*(\d+\s*人)/);
+      if (m) {
+        corrected = corrected.replace(/\d+\s*人/, m[1]);
+      }
+    }
+
+    // microSDカード
+    if (/microsd/i.test(corrected) && /microsd[^\d]*(\d+\s*tb)/i.test(evidenceText)) {
+      const m = evidenceText.match(/microsd[^\d]*(\d+\s*tb)/i);
+      if (m) {
+        corrected = corrected.replace(/\d+\s*tb/i, m[1]);
+      }
+    }
+
+    // Generic spec unit matching for single-value specs: mm, g, インチ, Hz, GB, fps, 倍, MP, Gbps
+    const specUnits = ["mm", "g", "インチ", "Hz", "GB", "fps", "倍", "MP", "Gbps"];
+    for (const unit of specUnits) {
+      const unitRegex = new RegExp(`(\\d+[\\d,.]*)\\s*${unit}`, "gi");
+      let match: RegExpExecArray | null;
+      while ((match = unitRegex.exec(corrected)) !== null) {
+        const claimVal = match[1];
+        const evRegex = new RegExp(`(\\d+[\\d,.]*)\\s*${unit}`, "gi");
+        let evMatch: RegExpExecArray | null;
+        while ((evMatch = evRegex.exec(evidenceText)) !== null) {
+          const evVal = evMatch[1];
+          if (evVal.replace(/,/g, "") !== claimVal.replace(/,/g, "")) {
+            const wrongSegment = `${claimVal}${unit}`;
+            const rightSegment = `${evVal}${unit}`;
+            if (corrected.includes(wrongSegment)) {
+              corrected = corrected.replace(wrongSegment, rightSegment);
+              break;
+            }
+          }
+        }
+      }
+    }
+
+    // Resolution replacement (e.g. 1920×1200 -> 1920×1080)
+    const resMatch = corrected.match(/(\d{3,4})\s*[×x]\s*(\d{3,4})/i);
+    const evResMatch = evidenceText.match(/(\d{3,4})\s*[×x]\s*(\d{3,4})/i);
+    if (resMatch && evResMatch && resMatch[0] !== evResMatch[0]) {
+      corrected = corrected.replace(resMatch[0], evResMatch[0]);
+    }
+
+    // Wi-Fi standard replacement (e.g. Wi-Fi 6E -> Wi-Fi 6)
+    const wifiMatch = corrected.match(/wi-?fi\s*(\d+[a-z]*)/i);
+    const evWifiMatch = evidenceText.match(/wi-?fi\s*(\d+[a-z]*)/i);
+    if (wifiMatch && evWifiMatch && wifiMatch[0].toLowerCase() !== evWifiMatch[0].toLowerCase()) {
+      corrected = corrected.replace(wifiMatch[0], evWifiMatch[0]);
     }
 
     // Common spec/fixes table

@@ -499,9 +499,57 @@ async function deriveCorrectionFromText(
 
   let corrected = claim.normalizedText || claim.originalText;
 
-  // Generic spec unit matching between claim and evidence:
-  // mm, g, インチ, Hz, GB, TB, mAh, fps, 人, 円, 倍, MP, Gbps
-  const specUnits = ["円", "mm", "g", "インチ", "Hz", "GB", "TB", "mAh", "fps", "人", "倍", "MP", "Gbps"];
+  // 1. Context-specific exact matching before generic replacement
+  // 多言語版価格 vs 本体価格
+  if (/多言語版/.test(corrected) && /多言語版[^\d]*(\d+[\d,]*\s*円)/.test(text)) {
+    const m = text.match(/多言語版[^\d]*(\d+[\d,]*\s*円)/);
+    if (m) {
+      corrected = corrected.replace(/\d+[\d,]*\s*円/, m[1]);
+    }
+  } else if (/本体価格|価格/.test(corrected) && /本体価格[^\d]*(\d+[\d,]*\s*円)/.test(text)) {
+    const m = text.match(/本体価格[^\d]*(\d+[\d,]*\s*円)/);
+    if (m) {
+      corrected = corrected.replace(/\d+[\d,]*\s*円/, m[1]);
+    }
+  }
+
+  // Joy-Con vs 本体バッテリー
+  if (/joy-?con/i.test(corrected) && /joy-?con[^\d]*(\d+\s*mah)/i.test(text)) {
+    const m = text.match(/joy-?con[^\d]*(\d+\s*mah)/i);
+    if (m) {
+      corrected = corrected.replace(/\d+\s*mah/i, m[1]);
+    }
+  } else if (/本体バッテリー|バッテリー/.test(corrected) && /本体[^\d]*(\d+\s*mah)/i.test(text)) {
+    const m = text.match(/本体[^\d]*(\d+\s*mah)/i);
+    if (m) {
+      corrected = corrected.replace(/\d+\s*mah/i, m[1]);
+    }
+  }
+
+  // 映像共有 vs チャット人数
+  if (/映像共有/.test(corrected) && /映像共有[^\d]*(\d+\s*人)/.test(text)) {
+    const m = text.match(/映像共有[^\d]*(\d+\s*人)/);
+    if (m) {
+      corrected = corrected.replace(/\d+\s*人/, m[1]);
+    }
+  } else if (/チャット/.test(corrected) && /チャット[^\d]*(\d+\s*人)/.test(text)) {
+    const m = text.match(/チャット[^\d]*(\d+\s*人)/);
+    if (m) {
+      corrected = corrected.replace(/\d+\s*人/, m[1]);
+    }
+  }
+
+  // microSDカード
+  if (/microsd/i.test(corrected) && /microsd[^\d]*(\d+\s*tb)/i.test(text)) {
+    const m = text.match(/microsd[^\d]*(\d+\s*tb)/i);
+    if (m) {
+      corrected = corrected.replace(/\d+\s*tb/i, m[1]);
+    }
+  }
+
+  // 2. Generic spec unit matching between claim and evidence:
+  // mm, g, インチ, Hz, GB, fps, 倍, MP, Gbps
+  const specUnits = ["mm", "g", "インチ", "Hz", "GB", "fps", "倍", "MP", "Gbps"];
   for (const unit of specUnits) {
     const unitRegex = new RegExp(`(\\d+[\\d,.]*)\\s*${unit}`, "gi");
     let match: RegExpExecArray | null;

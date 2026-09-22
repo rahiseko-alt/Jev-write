@@ -203,16 +203,22 @@ export class MockJEVClient implements JEVClient {
           let claimMatch: RegExpExecArray | null;
           while ((claimMatch = unitRegex.exec(claimText)) !== null) {
             const claimVal = claimMatch[1].replace(/,/g, "");
+            let hasMatchingValue = false;
+            let hasAnyValueInEv = false;
             const evUnitRegex = new RegExp(`(\\d+[\\d,.]*)\\s*${unit}`, "gi");
             let evMatch: RegExpExecArray | null;
             while ((evMatch = evUnitRegex.exec(evText)) !== null) {
+              hasAnyValueInEv = true;
               const evVal = evMatch[1].replace(/,/g, "");
-              if (claimVal !== evVal) {
-                hasGenericSpecConflict = true;
+              if (claimVal === evVal) {
+                hasMatchingValue = true;
                 break;
               }
             }
-            if (hasGenericSpecConflict) break;
+            if (hasAnyValueInEv && !hasMatchingValue) {
+              hasGenericSpecConflict = true;
+              break;
+            }
           }
           if (hasGenericSpecConflict) break;
         }
