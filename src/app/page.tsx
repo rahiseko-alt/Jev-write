@@ -190,18 +190,22 @@ export default function HomePage() {
     };
   }, [issues]);
 
-  // Revised lines based on adopted status
+  // Revised lines based on analysisResult.revisedText and adopted status
   const revisedLines = useMemo(() => {
-    if (!analysisResult) return originalLines;
-    return originalLines.map((origLine, idx) => {
-      // Look for an issue associated with this line
-      const matchedIssue = issues.find((issue) => issue.lineIndex === idx && issue.adopted);
-      if (matchedIssue && matchedIssue.revisedText && matchedIssue.originalText) {
-        if (origLine.includes(matchedIssue.originalText)) {
-          return origLine.replace(matchedIssue.originalText, matchedIssue.revisedText);
-        }
+    if (!analysisResult || !analysisResult.revisedText) return originalLines;
+
+    const pipelineRevised = analysisResult.revisedText
+      .split(/(?<=[。！？\n])/)
+      .map((l) => l.trim())
+      .filter(Boolean);
+
+    // If any issue was explicitly un-adopted by the user, revert that line
+    return pipelineRevised.map((revLine, idx) => {
+      const matchedIssue = issues.find((issue) => issue.lineIndex === idx);
+      if (matchedIssue && matchedIssue.adopted === false && originalLines[idx]) {
+        return originalLines[idx];
       }
-      return origLine;
+      return revLine;
     });
   }, [originalLines, issues, analysisResult]);
 
