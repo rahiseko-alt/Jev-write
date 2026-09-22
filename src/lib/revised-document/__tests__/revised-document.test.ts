@@ -899,3 +899,57 @@ describe("locating the changed wording", () => {
     expect(view.title).toBe("PlayStation 5 Proは家庭用ゲーム機です。");
   });
 });
+
+describe("Finding headings", () => {
+  it("names the kind and the words that changed", () => {
+    const original = "価格は10万円である。";
+
+    const view = buildRevisedDocument({
+      originalText: original,
+      analysis: analysis(original, "価格は12万円である。", [
+        claim("価格は10万円", "CONTRADICTED", "価格は12万円"),
+      ]),
+      adoption: {},
+    });
+
+    expect(view.findings[0].title).toBe("事実の誤り: 12");
+  });
+
+  it("names the kind and the claim for an unverified one", () => {
+    const original = "価格は10万円である。";
+
+    const view = buildRevisedDocument({
+      originalText: original,
+      analysis: analysis(original, original, [claim("価格は10万円である。", "INSUFFICIENT")]),
+      adoption: {},
+    });
+
+    expect(view.findings[0].title).toBe("根拠が見つかりません: 価格は10万円である。");
+  });
+
+  it("is meaningful for an article the sample keywords never covered", () => {
+    const original = "売上は前年比120%だった。";
+
+    const view = buildRevisedDocument({
+      originalText: original,
+      analysis: analysis(original, "売上は前年比140%だった。", [
+        claim("売上は前年比120%", "CONTRADICTED", "売上は前年比140%"),
+      ]),
+      adoption: {},
+    });
+
+    expect(view.findings[0].title).toBe("事実の誤り: 140");
+  });
+
+  it("names the rule and its target for an AI-tell", () => {
+    const original = "まとめると、こうなる。";
+
+    const view = buildRevisedDocument({
+      originalText: original,
+      analysis: analysis(original, "こうなる。", [], [styleIssue("まとめると、こうなる。")]),
+      adoption: {},
+    });
+
+    expect(view.findings[0].title).toBe("無意味な反復: まとめると、こうなる。");
+  });
+});

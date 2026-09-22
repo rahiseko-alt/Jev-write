@@ -60,18 +60,30 @@ const MARK_STYLES: Record<MarkKind, { className: string; glyph: string; label: s
   },
 };
 
-function MarkedText({ segment }: { segment: Segment }) {
+function MarkedText({
+  segment,
+  onSelect,
+}: {
+  segment: Segment;
+  onSelect: (findingIds: string[]) => void;
+}) {
   if (!segment.mark) return <>{segment.text}</>;
 
-  const style = MARK_STYLES[segment.mark.kind];
+  const mark = segment.mark;
+  const style = MARK_STYLES[mark.kind];
+
   return (
-    <span className={`rounded px-0.5 ${style.className}`}>
+    <button
+      type="button"
+      onClick={() => onSelect(mark.findingIds)}
+      className={`rounded px-0.5 text-left ${style.className} hover:brightness-95 transition`}
+    >
       <span aria-hidden className="mr-0.5 text-[0.7em] align-super font-bold select-none">
         {style.glyph}
       </span>
       <span className="sr-only">{style.label}: </span>
       {segment.text}
-    </span>
+    </button>
   );
 }
 
@@ -111,6 +123,7 @@ export default function HomePage() {
   // Track user adoption state for each Finding
   const [adoptedOverrides, setAdoptedOverrides] = useState<Record<string, boolean>>({});
   const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle");
+  const [sheetOpen, setSheetOpen] = useState(false);
 
   // Everything the result screen renders comes from this one place.
   const revisedDocument = useMemo(
@@ -227,10 +240,195 @@ export default function HomePage() {
     }
   };
 
+  // Selecting a mark opens its Finding: a sheet on a phone, the panel on a
+  // wide screen. The document is never scrolled on the reader's behalf.
+  const handleSelectMark = (findingIds: string[]) => {
+    const at = filteredFindings.findIndex((finding) => findingIds.includes(finding.id));
+    if (at < 0) return;
+    setSelectedFindingIndex(at);
+    setSheetOpen(true);
+  };
+
   // Adoption toggles
   const handleAdoptToggle = (findingId: string, adopt: boolean) => {
     setAdoptedOverrides((prev) => ({ ...prev, [findingId]: adopt }));
   };
+
+  const findingDetail = currentFinding ? (
+                <div className="p-6 space-y-5">
+                  {/* Top Pagination Control */}
+                  <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                    <span className="text-xs font-mono font-bold text-slate-600">
+                      {selectedFindingIndex + 1} / {filteredFindings.length}
+                    </span>
+                    <div className="flex items-center gap-1">
+                      <button
+                        disabled={selectedFindingIndex === 0}
+                        onClick={() => setSelectedFindingIndex((prev) => Math.max(0, prev - 1))}
+                        className="p-1 text-slate-500 hover:text-slate-800 disabled:opacity-30 rounded hover:bg-slate-100"
+                      >
+                        <ChevronLeft className="w-4 h-4" />
+                      </button>
+                      <button
+                        disabled={selectedFindingIndex === filteredFindings.length - 1}
+                        onClick={() =>
+                          setSelectedFindingIndex((prev) => Math.min(filteredFindings.length - 1, prev + 1))
+                        }
+                        className="p-1 text-slate-500 hover:text-slate-800 disabled:opacity-30 rounded hover:bg-slate-100"
+                      >
+                        <ChevronRight className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Header Title & Category Badge */}
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      {currentFinding.kind === "corrected" ? (
+                        <AlertCircle className="w-5 h-5 text-red-500 shrink-0" />
+                      ) : currentFinding.kind === "ai-tell" ? (
+                        <Star className="w-5 h-5 text-purple-500 shrink-0" />
+                      ) : (
+                        <AlertTriangle className="w-5 h-5 text-amber-500 shrink-0" />
+                      )}
+                      <h3 className="font-bold text-slate-900 text-sm">{currentFinding.title}</h3>
+                    </div>
+                    <span
+                      className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                        currentFinding.kind === "corrected"
+                          ? "bg-red-50 text-red-600"
+                          : currentFinding.kind === "ai-tell"
+                          ? "bg-purple-50 text-purple-600"
+                          : "bg-amber-50 text-amber-600"
+                      }`}
+                    >
+                      {currentFinding.categoryLabel}
+                    </span>
+                  </div>
+
+                  {/* Details Table */}
+                  <div className="space-y-3.5 text-xs">
+                    {/* 判定 */}
+                    <div className="flex items-center justify-between py-1 border-b border-slate-50">
+                      <span className="text-slate-400 font-medium">判定</span>
+                      <span
+                        className={`font-bold px-2 py-0.5 rounded ${
+                          currentFinding.kind === "corrected"
+                            ? "bg-red-100 text-red-700"
+                            : currentFinding.kind === "ai-tell"
+                            ? "bg-purple-100 text-purple-700"
+                            : "bg-amber-100 text-amber-700"
+                        }`}
+                      >
+                        {currentFinding.kind === "corrected" ? "誤り" : currentFinding.kind === "ai-tell" ? "AI癖表現" : "要確認"}
+                      </span>
+                    </div>
+
+                    {/* JEV信頼度 */}
+                    <div className="py-1 border-b border-slate-50 space-y-1">
+                      <div className="flex items-center justify-between">
+                        <span className="text-slate-400 font-medium">信頼度</span>
+                        <span className="font-bold text-slate-900 text-sm">{currentFinding.confidence}%</span>
+                      </div>
+                      <div className="w-full h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                        <div
+                          className={`h-full ${
+                            currentFinding.kind === "corrected"
+                              ? "bg-red-500"
+                              : currentFinding.kind === "ai-tell"
+                              ? "bg-purple-500"
+                              : "bg-amber-500"
+                          }`}
+                          style={{ width: `${currentFinding.confidence}%` }}
+                        />
+                      </div>
+                      <p className="text-[10px] text-slate-400 leading-tight pt-0.5">
+                        各指摘にはJEVの信頼度を表示 - AIの判定根拠に基づく信頼度(JEV)を確認できます。
+                      </p>
+                    </div>
+
+                    {/* 原文 */}
+                    <div className="space-y-1">
+                      <span className="text-slate-400 font-medium">原文</span>
+                      <div className="bg-red-50 text-red-900 border border-red-200 rounded-lg p-2 leading-relaxed">
+                        {currentFinding.originalText}
+                      </div>
+                    </div>
+
+                    {/* 修正版 */}
+                    <div className="space-y-1">
+                      <span className="text-slate-400 font-medium">修正版</span>
+                      <div className="bg-emerald-50 text-emerald-900 border border-emerald-200 rounded-lg p-2 leading-relaxed">
+                        {currentFinding.revisedText}
+                      </div>
+                    </div>
+
+                    {/* 根拠 */}
+                    <div className="flex items-center justify-between py-1 border-b border-slate-50">
+                      <span className="text-slate-400 font-medium">根拠</span>
+                      {currentFinding.sourceUrl ? (
+                        <a
+                          href={currentFinding.sourceUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-blue-600 hover:underline flex items-center gap-1 font-medium"
+                        >
+                          <span>{currentFinding.sourceTitle || currentFinding.sourceUrl}</span>
+                          <ExternalLink className="w-3 h-3" />
+                        </a>
+                      ) : (
+                        <span className="text-slate-500 font-medium">{currentFinding.sourceTitle || "根拠なし"}</span>
+                      )}
+                    </div>
+
+                    {/* 種別 */}
+                    <div className="flex items-center justify-between py-1 border-b border-slate-50">
+                      <span className="text-slate-400 font-medium">種別</span>
+                      <span className="text-slate-700 font-medium">{currentFinding.categoryLabel}</span>
+                    </div>
+
+                    {/* 説明 */}
+                    <div className="space-y-1">
+                      <span className="text-slate-400 font-medium">説明</span>
+                      <p className="text-slate-600 leading-relaxed bg-slate-50 p-2.5 rounded-lg border border-slate-100">
+                        {currentFinding.explanation}
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* 採用 / 元に戻す Buttons (Image 2 - Component 5) */}
+                  <div className="grid grid-cols-2 gap-3 pt-2">
+                    <button
+                      onClick={() => handleAdoptToggle(currentFinding.id, true)}
+                      className={`flex items-center justify-center gap-1.5 py-2.5 rounded-xl font-bold text-xs transition shadow-sm ${
+                        currentFinding.adopted
+                          ? "bg-blue-600 text-white hover:bg-blue-700"
+                          : "bg-slate-100 text-slate-700 hover:bg-slate-200"
+                      }`}
+                    >
+                      <Check className="w-4 h-4" />
+                      <span>採用</span>
+                    </button>
+
+                    <button
+                      onClick={() => handleAdoptToggle(currentFinding.id, false)}
+                      className={`flex items-center justify-center gap-1.5 py-2.5 rounded-xl font-bold text-xs border transition ${
+                        !currentFinding.adopted
+                          ? "border-blue-600 text-blue-600 bg-blue-50"
+                          : "border-slate-300 text-slate-600 hover:bg-slate-50"
+                      }`}
+                    >
+                      <RotateCcw className="w-4 h-4" />
+                      <span>元に戻す</span>
+                    </button>
+                  </div>
+
+                </div>
+              ) : (
+                <div className="p-8 text-center text-xs text-slate-400">
+                  検出項目が選択されていません。
+                </div>
+  );
 
   return (
     <div className="min-h-screen bg-[#F8FAFC] text-slate-800 flex flex-col font-sans">
@@ -577,7 +775,7 @@ export default function HomePage() {
                           }`}
                         >
                           {paragraph.segments.map((segment, segIdx) => (
-                            <MarkedText key={segIdx} segment={segment} />
+                            <MarkedText key={segIdx} segment={segment} onSelect={handleSelectMark} />
                           ))}
                         </p>
                       ))}
@@ -785,213 +983,35 @@ export default function HomePage() {
                 RIGHT PANEL: INSPECTION & JEV CONFIDENCE
                 (Image 2 - Component 4 & 5)
                ========================================= */}
-            <aside className="w-full lg:w-96 lg:shrink-0 bg-white border-t lg:border-t-0 lg:border-l border-slate-200 flex flex-col justify-between lg:overflow-y-auto">
-              {currentFinding ? (
-                <div className="p-6 space-y-5">
-                  {/* Top Pagination Control */}
-                  <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-                    <span className="text-xs font-mono font-bold text-slate-600">
-                      {selectedFindingIndex + 1} / {filteredFindings.length}
-                    </span>
-                    <div className="flex items-center gap-1">
-                      <button
-                        disabled={selectedFindingIndex === 0}
-                        onClick={() => setSelectedFindingIndex((prev) => Math.max(0, prev - 1))}
-                        className="p-1 text-slate-500 hover:text-slate-800 disabled:opacity-30 rounded hover:bg-slate-100"
-                      >
-                        <ChevronLeft className="w-4 h-4" />
-                      </button>
-                      <button
-                        disabled={selectedFindingIndex === filteredFindings.length - 1}
-                        onClick={() =>
-                          setSelectedFindingIndex((prev) => Math.min(filteredFindings.length - 1, prev + 1))
-                        }
-                        className="p-1 text-slate-500 hover:text-slate-800 disabled:opacity-30 rounded hover:bg-slate-100"
-                      >
-                        <ChevronRight className="w-4 h-4" />
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* Header Title & Category Badge */}
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="flex items-center gap-2">
-                      {currentFinding.kind === "corrected" ? (
-                        <AlertCircle className="w-5 h-5 text-red-500 shrink-0" />
-                      ) : currentFinding.kind === "ai-tell" ? (
-                        <Star className="w-5 h-5 text-purple-500 shrink-0" />
-                      ) : (
-                        <AlertTriangle className="w-5 h-5 text-amber-500 shrink-0" />
-                      )}
-                      <h3 className="font-bold text-slate-900 text-sm">{currentFinding.title}</h3>
-                    </div>
-                    <span
-                      className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
-                        currentFinding.kind === "corrected"
-                          ? "bg-red-50 text-red-600"
-                          : currentFinding.kind === "ai-tell"
-                          ? "bg-purple-50 text-purple-600"
-                          : "bg-amber-50 text-amber-600"
-                      }`}
-                    >
-                      {currentFinding.categoryLabel}
-                    </span>
-                  </div>
-
-                  {/* Details Table */}
-                  <div className="space-y-3.5 text-xs">
-                    {/* 判定 */}
-                    <div className="flex items-center justify-between py-1 border-b border-slate-50">
-                      <span className="text-slate-400 font-medium">判定</span>
-                      <span
-                        className={`font-bold px-2 py-0.5 rounded ${
-                          currentFinding.kind === "corrected"
-                            ? "bg-red-100 text-red-700"
-                            : currentFinding.kind === "ai-tell"
-                            ? "bg-purple-100 text-purple-700"
-                            : "bg-amber-100 text-amber-700"
-                        }`}
-                      >
-                        {currentFinding.kind === "corrected" ? "誤り" : currentFinding.kind === "ai-tell" ? "AI癖表現" : "要確認"}
-                      </span>
-                    </div>
-
-                    {/* JEV信頼度 */}
-                    <div className="py-1 border-b border-slate-50 space-y-1">
-                      <div className="flex items-center justify-between">
-                        <span className="text-slate-400 font-medium">信頼度</span>
-                        <span className="font-bold text-slate-900 text-sm">{currentFinding.confidence}%</span>
-                      </div>
-                      <div className="w-full h-1.5 bg-slate-100 rounded-full overflow-hidden">
-                        <div
-                          className={`h-full ${
-                            currentFinding.kind === "corrected"
-                              ? "bg-red-500"
-                              : currentFinding.kind === "ai-tell"
-                              ? "bg-purple-500"
-                              : "bg-amber-500"
-                          }`}
-                          style={{ width: `${currentFinding.confidence}%` }}
-                        />
-                      </div>
-                      <p className="text-[10px] text-slate-400 leading-tight pt-0.5">
-                        各指摘にはJEVの信頼度を表示 - AIの判定根拠に基づく信頼度(JEV)を確認できます。
-                      </p>
-                    </div>
-
-                    {/* 原文 */}
-                    <div className="space-y-1">
-                      <span className="text-slate-400 font-medium">原文</span>
-                      <div className="bg-red-50 text-red-900 border border-red-200 rounded-lg p-2 leading-relaxed">
-                        {currentFinding.originalText}
-                      </div>
-                    </div>
-
-                    {/* 修正版 */}
-                    <div className="space-y-1">
-                      <span className="text-slate-400 font-medium">修正版</span>
-                      <div className="bg-emerald-50 text-emerald-900 border border-emerald-200 rounded-lg p-2 leading-relaxed">
-                        {currentFinding.revisedText}
-                      </div>
-                    </div>
-
-                    {/* 根拠 */}
-                    <div className="flex items-center justify-between py-1 border-b border-slate-50">
-                      <span className="text-slate-400 font-medium">根拠</span>
-                      {currentFinding.sourceUrl ? (
-                        <a
-                          href={currentFinding.sourceUrl}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-blue-600 hover:underline flex items-center gap-1 font-medium"
-                        >
-                          <span>{currentFinding.sourceTitle || currentFinding.sourceUrl}</span>
-                          <ExternalLink className="w-3 h-3" />
-                        </a>
-                      ) : (
-                        <span className="text-slate-500 font-medium">{currentFinding.sourceTitle || "根拠なし"}</span>
-                      )}
-                    </div>
-
-                    {/* 種別 */}
-                    <div className="flex items-center justify-between py-1 border-b border-slate-50">
-                      <span className="text-slate-400 font-medium">種別</span>
-                      <span className="text-slate-700 font-medium">{currentFinding.categoryLabel}</span>
-                    </div>
-
-                    {/* 説明 */}
-                    <div className="space-y-1">
-                      <span className="text-slate-400 font-medium">説明</span>
-                      <p className="text-slate-600 leading-relaxed bg-slate-50 p-2.5 rounded-lg border border-slate-100">
-                        {currentFinding.explanation}
-                      </p>
-                    </div>
-                  </div>
-
-                  {/* 採用 / 元に戻す Buttons (Image 2 - Component 5) */}
-                  <div className="grid grid-cols-2 gap-3 pt-2">
-                    <button
-                      onClick={() => handleAdoptToggle(currentFinding.id, true)}
-                      className={`flex items-center justify-center gap-1.5 py-2.5 rounded-xl font-bold text-xs transition shadow-sm ${
-                        currentFinding.adopted
-                          ? "bg-blue-600 text-white hover:bg-blue-700"
-                          : "bg-slate-100 text-slate-700 hover:bg-slate-200"
-                      }`}
-                    >
-                      <Check className="w-4 h-4" />
-                      <span>採用</span>
-                    </button>
-
-                    <button
-                      onClick={() => handleAdoptToggle(currentFinding.id, false)}
-                      className={`flex items-center justify-center gap-1.5 py-2.5 rounded-xl font-bold text-xs border transition ${
-                        !currentFinding.adopted
-                          ? "border-blue-600 text-blue-600 bg-blue-50"
-                          : "border-slate-300 text-slate-600 hover:bg-slate-50"
-                      }`}
-                    >
-                      <RotateCcw className="w-4 h-4" />
-                      <span>元に戻す</span>
-                    </button>
-                  </div>
-
-                  {/* 関連する指摘 */}
-                  {filteredFindings.length > 1 && (
-                    <div className="border-t border-slate-100 pt-4 space-y-2">
-                      <span className="text-xs font-bold text-slate-800">関連する指摘</span>
-                      {filteredFindings
-                        .filter((i) => i.id !== currentFinding.id)
-                        .slice(0, 2)
-                        .map((rel) => (
-                          <div
-                            key={rel.id}
-                            onClick={() => {
-                              const relIdx = filteredFindings.findIndex((i) => i.id === rel.id);
-                              if (relIdx >= 0) setSelectedFindingIndex(relIdx);
-                            }}
-                            className="p-2.5 rounded-lg border border-slate-200 hover:border-slate-300 cursor-pointer flex items-center justify-between text-xs transition bg-slate-50/50"
-                          >
-                            <div className="flex items-center gap-1.5">
-                              <Star className="w-3.5 h-3.5 text-purple-500" />
-                              <span className="font-medium text-slate-800">{rel.title}</span>
-                            </div>
-                            <span className="text-[10px] text-purple-600 font-bold bg-purple-50 px-1.5 py-0.5 rounded">
-                              {rel.categoryLabel}
-                            </span>
-                          </div>
-                        ))}
-                    </div>
-                  )}
-                </div>
-              ) : (
-                <div className="p-8 text-center text-xs text-slate-400">
-                  検出項目が選択されていません。
-                </div>
-              )}
+            <aside className="hidden lg:flex w-96 shrink-0 bg-white border-l border-slate-200 flex-col justify-between overflow-y-auto">
+              {findingDetail}
             </aside>
           </div>
         )}
       </div>
+
+      {/* Finding sheet — phones only; wide screens use the panel beside the document */}
+      {sheetOpen && currentFinding && (
+        <div className="lg:hidden fixed inset-0 z-40 flex flex-col justify-end">
+          <div
+            className="absolute inset-0 bg-slate-900/30"
+            onClick={() => setSheetOpen(false)}
+          />
+          <div className="relative bg-white rounded-t-2xl shadow-2xl max-h-[75vh] overflow-y-auto">
+            <div className="sticky top-0 bg-white flex items-center justify-between px-4 py-3 border-b border-slate-100">
+              <span className="text-xs font-bold text-slate-800">この箇所について</span>
+              <button
+                type="button"
+                onClick={() => setSheetOpen(false)}
+                className="text-slate-400 hover:text-slate-700 text-sm px-2 py-1 rounded hover:bg-slate-100"
+              >
+                閉じる
+              </button>
+            </div>
+            {findingDetail}
+          </div>
+        </div>
+      )}
 
       {/* History Modal */}
       {showHistoryModal && (

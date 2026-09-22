@@ -63,10 +63,17 @@ export type Finding = {
 /** Everything that follows from a Finding's kind, in one place. */
 const FINDING_KINDS: Record<
   FindingKind,
-  { label: string; markKind: MarkKind | null; confidence: number; explanation: string }
+  {
+    label: string;
+    heading: string;
+    markKind: MarkKind | null;
+    confidence: number;
+    explanation: string;
+  }
 > = {
   corrected: {
     label: "事実の修正",
+    heading: "事実の誤り",
     markKind: "fact",
     confidence: 0.94,
     explanation:
@@ -74,18 +81,21 @@ const FINDING_KINDS: Record<
   },
   unverified: {
     label: "要確認",
+    heading: "根拠が見つかりません",
     markKind: "unverified",
     confidence: 0.68,
     explanation: "十分な一次証拠が確認できませんでした。専門情報源による再確認を推奨します。",
   },
   "ai-tell": {
     label: "文章表現",
+    heading: "AIっぽい言い回し",
     markKind: "style",
     confidence: 0.85,
     explanation: "AI特有の紋切り型表現または重複が検出されました。",
   },
   confirmed: {
     label: "確認済み",
+    heading: "確認済み",
     markKind: null,
     confidence: 0.97,
     explanation: "公式ソースの記述と整合しており、事実の正しさが確認されています。",
@@ -216,8 +226,10 @@ function factFinding(
   return {
     id,
     type: "fact",
-    // TODO(#5): compose the heading from kind and target span.
-    title: factTitle(text, kind === "corrected"),
+    title: compose(
+      shape.heading,
+      kind === "corrected" ? changedWording(text, result.correctedClaim || text) || text : text
+    ),
     categoryLabel: shape.label,
     kind,
     confidence: toPercent(result.confidence ?? shape.confidence),
@@ -232,17 +244,6 @@ function factFinding(
   };
 }
 
-function factTitle(text: string, contradicted: boolean): string {
-  if (text.includes("発表") || text.includes("9月")) return "発売日・発表日に関する誤り";
-  if (text.includes("20MP") || text.includes("解像度")) return "デフォルト解像度の数値誤認";
-  if (text.includes("望遠") || text.includes("6倍")) return "光学望遠倍率のスペック相違";
-  if (text.includes("USB") || text.includes("20Gbps")) return "USB 3データ転送速度の誤認";
-  if (text.includes("通信範囲") || text.includes("2倍")) return "超広帯域通信チップの範囲倍率";
-  if (text.includes("Wi-Fi")) return "Wi-Fi規格（6E / 7）の誤認";
-  if (contradicted) return "事実関係の誤り";
-  return "事実に関する確認";
-}
-
 function styleFinding(
   styleIssue: StyleIssue,
   index: number,
@@ -255,7 +256,7 @@ function styleFinding(
   return {
     id,
     type: "style",
-    title: styleIssue.ruleName || "不自然な表現",
+    title: compose(styleIssue.ruleName || shape.heading, styleIssue.targetText ?? ""),
     categoryLabel: shape.label,
     kind: "ai-tell",
     confidence: toPercent(styleIssue.confidence || shape.confidence),
@@ -518,6 +519,14 @@ function mergeOverlaps(spans: Span[]): Span[] {
 
 function gap(text: string, background?: Mark): Segment {
   return background ? { text, mark: background } : { text };
+}
+
+const SPAN_LENGTH = 20;
+
+/** "事実の誤り: 12万円" — the kind, then what it points at. */
+function compose(heading: string, span: string): string {
+  const target = span.trim().slice(0, SPAN_LENGTH);
+  return target ? `${heading}: ${target}` : heading;
 }
 
 const TITLE_LENGTH = 36;
