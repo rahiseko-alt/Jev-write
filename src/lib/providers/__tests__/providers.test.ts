@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import {
   getLLMProvider,
   MockLLMProvider,
@@ -312,11 +312,49 @@ describe("Fetch Provider", () => {
     expect(page.content.length).toBeGreaterThan(0);
   });
 
-  it("factory returns HTTPFetchProvider by default and MockFetchProvider when requested", () => {
-    const httpProvider = getFetchProvider({}, false);
-    expect(httpProvider).toBeInstanceOf(HTTPFetchProvider);
+  describe("factory", () => {
+    const KEYS = [
+      "TAVILY_API_KEY",
+      "tavily",
+      "OPENAI_API_KEY",
+      "openai",
+      "ANTHROPIC_API_KEY",
+      "anthropic",
+      "USE_MOCK_FETCH",
+    ];
+    let saved: Record<string, string | undefined>;
 
-    const mockProvider = getFetchProvider({}, true);
-    expect(mockProvider).toBeInstanceOf(MockFetchProvider);
+    beforeEach(() => {
+      saved = Object.fromEntries(KEYS.map((key) => [key, process.env[key]]));
+      for (const key of KEYS) delete process.env[key];
+    });
+
+    afterEach(() => {
+      for (const [key, value] of Object.entries(saved)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    });
+
+    it("fetches over HTTP once there is a credential to fetch with", () => {
+      process.env.TAVILY_API_KEY = "test-key";
+      expect(getFetchProvider({}, false)).toBeInstanceOf(HTTPFetchProvider);
+    });
+
+    it("stays on the mock when asked for it, credential or not", () => {
+      process.env.TAVILY_API_KEY = "test-key";
+      expect(getFetchProvider({}, true)).toBeInstanceOf(MockFetchProvider);
+    });
+
+    it("falls back to the mock when no credential is configured", () => {
+      // ADR-0002: the mock adapters run offline and in CI without credentials.
+      expect(getFetchProvider({}, false)).toBeInstanceOf(MockFetchProvider);
+    });
+
+    it("honours USE_MOCK_FETCH even where a credential exists", () => {
+      process.env.TAVILY_API_KEY = "test-key";
+      process.env.USE_MOCK_FETCH = "true";
+      expect(getFetchProvider({}, false)).toBeInstanceOf(MockFetchProvider);
+    });
   });
 });
