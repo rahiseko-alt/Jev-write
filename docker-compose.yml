@@ -1,0 +1,19 @@
+version: "3.8"
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: jev-write
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - OPENAI_MODEL=${OPENAI_MODEL:-gpt-4o-mini}
+      - JEV_API_URL=${JEV_API_URL:-}
+      - JEV_API_KEY=${JEV_API_KEY:-}
+      - GOOGLE_FACTCHECK_API_KEY=${GOOGLE_FACTCHECK_API_KEY:-}
+      - TAVILY_API_KEY=${TAVILY_API_KEY:-}
+    restart: unless-stopped
