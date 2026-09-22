@@ -1,7 +1,6 @@
 import {
   JEVAtomicJudgmentRequest,
   JEVAtomicJudgmentResult,
-  JEVBatchRuleItemResult,
   JEVBatchRulesRequest,
   JEVBatchRulesResult,
   JEVClient,
@@ -15,22 +14,35 @@ export interface JEVClientOptions {
   timeoutMs?: number;
 }
 
+/**
+ * Official TypeSafe AI Jev (System One) Client
+ * Connects directly to POST https://api.typesafe.ai/v1/systemone
+ * Evaluates atomic judgments, parallel choice/noul questions over state.
+ */
 export class HTTPJEVClient implements JEVClient {
   private apiUrl: string;
   private apiKey: string;
   private timeoutMs: number;
 
   constructor(options: JEVClientOptions = {}) {
-    this.apiUrl = (options.apiUrl || process.env.JEV_API_URL || "").replace(/\/$/, "");
-    this.apiKey = options.apiKey || process.env.JEV_API_KEY || "";
+    // Default directly to TypeSafe AI's official System One endpoint
+    this.apiUrl =
+      options.apiUrl ||
+      process.env.JEV_API_URL ||
+      process.env.TYPESAFE_API_URL ||
+      "https://api.typesafe.ai/v1/systemone";
+    this.apiKey =
+      options.apiKey ||
+      process.env.JEV_API_KEY ||
+      process.env.TYPESAFE_API_KEY ||
+      "";
     this.timeoutMs = options.timeoutMs || 15000;
   }
 
-  private async request<T>(endpoint: string, body: any): Promise<T> {
-    if (!this.apiUrl) {
-      throw new Error("JEV API URL is missing. Configure JEV_API_URL in environment or constructor.");
-    }
-
+  /**
+   * Send a systemone request to TypeSafe AI Jev
+   */
+  private async callSystemOne(state: any, questions: Record<string, any>): Promise<any> {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.timeoutMs);
 
@@ -43,22 +55,35 @@ export class HTTPJEVClient implements JEVClient {
         headers["X-API-Key"] = this.apiKey;
       }
 
-      const response = await fetch(`${this.apiUrl}${endpoint}`, {
+      // If apiUrl is a base URL without /systemone, append /v1/systemone
+      let targetUrl = this.apiUrl;
+      if (!targetUrl.includes("/systemone") && !targetUrl.endsWith("/atomic-judgment")) {
+        targetUrl = targetUrl.replace(/\/$/, "") + "/v1/systemone";
+      }
+
+      const statePayload = typeof state === "string" ? state : JSON.stringify(state);
+
+      const response = await fetch(targetUrl, {
         method: "POST",
         headers,
-        body: JSON.stringify(body),
+        body: JSON.stringify({
+          state: statePayload,
+          questions,
+        }),
         signal: controller.signal,
       });
 
       if (!response.ok) {
         const errorText = await response.text().catch(() => "");
-        throw new Error(`JEV request to ${endpoint} failed (${response.status} ${response.statusText}): ${errorText}`);
+        throw new Error(
+          `TypeSafe AI Jev request failed (${response.status} ${response.statusText}): ${errorText}`
+        );
       }
 
-      return (await response.json()) as T;
+      return await response.json();
     } catch (err) {
       if (err instanceof Error && err.name === "AbortError") {
-        throw new Error(`JEV request to ${endpoint} timed out after ${this.timeoutMs}ms`);
+        throw new Error(`TypeSafe AI Jev request timed out after ${this.timeoutMs}ms`);
       }
       throw err;
     } finally {
@@ -66,111 +91,145 @@ export class HTTPJEVClient implements JEVClient {
     }
   }
 
+  /**
+   * Evaluates a single atomic judgment (Choice or Noul) on state
+   */
   async evaluateAtomicJudgment(req: JEVAtomicJudgmentRequest): Promise<JEVAtomicJudgmentResult> {
-    const raw = await this.request<any>("/api/v1/atomic-judgment", req);
-    const choice = raw.choice || raw.match || raw.relation;
+    const qType = req.mode === "noul" ? "noul" : "choice";
+    const questionsPayload: Record<string, any> = {
+      q1: {
+        type: qType,
+        question: req.question,
+        ...(qType === "choice" ? { choices: req.choices || ["supports", "contradicts", "says_nothing", "ambiguous"] } : {}),
+      },
+    };
+
+    const data = await this.callSystemOne(req.state, questionsPayload);
+    const resultItem = data?.results?.q1 || data?.q1 || data;
+
+    const value = resultItem.value || resultItem.choice || resultItem.selected;
+    const noulVal = typeof resultItem.noul === "boolean" ? resultItem.noul : typeof value === "boolean" ? value : undefined;
+    const confidence = typeof resultItem.confidence === "number" ? resultItem.confidence : 0.95;
+
     return {
-      choice,
-      match: raw.match || choice,
-      relation: raw.relation || choice,
-      verdict: raw.verdict || (choice as any),
-      ratingMeaning: raw.ratingMeaning,
-      noul: typeof raw.noul === "boolean" ? raw.noul : undefined,
-      confidence: typeof raw.confidence === "number" ? raw.confidence : 0.9,
-      explanation: raw.explanation,
+      choice: typeof value === "string" ? value : undefined,
+      match: typeof value === "string" ? value : undefined,
+      relation: typeof value === "string" ? value : undefined,
+      verdict: typeof value === "string" ? (value as any) : undefined,
+      noul: noulVal,
+      confidence,
+      explanation: resultItem.explanation,
     };
   }
 
+  /**
+   * Evaluates multiple style rules simultaneously in parallel on the same state
+   */
   async evaluateBatchRules(
     reqOrText: JEVBatchRulesRequest | string,
     maybeRules?: any[]
   ): Promise<any> {
     let text = "";
-    let questions: Array<{ id: string; question: string }> = [];
+    let rulesList: Array<{ id: string; question: string }> = [];
     const isStyleRulesArrayCall = typeof reqOrText === "string" && Array.isArray(maybeRules);
 
     if (isStyleRulesArrayCall) {
       text = reqOrText;
-      questions = (maybeRules || []).map((r) => ({
+      rulesList = (maybeRules || []).map((r) => ({
         id: r.id,
         question: r.jevQuestion || r.question || r.description || r.name,
       }));
     } else {
       const req = reqOrText as JEVBatchRulesRequest;
       text = req.text;
-      questions = req.questions || [];
+      rulesList = req.questions || [];
     }
 
-    const raw = await this.request<JEVBatchRulesResult>("/api/v1/batch-rules", { text, questions });
-    const results = raw.results || {};
+    // Convert each rule question into a Noul (true/false) or Choice question for Jev
+    const questionsPayload: Record<string, any> = {};
+    for (const r of rulesList) {
+      questionsPayload[r.id] = {
+        type: "noul",
+        question: `${r.question} (文章中にこの表現や特徴が明確に存在するか？)`,
+      };
+    }
+
+    const data = await this.callSystemOne(text, questionsPayload);
+    const resultsMap = data?.results || data || {};
+
+    const formattedResults: Record<string, any> = {};
+    for (const r of rulesList) {
+      const item = resultsMap[r.id] || {};
+      const detected = item.value === true || item.noul === true || item.detected === true;
+      const confidence = typeof item.confidence === "number" ? item.confidence : 0.9;
+      formattedResults[r.id] = {
+        detected,
+        confidence,
+        explanation: item.explanation,
+        targetSnippet: item.targetSnippet || item.targetText,
+      };
+    }
 
     if (isStyleRulesArrayCall) {
-      const arrayResult = questions.map((q) => {
-        const item = results[q.id] || { detected: false, confidence: 0.9 };
+      const arrayResult = rulesList.map((q) => {
+        const item = formattedResults[q.id];
         return {
           ruleId: q.id,
           detected: item.detected,
           confidence: item.confidence,
           explanation: item.explanation,
-          targetText: item.targetText || item.targetSnippet,
+          targetText: item.targetSnippet,
         };
       });
-      (arrayResult as any).results = results;
+      (arrayResult as any).results = formattedResults;
       return arrayResult;
     }
 
-    return raw;
+    return { results: formattedResults };
   }
 
+  /**
+   * Verifies if revised text introduces unauthorized factual mutations
+   */
   async evaluateDeltaMeaningChange(
     originalClaimOrParams: string | JEVDeltaMeaningParams,
     revisedText?: string,
     allowedChanges?: string[]
   ): Promise<JEVDeltaMeaningResult> {
-    let payload: any;
+    let orig = "";
+    let rev = "";
+    let allowed: string[] = [];
+
     if (typeof originalClaimOrParams === "object") {
-      payload = originalClaimOrParams;
+      orig = originalClaimOrParams.originalText || originalClaimOrParams.originalClaim || "";
+      rev = originalClaimOrParams.revisedText || "";
+      allowed = originalClaimOrParams.authorizedChanges || originalClaimOrParams.allowedChanges || [];
     } else {
-      payload = {
-        originalClaim: originalClaimOrParams,
-        revisedText,
-        allowedChanges,
-      };
+      orig = originalClaimOrParams;
+      rev = revisedText || "";
+      allowed = allowedChanges || [];
     }
 
-    try {
-      const raw = await this.request<any>("/api/v1/delta-check", payload);
-      const hasUnauthorized = Boolean(raw.hasUnauthorizedChange ?? raw.unauthorizedChangeDetected);
-      return {
-        hasUnauthorizedChange: hasUnauthorized,
-        unauthorizedChangeDetected: hasUnauthorized,
-        unauthorizedChanges: Array.isArray(raw.unauthorizedChanges) ? raw.unauthorizedChanges : [],
-        explanation: raw.explanation,
-      };
-    } catch (err) {
-      const orig = payload.originalText || payload.originalClaim || "";
-      const rev = payload.revisedText || "";
-      const allowed = payload.authorizedChanges || payload.allowedChanges || [];
+    const state = {
+      originalClaim: orig,
+      revisedText: rev,
+      permittedChanges: allowed,
+    };
 
-      const atomicResult = await this.evaluateAtomicJudgment({
-        state: {
-          originalClaim: orig,
-          revisedText: rev,
-          allowedChanges: allowed,
-        },
-        question: "Does the revised text introduce unauthorized semantic changes?",
-        mode: "noul",
-      });
+    const atomicResult = await this.evaluateAtomicJudgment({
+      state,
+      question: "修正後の文章は、許可された変更（permittedChanges）以外に意味上の新しい事実変更や数値の改変を行っているか？",
+      mode: "noul",
+    });
 
-      const hasChange = Boolean(atomicResult.noul);
-      return {
-        hasUnauthorizedChange: hasChange,
-        unauthorizedChangeDetected: hasChange,
-        unauthorizedChanges: hasChange
-          ? [{ segment: rev, reason: atomicResult.explanation || "Unauthorized change detected" }]
-          : [],
-        explanation: atomicResult.explanation || "Evaluated via atomic judgment fallback",
-      };
-    }
+    const hasUnauthorized = Boolean(atomicResult.noul);
+    return {
+      hasUnauthorizedChange: hasUnauthorized,
+      unauthorizedChangeDetected: hasUnauthorized,
+      unauthorizedChanges: hasUnauthorized
+        ? [{ segment: rev, reason: atomicResult.explanation || "未許可の事実変更を検出しました" }]
+        : [],
+      explanation: atomicResult.explanation,
+    };
   }
 }
