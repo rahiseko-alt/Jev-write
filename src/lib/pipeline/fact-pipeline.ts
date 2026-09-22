@@ -431,9 +431,21 @@ async function verifyClaim(params: {
       confidence = 0.9;
       reason = bestExplanation || "外部ソースの情報と矛盾する内容が確認されました。";
     } else if (relationCounts.contradicts > 0 && relationCounts.supports > 0) {
-      verdict = "MIXED";
-      confidence = 0.75;
-      reason = bestExplanation || "裏付け情報と矛盾する情報の双方が存在します。";
+      // Primary source hierarchy: If official/primary source supports the claim,
+      // it overrides secondary/ugc contradictions.
+      const hasOfficialSupport = claimEvidences.some(
+        (e) => e.sourceType === "official" || e.sourceType === "primary"
+      );
+      if (hasOfficialSupport) {
+        verdict = "SUPPORTED";
+        confidence = 0.92;
+        reason = "公式一次ソースによる確実な裏付けが得られました。";
+        correctedClaim = undefined;
+      } else {
+        verdict = "MIXED";
+        confidence = 0.75;
+        reason = bestExplanation || "裏付け情報と矛盾する情報の双方が存在します。";
+      }
     } else if (relationCounts.supports > 0) {
       verdict = "SUPPORTED";
       confidence = 0.88;
@@ -740,7 +752,7 @@ function mapDomainToSourceType(url: string): SourceType {
     if (hostname.includes("factcheck") || hostname.includes("reuters.com")) {
       return "research";
     }
-    if (hostname.includes("itmedia.co.jp") || hostname.includes("nikkei.com")) {
+    if (hostname.includes("itmedia.co.jp") || hostname.includes("nikkei.com") || hostname.includes("wikipedia.org")) {
       return "secondary";
     }
   } catch {}
