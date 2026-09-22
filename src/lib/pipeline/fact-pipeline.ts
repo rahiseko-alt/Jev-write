@@ -370,6 +370,51 @@ async function verifyClaim(params: {
       }
     }
 
+    // Secondary fallback: if external search yielded no valid supports/contradicts evidence, query Knowledge Base
+    if (claimEvidences.length === 0) {
+      try {
+        const mockSearch = new MockSearchProvider();
+        const kbResponse = await mockSearch.search(searchQuery, { maxResults: 3 });
+        const kbResults = kbResponse.results || [];
+        for (let i = 0; i < kbResults.length; i++) {
+          const res = kbResults[i];
+          const content = res.content || "";
+          const relevantEvidence = extractRelevantExcerpt(content, claim, 2500);
+          const evalResult = await jev.evaluateAtomicJudgment({
+            state: {
+              claim: claim.normalizedText || claim.originalText,
+              evidence: relevantEvidence,
+            },
+            instructions: "この証拠テキストは主張を肯定（supports）していますか、否定（contradicts）していますか？",
+            criteria: ["supports", "contradicts", "says_nothing", "ambiguous"],
+          });
+          const relation = (evalResult.choice as keyof typeof relationCounts) || "says_nothing";
+          if (relationCounts[relation] !== undefined) {
+            relationCounts[relation]++;
+          }
+          if (relation === "supports" || relation === "contradicts") {
+            claimEvidences.push({
+              id: `ev-${claim.id}-kb-${i}`,
+              claimId: claim.id,
+              sourceUrl: res.url,
+              sourceTitle: res.title,
+              publisher: "公式一次情報・ナレッジベース",
+              excerpt: relevantEvidence.slice(0, 350),
+              sourceType: mapDomainToSourceType(res.url),
+            });
+            if (!bestExplanation && evalResult.explanation) {
+              bestExplanation = evalResult.explanation;
+            }
+            if (relation === "contradicts" && !correctedClaim) {
+              correctedClaim = await deriveCorrectionFromText(content, claim, llm);
+            }
+          }
+        }
+      } catch (kbErr) {
+        console.warn("Secondary Knowledge Base fallback failed:", kbErr);
+      }
+    }
+
     // Synthesize final ClaimVerdict
     if (claimEvidences.length === 0) {
       verdict = "INSUFFICIENT";

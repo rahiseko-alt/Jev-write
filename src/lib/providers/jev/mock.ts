@@ -261,6 +261,24 @@ export class MockJEVClient implements JEVClient {
         }
 
         const overlap = this.calculateKeywordOverlap(claimText, evText);
+
+        // If the claim asserts specific numbers/specs, do NOT claim 'supports' unless evidence contains numbers
+        const hasClaimNumbers = /\d+/.test(claimText);
+        if (hasClaimNumbers) {
+          const claimNumMatches = claimText.match(/(\d+[.,\d]*)/g) || [];
+          const hasMatchingNum = claimNumMatches.some((n) => evText.includes(n.replace(/,/g, "")));
+          if (!hasMatchingNum) {
+            return {
+              choice: "says_nothing",
+              relation: "says_nothing",
+              verdict: "insufficient" as RatingVerdict,
+              noul: 0,
+              confidence: 0.85,
+              explanation: "Evidence mentions related entities but does not verify the specific numbers or specifications in the claim.",
+            };
+          }
+        }
+
         if (overlap > 0.25) {
           return {
             choice: "supports",
