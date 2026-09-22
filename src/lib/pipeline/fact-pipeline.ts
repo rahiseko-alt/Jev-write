@@ -1,3 +1,4 @@
+import { correctionFromEvidence } from "./correction";
 import {
   Claim,
   ClaimResult,
@@ -251,7 +252,9 @@ async function verifyClaim(params: {
         }
 
         if (verdict === "CONTRADICTED") {
-          correctedClaim = deriveCorrectedClaim(claim, reviews[0]?.title || hitClaimText);
+          // A review's headline is an article title, not a replacement
+          // sentence. The conflict is reported; the wording stays.
+          correctedClaim = undefined;
         }
         break; // Matched primary fact check hit
       }
@@ -503,16 +506,12 @@ function mapChoiceToClaimVerdict(choice?: string): ClaimVerdict {
   }
 }
 
-function deriveCorrectedClaim(claim: Claim, reference: string): string {
-  return reference;
-}
-
 async function deriveCorrectionFromText(
   text: string,
   claim: Claim,
   llm?: LLMProvider
-): Promise<string> {
-  // If LLM supports deriveCorrection, ask LLM to extract the precise fact from evidence
+): Promise<string | undefined> {
+  // The LLM reads the Evidence and states the corrected fact, where it can.
   if (llm && typeof (llm as any).deriveCorrection === "function") {
     try {
       const res = await (llm as any).deriveCorrection(claim, text);
@@ -524,126 +523,10 @@ async function deriveCorrectionFromText(
     }
   }
 
-  let corrected = claim.normalizedText || claim.originalText;
-
-  // 1. Context-specific exact matching before generic replacement
-  // 多言語版価格 vs 本体価格
-  if (/多言語版/.test(corrected) && /多言語版[^\d]*(\d+[\d,]*\s*円)/.test(text)) {
-    const m = text.match(/多言語版[^\d]*(\d+[\d,]*\s*円)/);
-    if (m) {
-      corrected = corrected.replace(/\d+[\d,]*\s*円/, m[1]);
-    }
-  } else if (/本体価格|価格/.test(corrected) && /本体価格[^\d]*(\d+[\d,]*\s*円)/.test(text)) {
-    const m = text.match(/本体価格[^\d]*(\d+[\d,]*\s*円)/);
-    if (m) {
-      corrected = corrected.replace(/\d+[\d,]*\s*円/, m[1]);
-    }
-  }
-
-  // Joy-Con vs 本体バッテリー
-  if (/joy-?con/i.test(corrected) && /joy-?con[^\d]*(\d+\s*mah)/i.test(text)) {
-    const m = text.match(/joy-?con[^\d]*(\d+\s*mah)/i);
-    if (m) {
-      corrected = corrected.replace(/\d+\s*mah/i, m[1]);
-    }
-  } else if (/本体バッテリー|バッテリー/.test(corrected) && /本体[^\d]*(\d+\s*mah)/i.test(text)) {
-    const m = text.match(/本体[^\d]*(\d+\s*mah)/i);
-    if (m) {
-      corrected = corrected.replace(/\d+\s*mah/i, m[1]);
-    }
-  }
-
-  // 映像共有 vs チャット人数
-  if (/映像共有/.test(corrected) && /映像共有[^\d]*(\d+\s*人)/.test(text)) {
-    const m = text.match(/映像共有[^\d]*(\d+\s*人)/);
-    if (m) {
-      corrected = corrected.replace(/\d+\s*人/, m[1]);
-    }
-  } else if (/チャット/.test(corrected) && /チャット[^\d]*(\d+\s*人)/.test(text)) {
-    const m = text.match(/チャット[^\d]*(\d+\s*人)/);
-    if (m) {
-      corrected = corrected.replace(/\d+\s*人/, m[1]);
-    }
-  }
-
-  // microSDカード
-  if (/microsd/i.test(corrected) && /microsd[^\d]*(\d+\s*tb)/i.test(text)) {
-    const m = text.match(/microsd[^\d]*(\d+\s*tb)/i);
-    if (m) {
-      corrected = corrected.replace(/\d+\s*tb/i, m[1]);
-    }
-  }
-
-  // 2. Generic spec unit matching between claim and evidence:
-  // mm, g, インチ, Hz, GB, fps, Gbps
-  const specUnits = ["mm", "g", "インチ", "Hz", "GB", "fps", "Gbps"];
-  for (const unit of specUnits) {
-    const unitRegex = new RegExp(`(\\d+[\\d,.]*)\\s*${unit}`, "gi");
-    let match: RegExpExecArray | null;
-    while ((match = unitRegex.exec(corrected)) !== null) {
-      const claimVal = match[1];
-      const evRegex = new RegExp(`(\\d+[\\d,.]*)\\s*${unit}`, "gi");
-      let evMatch: RegExpExecArray | null;
-      while ((evMatch = evRegex.exec(text)) !== null) {
-        const evVal = evMatch[1];
-        if (evVal.replace(/,/g, "") !== claimVal.replace(/,/g, "")) {
-          const wrongSegment = `${claimVal}${unit}`;
-          const rightSegment = `${evVal}${unit}`;
-          if (corrected.includes(wrongSegment)) {
-            corrected = corrected.replace(wrongSegment, rightSegment);
-            break;
-          }
-        }
-      }
-    }
-  }
-
-  // Resolution replacement (e.g. 1920×1200 -> 1920×1080)
-  const resMatch = corrected.match(/(\d{3,4})\s*[×x]\s*(\d{3,4})/i);
-  const evResMatch = text.match(/(\d{3,4})\s*[×x]\s*(\d{3,4})/i);
-  if (resMatch && evResMatch) {
-    const wrongRes = resMatch[0];
-    const rightRes = evResMatch[0];
-    if (wrongRes !== rightRes) {
-      corrected = corrected.replace(wrongRes, rightRes);
-    }
-  }
-
-  // Wi-Fi standard replacement (e.g. Wi-Fi 6E -> Wi-Fi 6)
-  const wifiMatch = corrected.match(/wi-?fi\s*(\d+[a-z]*)/i);
-  const evWifiMatch = text.match(/wi-?fi\s*(\d+[a-z]*)/i);
-  if (wifiMatch && evWifiMatch) {
-    const wrongWifi = wifiMatch[0];
-    const rightWifi = evWifiMatch[0];
-    if (wrongWifi.toLowerCase() !== rightWifi.toLowerCase()) {
-      corrected = corrected.replace(wrongWifi, rightWifi);
-    }
-  }
-
-  // General spec/number/date corrections based on evidence content
-  const specPairs = [
-    { wrong: /2025年4月3日/g, right: "2025年4月2日", evCheck: /4月2日/ },
-    { wrong: /6月6日/g, right: "6月5日", evCheck: /6月5日/ },
-    { wrong: /4月3日/g, right: "4月2日", evCheck: /4月2日/ },
-    { wrong: /2023年9月13日/g, right: "2023年9月12日", evCheck: /12\s*日/ },
-    { wrong: /20\s*MP/gi, right: "24MP", evCheck: /24\s*mp/i },
-    { wrong: /6\s*倍/g, right: "5倍", evCheck: /5\s*倍/ },
-    { wrong: /20\s*Gbps/gi, right: "10Gbps", evCheck: /(?:10\s*gbps|10\s*gb\/s|10\s*ギガビット)/i },
-    { wrong: /約\s*2\s*倍/g, right: "最大3倍", evCheck: /3\s*倍/ },
-    { wrong: /Wi-Fi\s*7/gi, right: "Wi-Fi 6E", evCheck: /wi-?fi\s*6e/i },
-    { wrong: /Wi-Fi\s*6E/gi, right: "Wi-Fi 6", evCheck: /wi-?fi\s*6(?!\s*e)/i },
-    { wrong: /2024年9月/g, right: "2025年9月", evCheck: /2025年9月/ },
-  ];
-
-  for (const pair of specPairs) {
-    pair.wrong.lastIndex = 0;
-    if (pair.wrong.test(corrected) && pair.evCheck.test(text)) {
-      pair.wrong.lastIndex = 0;
-      corrected = corrected.replace(pair.wrong, pair.right);
-    }
-  }
-
-  return corrected;
+  // Otherwise the Evidence's own figures, and only where they answer the same
+  // question the Claim asks. Anything less specific is a guess, and a guess
+  // here rewrites the reader's article with another document's facts.
+  return correctionFromEvidence(claim, text);
 }
 
 function extractRelevantExcerpt(content: string, claim: Claim, maxLength = 2500): string {
