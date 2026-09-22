@@ -218,6 +218,25 @@ describe("Rewrite Pipeline", () => {
     expect(rewriteResult.revisedText).toContain("3倍");
     expect(rewriteResult.revisedText).toContain("Wi-Fi 6E");
   });
+
+  it("should accurately detect and correct Nintendo Switch 2 announcement and release dates", async () => {
+    const input = "Nintendo Switch 2は2025年4月3日に詳細発表、6月6日に発売。";
+
+    const factOutput = await runFactPipeline(input);
+    const contradicted = factOutput.claims.filter((c) => c.verdict === "CONTRADICTED");
+    expect(contradicted.length).toBeGreaterThanOrEqual(1);
+
+    const rewriteResult = await runRewritePipeline(
+      input,
+      factOutput.factLedger,
+      []
+    );
+
+    expect(rewriteResult.revisedText).toContain("4月2日");
+    expect(rewriteResult.revisedText).toContain("6月5日");
+    expect(rewriteResult.revisedText).not.toContain("4月3日");
+    expect(rewriteResult.revisedText).not.toContain("6月6日");
+  });
 });
 
 describe("Delta Check", () => {

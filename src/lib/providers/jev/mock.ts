@@ -171,7 +171,26 @@ export class MockJEVClient implements JEVClient {
         }
 
         // Detect numerical, date, or specification conflicts between claim and evidence
+        let hasGenericDateConflict = false;
+        const claimDates = claimText.match(/(\d{1,2})\s*月\s*(\d{1,2})\s*日/g) || [];
+        for (const cd of claimDates) {
+          const match = cd.match(/(\d{1,2})\s*月\s*(\d{1,2})\s*日/);
+          if (match) {
+            const m = match[1];
+            const d = match[2];
+            const evMonthRegex = new RegExp(`${m}\\s*月\\s*(\\d{1,2})\\s*日`, "g");
+            let mMatch: RegExpExecArray | null;
+            while ((mMatch = evMonthRegex.exec(evText)) !== null) {
+              if (mMatch[1] !== d) {
+                hasGenericDateConflict = true;
+                break;
+              }
+            }
+          }
+        }
+
         const hasDateConflict =
+          hasGenericDateConflict ||
           (/13\s*日/.test(claimText) && /12\s*日/.test(evText)) ||
           (/2024\s*年/.test(claimText) && /2025\s*年/.test(evText)) ||
           (/2025\s*年\s*8\s*月/.test(claimText) && evText.includes("未発表"));

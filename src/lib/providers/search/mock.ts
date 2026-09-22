@@ -21,6 +21,22 @@ export class MockSearchProvider implements SearchProvider {
     const normalizedQuery = query.toLowerCase().trim();
     const maxResults = options.maxResults || 5;
 
+    // Nintendo Switch 2 official announcement scenario
+    if (/nintendo|switch|任天堂/i.test(normalizedQuery)) {
+      const results: SearchResultItem[] = [
+        {
+          title: "ニュースリリース : 2025年4月2日 後継機種「Nintendo Switch 2」に関するお知らせ - 任天堂",
+          url: "https://www.nintendo.co.jp/corporate/release/2025/250402.html",
+          content:
+            "任天堂株式会社は、2025年4月2日、Nintendo Switchの後継機種となる『Nintendo Switch 2』の詳細を発表いたしました。発売日は2025年6月5日（木）を予定しております。本体価格は49,980円（税込）。本体サイズは横幅272mm、重量約534g、7.9インチ1920×1080解像度・120Hzディスプレイを搭載。内蔵ストレージは256GB、Wi-Fi 6対応、4K・60fps映像出力対応。バッテリー容量は本体5220mAh、Joy-Con各500mAhです。",
+          score: 0.99,
+          publishedDate: "2025-04-02",
+          sourceType: "official",
+        },
+      ];
+      return createSearchResponse(query, results);
+    }
+
     // iPhone 15 Pro announcement scenario
     if (/iphone\s*15|apple.*発表|2023年9月|48mp|20mp|24mp|10gbps|20gbps|望遠|wi-fi/i.test(normalizedQuery)) {
       const results: SearchResultItem[] = [

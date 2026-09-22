@@ -47,6 +47,15 @@ export class MockFetchProvider implements FetchProvider {
       siteName: "Apple (日本)",
       statusCode: 200,
     },
+    "https://www.nintendo.co.jp/corporate/release/2025/250402.html": {
+      title: "ニュースリリース : 2025年4月2日 後継機種「Nintendo Switch 2」に関するお知らせ - 任天堂",
+      content:
+        "任天堂株式会社は、2025年4月2日、Nintendo Switchの後継機種となる『Nintendo Switch 2』の詳細を発表いたしました。発売日は2025年6月5日（木）を予定しております。本体価格は49,980円（税込）。本体サイズは横幅272mm、重量約534g、7.9インチ1920×1080解像度・120Hzディスプレイを搭載。内蔵ストレージは256GB、Wi-Fi 6対応、4K・60fps映像出力対応。バッテリー容量は本体5220mAh、Joy-Con各500mAhです。",
+      publishedAt: "2025-04-02T10:00:00Z",
+      author: "任天堂株式会社 企業広報部",
+      siteName: "任天堂ホームページ",
+      statusCode: 200,
+    },
     "https://www.mhlw.go.jp/stf/seisakunitsuite/bunya/vaccine_qa.html": {
       title: "新型コロナワクチンQ&A - 厚生労働省",
       content:

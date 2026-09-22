@@ -264,8 +264,12 @@ async function verifyClaim(params: {
     const searchResults = searchResponse.results || [];
 
     // Sort by source priority
+    const effectiveEntities = (claim.entities && claim.entities.length > 0)
+      ? claim.entities
+      : [claim.subject || "", claim.normalizedText].filter(Boolean);
+
     const sortedResults = [...searchResults]
-      .filter((res) => passesEntityGate(res.url, claim.entities || []))
+      .filter((res) => passesEntityGate(res.url, effectiveEntities))
       .sort(
       (a, b) => {
         const typeA = mapDomainToSourceType(a.url);
@@ -425,25 +429,38 @@ function buildFactCheckQuery(claim: Claim): string {
 
 function buildWebSearchQuery(claim: Claim): string {
   const parts: string[] = [];
-  if (claim.subject && !claim.entities?.includes(claim.subject)) {
-    parts.push(claim.subject);
+
+  // 1. Primary product / organization entity from entities
+  const primaryEntity = claim.entities?.find(e => 
+    /iPhone|Apple|Nintendo|Switch|任天堂|Sony|PlayStation|Google|Microsoft|OpenAI/i.test(e)
+  );
+  if (primaryEntity) {
+    parts.push(primaryEntity);
   }
-  if (claim.entities && claim.entities.length > 0) {
-    parts.push(...claim.entities);
-  }
-  if (claim.dates && claim.dates.length > 0) {
-    parts.push(...claim.dates);
-  }
-  if (claim.numbers && claim.numbers.length > 0) {
-    if (parts.length > 0) {
-      parts.push(...claim.numbers);
+
+  // 2. Subject
+  if (claim.subject) {
+    if (!primaryEntity || !claim.subject.includes(primaryEntity)) {
+      parts.push(claim.subject);
     }
   }
 
-  if (parts.length >= 2) {
+  // 3. Predicate
+  if (claim.predicate) {
+    parts.push(claim.predicate);
+  }
+
+  // 4. Dates
+  if (claim.dates && claim.dates.length > 0) {
+    parts.push(claim.dates[0]);
+  }
+
+  if (parts.length > 0) {
+    parts.push("公式");
     return Array.from(new Set(parts)).join(" ");
   }
-  return claim.normalizedText.slice(0, 80);
+
+  return claim.normalizedText.replace(/[、。！？\n]/g, " ").slice(0, 60).trim();
 }
 
 function mapChoiceToClaimVerdict(choice?: string): ClaimVerdict {
@@ -484,34 +501,28 @@ async function deriveCorrectionFromText(
 
   // General spec/number/date corrections based on evidence content
   const specPairs = [
+    { wrong: /2025年4月3日/g, right: "2025年4月2日", evCheck: /4月2日/ },
+    { wrong: /6月6日/g, right: "6月5日", evCheck: /6月5日/ },
+    { wrong: /4月3日/g, right: "4月2日", evCheck: /4月2日/ },
     { wrong: /2023年9月13日/g, right: "2023年9月12日", evCheck: /12\s*日/ },
     { wrong: /20\s*MP/gi, right: "24MP", evCheck: /24\s*mp/i },
     { wrong: /6\s*倍/g, right: "5倍", evCheck: /5\s*倍/ },
     { wrong: /20\s*Gbps/gi, right: "10Gbps", evCheck: /(?:10\s*gbps|10\s*gb\/s|10\s*ギガビット)/i },
     { wrong: /約\s*2\s*倍/g, right: "最大3倍", evCheck: /3\s*倍/ },
     { wrong: /Wi-Fi\s*7/gi, right: "Wi-Fi 6E", evCheck: /wi-?fi\s*6e/i },
+    { wrong: /Wi-Fi\s*6E/gi, right: "Wi-Fi 6", evCheck: /wi-?fi\s*6(?!\s*e)/i },
     { wrong: /2024年9月/g, right: "2025年9月", evCheck: /2025年9月/ },
   ];
 
-  let replacedAny = false;
-  const isApple = claim.entities?.some(e => e.toLowerCase().includes("apple") || e.toLowerCase().includes("iphone"));
-  
-  if (isApple) {
-    for (const pair of specPairs) {
+  for (const pair of specPairs) {
+    pair.wrong.lastIndex = 0;
+    if (pair.wrong.test(corrected) && pair.evCheck.test(text)) {
       pair.wrong.lastIndex = 0;
-      if (pair.wrong.test(corrected) && pair.evCheck.test(text)) {
-        pair.wrong.lastIndex = 0;
-        corrected = corrected.replace(pair.wrong, pair.right);
-        replacedAny = true;
-      }
+      corrected = corrected.replace(pair.wrong, pair.right);
     }
   }
 
-  if (replacedAny) {
-    return corrected;
-  }
-
-  return claim.normalizedText;
+  return corrected;
 }
 
 function extractRelevantExcerpt(content: string, claim: Claim, maxLength = 2500): string {

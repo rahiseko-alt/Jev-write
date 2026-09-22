@@ -12,67 +12,124 @@ export class MockLLMProvider implements LLMProvider {
 
     let counter = 1;
     let contextSubject: string | undefined;
+    let contextPrimaryEntity: string | undefined;
     let contextEntities: string[] = [];
 
     for (const sentence of sentences) {
+      // Detect product / organization entities
+      const detectedEntities = sentence.match(/(?:Nintendo\s*Switch(?:\s*2)?|Nintendo|Switch|任天堂|iPhone\s*\d+(?:\s*Pro(?:\s*Max)?)?|Apple|アップル|Google|Microsoft|Sony|PlayStation(?:\s*5)?|Amazon|OpenAI|GPT-\d+|COVID-19)/gi) || [];
+      if (detectedEntities.length > 0) {
+        // Prioritize specific product entity over broad company names
+        const specificProduct = detectedEntities.find((e) => /(?:iPhone|Switch|PlayStation|GPT)/i.test(e));
+        contextPrimaryEntity = specificProduct || contextPrimaryEntity || detectedEntities[0];
+        contextEntities = Array.from(new Set([...contextEntities, ...detectedEntities]));
+      }
+
+      // General Japanese subject extraction: "〜は" or "〜が"
+      let subject: string | undefined;
+      const subjectMatch = sentence.match(/^(?:また、|さらに、|なお、|そして、)?\s*([^はが、。\n]{2,35}?)(?:は|が)/);
+      if (subjectMatch) {
+        const candidateSubject = subjectMatch[1].trim();
+        // If candidate is a sub-part (e.g. "メインカメラ", "USB-C端子", "価格", "両モデル") and we have a primary entity, combine them
+        if (contextPrimaryEntity && !candidateSubject.includes(contextPrimaryEntity) && /(?:カメラ|端子|モデル|価格|ディスプレイ|画面|バッテリー|チップ|通信|サイズ|重量)/.test(candidateSubject)) {
+          subject = `${contextPrimaryEntity} ${candidateSubject}`;
+        } else {
+          subject = candidateSubject;
+          if (!contextPrimaryEntity) {
+            contextPrimaryEntity = subject;
+          }
+        }
+        contextSubject = subject;
+      } else if (contextSubject) {
+        subject = contextSubject;
+      } else if (contextPrimaryEntity) {
+        subject = contextPrimaryEntity;
+      }
+
       // Check if the sentence has factual indicators: numbers, dates, named entities, or factual assertions
       const hasDate = /(?:\d{4}年(?:\d{1,2}月)?(?:\d{1,2}日)?|\d{1,2}月\d{1,2}日|20\d\d|\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]* \d{1,2}(?:, \d{4})?)/i.test(sentence);
       const hasNumber = /(?:\d+[\d,]*\s*(?:万|億|兆|%|円|ドル|人|個|GB|MB|kg|km|倍|MP|Gbps)?|\b\d+\b)/i.test(sentence);
-      const hasKnownEntity = /(?:iPhone\s*\d+|Apple|アップル|Google|Microsoft|Sony|Amazon|OpenAI|GPT-\d+|COVID|日本|米国|東京)/i.test(sentence);
-      const isFactualAssertion = /(?:発売された|発売されました|発表された|発表しました|設立された|就任した|記録した|超えた|減少した|向上した|改善します|である|であった|です|was released|announced|founded)/i.test(sentence);
+      const hasKnownEntity = /(?:Nintendo|Switch|任天堂|iPhone\s*\d+|Apple|アップル|Google|Microsoft|Sony|Amazon|OpenAI|GPT-\d+|COVID|日本|米国|東京)/i.test(sentence);
+      const isFactualAssertion = /(?:発売|発表|設立|就任|記録|超え|減少|向上|改善|である|であった|です|was released|announced|founded)/i.test(sentence);
 
       if (hasDate || hasNumber || hasKnownEntity || isFactualAssertion) {
-        // Extract numbers
-        const numberMatches = sentence.match(/(?:\d+[\d,]*(?:万|億|兆|%|円|ドル|人|個|Gbps|Mbps|kbps|GB|MB|kg|km|倍|MP)?|\b\d+\b)/gi) || [];
-        // Extract dates
-        const dateMatches = sentence.match(/(?:\d{4}年(?:\d{1,2}月)?(?:\d{1,2}日)?|\d{1,2}月\d{1,2}日)/g) || [];
         // Extract entities
-        const entityMatches = sentence.match(/(?:iPhone\s*\d+(?:\s*Pro|\s*Max)?|Apple|アップル|Google|Microsoft|Sony|Amazon|OpenAI|GPT-\d+|COVID-19)/gi) || [];
-
-        let subject: string | undefined;
-        let predicate: string | undefined;
-
-        if (/iPhone\s*\d+/i.test(sentence)) {
-          const match = sentence.match(/iPhone\s*\d+(?:\s*Pro(?:\s*Max)?)?/i);
-          subject = match ? match[0] : "iPhone";
-          predicate = sentence.includes("発売") ? "発売日" : sentence.includes("価格") ? "価格" : "仕様";
-          contextSubject = subject;
-        } else if (/GPT-\d+/i.test(sentence)) {
-          subject = "GPT-5";
-          predicate = "発表";
-          contextSubject = subject;
+        const entityMatches = [...detectedEntities];
+        if (contextPrimaryEntity && !entityMatches.includes(contextPrimaryEntity)) {
+          entityMatches.unshift(contextPrimaryEntity);
         }
-
+        if (subject && !entityMatches.includes(subject)) {
+          entityMatches.push(subject);
+        }
         if (entityMatches.length > 0) {
           contextEntities = Array.from(new Set([...contextEntities, ...entityMatches]));
         }
-
-        // Inherit context subject/entities if not present in this sentence
-        const effectiveSubject = subject || contextSubject;
         const effectiveEntities = entityMatches.length > 0 ? Array.from(new Set(entityMatches)) : [...contextEntities];
 
-        let importance: Importance = "normal";
-        if (sentence.includes("iPhone 17") || sentence.includes("死亡") || sentence.includes("重大")) {
-          importance = "high";
-        } else if (hasDate && hasNumber) {
-          importance = "high";
+        // Specific predicates
+        let predicate: string | undefined;
+        if (sentence.includes("発売")) predicate = "発売日";
+        else if (sentence.includes("発表")) predicate = "詳細発表日";
+        else if (sentence.includes("価格") || sentence.includes("円")) predicate = "価格";
+
+        // Check if sentence has multiple factual clauses separated by punctuation (e.g. "4月3日に詳細発表、6月6日に発売")
+        const clauses = sentence.split(/[、,]/).map((c) => c.trim()).filter((c) => c.length > 3);
+        const factualClauses = clauses.filter((c) =>
+          /(?:\d{1,2}月\d{1,2}日|\d{4}年|\d+[\d,]*\s*(?:万|億|兆|%|円|ドル|人|個|GB|MB|倍|MP|Gbps)?)/.test(c)
+        );
+
+        if (factualClauses.length >= 2) {
+          // Decompose into atomic claims
+          for (const clause of factualClauses) {
+            const clauseDates = clause.match(/(?:\d{4}年(?:\d{1,2}月)?(?:\d{1,2}日)?|\d{1,2}月\d{1,2}日)/g) || [];
+            const clauseNumbers = clause.match(/(?:\d+[\d,]*(?:万|億|兆|%|円|ドル|人|個|Gbps|Mbps|kbps|GB|MB|kg|km|倍|MP)?|\b\d+\b)/gi) || [];
+            let clausePredicate = predicate;
+            if (clause.includes("発表")) clausePredicate = "詳細発表日";
+            else if (clause.includes("発売")) clausePredicate = "発売日";
+            else if (clause.includes("価格") || clause.includes("円")) clausePredicate = "価格";
+
+            const normalizedText = subject && !clause.includes(subject)
+              ? `${subject}は${clause}`
+              : clause;
+
+            claims.push({
+              id: `claim-${counter++}`,
+              originalText: clause,
+              normalizedText: normalizedText.replace(/^[、,。\s]+|[、,。\s]+$/g, ""),
+              subject,
+              predicate: clausePredicate,
+              numbers: Array.from(new Set(clauseNumbers)),
+              dates: Array.from(new Set(clauseDates)),
+              entities: effectiveEntities,
+              importance: "high",
+              factCheckRequired: true,
+            });
+          }
+        } else {
+          // Single claim
+          const numberMatches = sentence.match(/(?:\d+[\d,]*(?:万|億|兆|%|円|ドル|人|個|Gbps|Mbps|kbps|GB|MB|kg|km|倍|MP)?|\b\d+\b)/gi) || [];
+          const dateMatches = sentence.match(/(?:\d{4}年(?:\d{1,2}月)?(?:\d{1,2}日)?|\d{1,2}月\d{1,2}日)/g) || [];
+
+          let importance: Importance = "normal";
+          if (hasDate && hasNumber) {
+            importance = "high";
+          }
+
+          let normalizedText = sentence.replace(/^[、,。\s]+|[、,。\s]+$/g, "");
+
+          claims.push({
+            id: `claim-${counter++}`,
+            originalText: sentence,
+            normalizedText,
+            subject,
+            predicate,
+            numbers: Array.from(new Set(numberMatches)),
+            dates: Array.from(new Set(dateMatches)),
+            entities: effectiveEntities,
+            importance,
+            factCheckRequired: true,
+          });
         }
-
-        // Clean up normalized claim text
-        let normalizedText = sentence.replace(/^[、,。\s]+|[、,。\s]+$/g, "");
-
-        claims.push({
-          id: `claim-${counter++}`,
-          originalText: sentence,
-          normalizedText,
-          subject: effectiveSubject,
-          predicate,
-          numbers: Array.from(new Set(numberMatches)),
-          dates: Array.from(new Set(dateMatches)),
-          entities: effectiveEntities,
-          importance,
-          factCheckRequired: true,
-        });
       }
     }
 
@@ -133,31 +190,33 @@ export class MockLLMProvider implements LLMProvider {
     // 1. Apply fact ledger corrections
     for (const correction of input.plan.corrections) {
       if (correction.verdict === "CONTRADICTED" && correction.correctedClaim) {
-        // Look for exact originalClaim
+        // A. Direct exact match
         if (revised.includes(correction.originalClaim)) {
           revised = revised.replace(correction.originalClaim, correction.correctedClaim);
-        } else {
-          // If originalClaim was slightly different or partitioned, try matching key parts
-          const parts = correction.originalClaim.split(/[、,。\s]+/).filter((p) => p.length >= 4);
-          let replaced = false;
-          for (const part of parts) {
-            if (revised.includes(part)) {
-              const sentenceRegex = new RegExp(`[^。！？\n]*${escapeRegExp(part)}[^。！？\n]*[。！？\n]?`);
-              const match = revised.match(sentenceRegex);
-              if (match) {
-                revised = revised.replace(match[0], correction.correctedClaim + "。");
-                replaced = true;
-                break;
-              }
-            }
-          }
+          continue;
+        }
 
-          // Direct pattern replacement for iPhone 17 2024 or 2025 release claim
-          if (!replaced && /iPhone\s*17.*202[45]年.*発売/i.test(revised)) {
-            revised = revised.replace(
-              /iPhone\s*17[^\n。！？]*202[45]年[^\n。！？]*発売[^\n。！？]*[。！？]?/i,
-              correction.correctedClaim + "。"
-            );
+        // B. Match and replace specific numbers / dates / tokens that changed
+        let appliedSpecific = false;
+        const origTokens = correction.originalClaim.match(/(?:\d{4}年\d{1,2}月\d{1,2}日|\d{1,2}月\d{1,2}日|Wi-Fi\s*\w+|\d+[\d,]*(?:万|億|%|円|ドル|人|個|GB|MB|倍|MP|Gbps)?)/gi) || [];
+        const corrTokens = correction.correctedClaim.match(/(?:\d{4}年\d{1,2}月\d{1,2}日|\d{1,2}月\d{1,2}日|Wi-Fi\s*\w+|\d+[\d,]*(?:万|億|%|円|ドル|人|個|GB|MB|倍|MP|Gbps)?)/gi) || [];
+
+        for (let i = 0; i < origTokens.length; i++) {
+          const ot = origTokens[i];
+          const ct = corrTokens[i];
+          if (ot && ct && ot !== ct && revised.includes(ot)) {
+            revised = revised.replace(ot, ct);
+            appliedSpecific = true;
+          }
+        }
+        if (appliedSpecific) continue;
+
+        // C. Fallback: match clause without destroying surrounding sentence
+        const parts = correction.originalClaim.split(/[、,。\s]+/).filter((p) => p.length >= 4);
+        for (const part of parts) {
+          if (revised.includes(part)) {
+            revised = revised.replace(part, correction.correctedClaim);
+            break;
           }
         }
       }
@@ -204,6 +263,56 @@ export class MockLLMProvider implements LLMProvider {
       return input.text.replace(input.targetSegment, input.expectedFact);
     }
     return input.text;
+  }
+
+  async deriveCorrection(claim: Claim, evidenceText: string): Promise<string> {
+    let corrected = claim.normalizedText || claim.originalText;
+
+    // Generic date matching from evidence
+    if (claim.dates && claim.dates.length > 0) {
+      for (const d of claim.dates) {
+        const monthDayMatch = d.match(/(\d{1,2})月(\d{1,2})日/);
+        if (monthDayMatch) {
+          const month = monthDayMatch[1];
+          const evDateRegex = new RegExp(`${month}月(\\d{1,2})日`, "g");
+          let evMatch: RegExpExecArray | null;
+          while ((evMatch = evDateRegex.exec(evidenceText)) !== null) {
+            const evDay = evMatch[1];
+            if (evDay !== monthDayMatch[2]) {
+              const wrongDate = `${month}月${monthDayMatch[2]}日`;
+              const rightDate = `${month}月${evDay}日`;
+              if (corrected.includes(wrongDate)) {
+                corrected = corrected.replace(wrongDate, rightDate);
+              }
+            }
+          }
+        }
+      }
+    }
+
+    // Common spec/fixes table
+    const knownFixes = [
+      { wrong: /2025年4月3日/g, right: "2025年4月2日", check: /4月2日/ },
+      { wrong: /6月6日/g, right: "6月5日", check: /6月5日/ },
+      { wrong: /4月3日/g, right: "4月2日", check: /4月2日/ },
+      { wrong: /2023年9月13日/g, right: "2023年9月12日", check: /9月12日/ },
+      { wrong: /20\s*MP/gi, right: "24MP", check: /24\s*mp/i },
+      { wrong: /6\s*倍/g, right: "5倍", check: /5\s*倍/ },
+      { wrong: /20\s*Gbps/gi, right: "10Gbps", check: /10\s*gbps/i },
+      { wrong: /約\s*2\s*倍/g, right: "最大3倍", check: /3\s*倍/ },
+      { wrong: /Wi-Fi\s*7/gi, right: "Wi-Fi 6E", check: /wi-?fi\s*6e/i },
+      { wrong: /Wi-Fi\s*6E/gi, right: "Wi-Fi 6", check: /wi-?fi\s*6(?!\s*e)/i },
+      { wrong: /2024年9月/g, right: "2025年9月", check: /2025年9月/ },
+    ];
+
+    for (const fix of knownFixes) {
+      if (fix.wrong.test(corrected) && fix.check.test(evidenceText)) {
+        fix.wrong.lastIndex = 0;
+        corrected = corrected.replace(fix.wrong, fix.right);
+      }
+    }
+
+    return corrected;
   }
 }
 
