@@ -40,6 +40,17 @@ export async function POST(request: NextRequest) {
 
     const updatedJob = jobStore.getJob(job.id);
 
+    if (updatedJob?.status === "FAILED") {
+      return NextResponse.json(
+        {
+          error: "解析ジョブの実行に失敗しました。",
+          details: updatedJob.error || updatedJob.currentMessage,
+          jobId: job.id,
+        },
+        { status: 500 }
+      );
+    }
+
     return NextResponse.json(
       {
         jobId: job.id,
