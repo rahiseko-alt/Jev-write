@@ -357,9 +357,9 @@ export default function HomePage() {
           // =========================================
           // VIEW B: RESULTS & COMPARISON SCREEN (Image 2)
           // =========================================
-          <div className="flex-1 flex overflow-hidden">
+          <div className="flex-1 flex flex-col lg:flex-row overflow-y-auto lg:overflow-hidden">
             {/* Center Comparison Area */}
-            <main className="flex-1 flex flex-col bg-white overflow-hidden border-r border-slate-200">
+            <main className="flex-1 flex flex-col bg-white lg:overflow-hidden lg:border-r border-slate-200">
               {/* Document Header Bar */}
               <div className="p-4 border-b border-slate-200 flex items-center justify-between shrink-0">
                 <div>
@@ -737,7 +737,7 @@ export default function HomePage() {
                 RIGHT PANEL: INSPECTION & JEV CONFIDENCE
                 (Image 2 - Component 4 & 5)
                ========================================= */}
-            <aside className="w-96 bg-white border-l border-slate-200 flex flex-col justify-between overflow-y-auto shrink-0">
+            <aside className="w-full lg:w-96 lg:shrink-0 bg-white border-t lg:border-t-0 lg:border-l border-slate-200 flex flex-col justify-between lg:overflow-y-auto">
               {currentIssue ? (
                 <div className="p-6 space-y-5">
                   {/* Top Pagination Control */}
