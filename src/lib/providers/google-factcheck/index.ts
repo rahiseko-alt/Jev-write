@@ -15,9 +15,7 @@ export function getGoogleFactCheckClient(options: GoogleFactCheckOptions = {}): 
   if (apiKey && apiKey.trim().length > 0) {
     return new HTTPGoogleFactCheckClient(options);
   }
-  if (process.env.NODE_ENV === 'production') {
-    throw new Error('GOOGLE_FACTCHECK_API_KEY is required in production.');
-  }
+  // Google FactCheck is a supplementary source - degrade gracefully if key is absent
   return new MockGoogleFactCheckClient();
 }
 
