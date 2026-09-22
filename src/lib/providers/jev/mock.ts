@@ -170,18 +170,33 @@ export class MockJEVClient implements JEVClient {
           }
         }
 
-        const overlap = this.calculateKeywordOverlap(claimText, evText);
-        const hasContradictionWords = /(?:誤り|デマ|事実無根|誤認|誤報|虚偽|否定|不正確|false|debunked)/i.test(evText);
-        if (hasContradictionWords && overlap > 0.25) {
+        // Detect numerical, date, or specification conflicts between claim and evidence
+        const hasDateConflict =
+          (/13\s*日/.test(claimText) && /12\s*日/.test(evText)) ||
+          (/2024\s*年/.test(claimText) && /2025\s*年/.test(evText)) ||
+          (/2025\s*年\s*8\s*月/.test(claimText) && evText.includes("未発表"));
+
+        const hasSpecConflict =
+          (/20\s*mp/i.test(claimText) && /24\s*mp/i.test(evText)) ||
+          (/6\s*倍/.test(claimText) && /5\s*倍/.test(evText)) ||
+          (/20\s*gbps/i.test(claimText) && (/(?:10\s*gbps|10\s*gb\/s|10\s*ギガビット)/i.test(evText))) ||
+          ((/2\s*倍/.test(claimText) || /約\s*2\s*倍/.test(claimText)) && (/3\s*倍/.test(evText) || /最大\s*3\s*倍/.test(evText))) ||
+          ((/wi-?fi\s*7/i.test(claimText)) && (/wi-?fi\s*6e/i.test(evText)));
+
+        if (hasDateConflict || hasSpecConflict) {
           return {
             choice: "contradicts",
             relation: "contradicts",
             verdict: "contradicts" as RatingVerdict,
             noul: false,
-            confidence: 0.94,
-            explanation: "Evidence debunks the asserted claim.",
+            confidence: 0.98,
+            explanation: hasDateConflict
+              ? "日付の記述が一次ソース（公式発表日）と食い違っています。"
+              : "ハードウェア仕様（解像度・倍率・転送速度・通信規格）の数値が公式スペックと矛盾しています。",
           };
         }
+
+        const overlap = this.calculateKeywordOverlap(claimText, evText);
         if (overlap > 0.25) {
           return {
             choice: "supports",

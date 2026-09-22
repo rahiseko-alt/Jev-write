@@ -21,6 +21,22 @@ export class MockSearchProvider implements SearchProvider {
     const normalizedQuery = query.toLowerCase().trim();
     const maxResults = options.maxResults || 5;
 
+    // iPhone 15 Pro announcement scenario
+    if (/iphone\s*15|apple.*発表|2023年9月|48mp|20mp|24mp|10gbps|20gbps|望遠|wi-fi/i.test(normalizedQuery)) {
+      const results: SearchResultItem[] = [
+        {
+          title: "Apple、iPhone 15 ProとiPhone 15 Pro Maxを発表 - Apple (日本)",
+          url: "https://www.apple.com/jp/newsroom/2023/09/apple-unveils-iphone-15-pro-and-iphone-15-pro-max/",
+          content:
+            "2023年9月12日、カリフォルニア州クパティーノ、Appleは本日、iPhone 15 ProとiPhone 15 Pro Maxを発表しました。軽量で耐久性の高い航空宇宙産業レベルのチタニウムを採用。メインカメラは48MP、通常撮影のデフォルト解像度は24MP。iPhone 15 Pro Maxは5倍光学ズームの望遠カメラを搭載。USB-C端子はUSB 3に対応し最大10Gbpsでデータ転送可能。第2世代の超広帯域無線チップによって通信範囲は従来の最大3倍に拡大。Wi-Fi 6Eに対応。",
+          score: 0.99,
+          publishedDate: "2023-09-12",
+          sourceType: "official",
+        },
+      ];
+      return createSearchResponse(query, results);
+    }
+
     // iPhone 17 scenario
     if (/iphone\s*17/i.test(normalizedQuery)) {
       const results: SearchResultItem[] = [

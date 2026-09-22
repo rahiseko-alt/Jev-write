@@ -2,6 +2,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { jobStore } from "@/lib/job-store";
 import { runAnalysis } from "@/lib/orchestrator";
 
+// Allow serverless execution up to 60 seconds
+export const maxDuration = 60;
+export const dynamic = "force-dynamic";
+
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
@@ -31,14 +35,24 @@ export async function POST(request: NextRequest) {
 
     const job = jobStore.createJob(trimmedText);
 
-    // Trigger analysis asynchronously without awaiting it
-    void runAnalysis(job.id, trimmedText);
+    // Await analysis execution so Vercel Serverless doesn't freeze before completion!
+    await runAnalysis(job.id, trimmedText);
 
-    return NextResponse.json({ jobId: job.id }, { status: 201 });
+    const updatedJob = jobStore.getJob(job.id);
+
+    return NextResponse.json(
+      {
+        jobId: job.id,
+        status: updatedJob?.status,
+        result: updatedJob?.result,
+        job: updatedJob,
+      },
+      { status: 201 }
+    );
   } catch (err) {
     console.error("Failed to process /api/analyze:", err);
     return NextResponse.json(
-      { error: "解析ジョブの作成に失敗しました。" },
+      { error: "解析ジョブの実行に失敗しました。" },
       { status: 500 }
     );
   }

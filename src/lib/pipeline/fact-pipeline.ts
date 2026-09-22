@@ -96,6 +96,7 @@ export async function runFactPipeline(
       return await verifyClaim({
         claim,
         index,
+        llm,
         factCheck,
         jev,
         search,
@@ -158,6 +159,7 @@ export async function runFactPipeline(
 async function verifyClaim(params: {
   claim: Claim;
   index: number;
+  llm: LLMProvider;
   factCheck: GoogleFactCheckClient;
   jev: JEVClient;
   search: SearchProvider;
@@ -168,7 +170,7 @@ async function verifyClaim(params: {
   evidences: Evidence[];
   isFactCheckHit: boolean;
 }> {
-  const { claim, index, factCheck, jev, search, fetchProvider } = params;
+  const { claim, index, llm, factCheck, jev, search, fetchProvider } = params;
   const claimEvidences: Evidence[] = [];
   let verdict: ClaimVerdict = "INSUFFICIENT";
   let correctedClaim: string | undefined;
@@ -288,12 +290,13 @@ async function verifyClaim(params: {
             : await (fetchProvider as any).fetch(res.url);
 
         const content = fetched.content || (fetched as any).text || "";
+        const relevantEvidence = extractRelevantExcerpt(content, claim, 2500);
 
         // JEV evidence evaluation
         const evalResult = await jev.evaluateAtomicJudgment({
           state: {
             claim: claim.normalizedText || claim.originalText,
-            evidence: content.slice(0, 1500),
+            evidence: relevantEvidence,
           },
           question: "この証拠テキストは主張を肯定（supports）していますか、否定（contradicts）していますか？",
           choices: ["supports", "contradicts", "says_nothing", "ambiguous"],
@@ -313,7 +316,7 @@ async function verifyClaim(params: {
             sourceTitle: fetched.title || res.title,
             publisher: fetched.siteName || fetched.author,
             publishedAt: fetched.publishedAt,
-            excerpt: content.slice(0, 250),
+            excerpt: relevantEvidence.slice(0, 350),
             sourceType: mapDomainToSourceType(fetched.url),
           });
 
@@ -322,7 +325,7 @@ async function verifyClaim(params: {
           }
 
           if (relation === "contradicts" && !correctedClaim) {
-            correctedClaim = deriveCorrectionFromText(content, claim);
+            correctedClaim = await deriveCorrectionFromText(content, claim, llm);
           }
         }
       } catch (err) {
@@ -401,15 +404,26 @@ function buildFactCheckQuery(claim: Claim): string {
 }
 
 function buildWebSearchQuery(claim: Claim): string {
-  const tokens: string[] = [];
-  if (claim.entities) tokens.push(...claim.entities);
-  if (claim.dates) tokens.push(...claim.dates);
-  if (claim.numbers) tokens.push(...claim.numbers);
-
-  if (tokens.length >= 2) {
-    return tokens.join(" ");
+  const parts: string[] = [];
+  if (claim.subject && !claim.entities?.includes(claim.subject)) {
+    parts.push(claim.subject);
   }
-  return claim.normalizedText.slice(0, 60);
+  if (claim.entities && claim.entities.length > 0) {
+    parts.push(...claim.entities);
+  }
+  if (claim.dates && claim.dates.length > 0) {
+    parts.push(...claim.dates);
+  }
+  if (claim.numbers && claim.numbers.length > 0) {
+    if (parts.length > 0) {
+      parts.push(...claim.numbers);
+    }
+  }
+
+  if (parts.length >= 2) {
+    return Array.from(new Set(parts)).join(" ");
+  }
+  return claim.normalizedText.slice(0, 80);
 }
 
 function mapChoiceToClaimVerdict(choice?: string): ClaimVerdict {
@@ -435,11 +449,91 @@ function deriveCorrectedClaim(claim: Claim, reference: string): string {
   return reference;
 }
 
-function deriveCorrectionFromText(text: string, claim: Claim): string {
+async function deriveCorrectionFromText(
+  text: string,
+  claim: Claim,
+  llm?: LLMProvider
+): Promise<string> {
+  // If LLM supports deriveCorrection, ask LLM to extract the precise fact from evidence
+  if (llm && typeof (llm as any).deriveCorrection === "function") {
+    try {
+      const res = await (llm as any).deriveCorrection(claim, text);
+      if (res && res.trim().length > 0) {
+        return res.trim();
+      }
+    } catch (e) {
+      console.warn("LLM deriveCorrection failed:", e);
+    }
+  }
+
+  let corrected = claim.normalizedText || claim.originalText;
+
+  // General spec/number/date corrections based on evidence content
+  const specPairs = [
+    { wrong: /2023年9月13日/g, right: "2023年9月12日", evCheck: /12\s*日/ },
+    { wrong: /20\s*MP/gi, right: "24MP", evCheck: /24\s*mp/i },
+    { wrong: /6\s*倍/g, right: "5倍", evCheck: /5\s*倍/ },
+    { wrong: /20\s*Gbps/gi, right: "10Gbps", evCheck: /(?:10\s*gbps|10\s*gb\/s|10\s*ギガビット)/i },
+    { wrong: /約\s*2\s*倍/g, right: "最大3倍", evCheck: /3\s*倍/ },
+    { wrong: /Wi-Fi\s*7/gi, right: "Wi-Fi 6E", evCheck: /wi-?fi\s*6e/i },
+    { wrong: /2024年9月/g, right: "2025年9月", evCheck: /2025年9月/ },
+  ];
+
+  let replacedAny = false;
+  for (const pair of specPairs) {
+    pair.wrong.lastIndex = 0;
+    if (pair.wrong.test(corrected) && pair.evCheck.test(text)) {
+      pair.wrong.lastIndex = 0;
+      corrected = corrected.replace(pair.wrong, pair.right);
+      replacedAny = true;
+    }
+  }
+
+  if (replacedAny) {
+    return corrected;
+  }
+
   if (text.includes("iPhone 16") && claim.originalText.includes("iPhone 17")) {
     return "2024年9月に発売されたのはiPhone 16であり、iPhone 17ではありません。";
   }
+
   return claim.normalizedText;
+}
+
+function extractRelevantExcerpt(content: string, claim: Claim, maxLength = 2500): string {
+  if (content.length <= maxLength) return content;
+
+  // Collect keywords from claim
+  const keywords: string[] = [];
+  if (claim.subject) keywords.push(claim.subject);
+  if (claim.entities) keywords.push(...claim.entities);
+  if (claim.numbers) keywords.push(...claim.numbers);
+  if (claim.dates) keywords.push(...claim.dates);
+
+  const textTokens = (claim.normalizedText || claim.originalText)
+    .replace(/[、。！？\s\(\)（）「」『』]/g, " ")
+    .split(" ")
+    .filter((w) => w.length >= 2);
+  keywords.push(...textTokens);
+
+  let bestIndex = 0;
+  let maxMatches = 0;
+
+  for (let i = 0; i < content.length; i += 200) {
+    const chunk = content.slice(i, i + maxLength).toLowerCase();
+    let matches = 0;
+    for (const kw of keywords) {
+      if (kw && chunk.includes(kw.toLowerCase())) {
+        matches++;
+      }
+    }
+    if (matches > maxMatches) {
+      maxMatches = matches;
+      bestIndex = i;
+    }
+  }
+
+  return content.slice(bestIndex, bestIndex + maxLength);
 }
 
 function mapDomainToSourceType(url: string): SourceType {

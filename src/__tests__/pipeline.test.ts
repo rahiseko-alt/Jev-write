@@ -196,6 +196,28 @@ describe("Rewrite Pipeline", () => {
     expect(rewriteResult.revisedText).not.toContain("今後の動向からも目が離せません");
     expect(rewriteResult.revisedText).not.toContain("近年、モバイルテクノロジーの急速な進化");
   });
+
+  it("should accurately detect and correct the 6 intentional mistakes in iPhone 15 Pro article", async () => {
+    const input =
+      "Appleは2023年9月13日、iPhone 15 ProとiPhone 15 Pro Maxを発表した。両モデルは航空宇宙産業レベルのチタニウムを採用し、A17 Proと新しいアクションボタンを搭載する。メインカメラは48MPで、通常撮影では20MPをデフォルトとする。iPhone 15 Pro Maxには最大6倍の望遠カメラを搭載。USB-C端子はUSB 3に対応し、最大20Gbpsでデータを転送できる。第2世代の超広帯域無線チップによって通信範囲は従来の約2倍になったほか、Wi-Fi 7にも対応している。";
+
+    const factOutput = await runFactPipeline(input);
+    const contradicted = factOutput.claims.filter((c) => c.verdict === "CONTRADICTED");
+    expect(contradicted.length).toBeGreaterThanOrEqual(1);
+
+    const rewriteResult = await runRewritePipeline(
+      input,
+      factOutput.factLedger,
+      []
+    );
+
+    expect(rewriteResult.revisedText).toContain("9月12日");
+    expect(rewriteResult.revisedText).toContain("24MP");
+    expect(rewriteResult.revisedText).toContain("5倍");
+    expect(rewriteResult.revisedText).toContain("10Gbps");
+    expect(rewriteResult.revisedText).toContain("3倍");
+    expect(rewriteResult.revisedText).toContain("Wi-Fi 6E");
+  });
 });
 
 describe("Delta Check", () => {

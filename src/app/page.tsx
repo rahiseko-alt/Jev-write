@@ -140,8 +140,15 @@ export default function HomePage() {
         throw new Error(errorData.error || "リクエストに失敗しました");
       }
 
-      const { jobId } = await response.json();
+      const resData = await response.json();
+      const { jobId, result } = resData;
       setActiveJobId(jobId);
+
+      if (result) {
+        setAnalysisResult(result);
+        setIsSubmitting(false);
+        return;
+      }
 
       // Connect to SSE
       if (eventSourceRef.current) {

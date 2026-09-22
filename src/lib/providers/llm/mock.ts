@@ -11,16 +11,19 @@ export class MockLLMProvider implements LLMProvider {
       .filter((s) => s.length > 5);
 
     let counter = 1;
+    let contextSubject: string | undefined;
+    let contextEntities: string[] = [];
+
     for (const sentence of sentences) {
       // Check if the sentence has factual indicators: numbers, dates, named entities, or factual assertions
       const hasDate = /(?:\d{4}年(?:\d{1,2}月)?(?:\d{1,2}日)?|\d{1,2}月\d{1,2}日|20\d\d|\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]* \d{1,2}(?:, \d{4})?)/i.test(sentence);
-      const hasNumber = /(?:\d+[\d,]*\s*(?:万|億|兆|%|円|ドル|人|個|GB|MB|kg|km|倍)?|\b\d+\b)/.test(sentence);
+      const hasNumber = /(?:\d+[\d,]*\s*(?:万|億|兆|%|円|ドル|人|個|GB|MB|kg|km|倍|MP|Gbps)?|\b\d+\b)/i.test(sentence);
       const hasKnownEntity = /(?:iPhone\s*\d+|Apple|アップル|Google|Microsoft|Sony|Amazon|OpenAI|GPT-\d+|COVID|日本|米国|東京)/i.test(sentence);
       const isFactualAssertion = /(?:発売された|発売されました|発表された|発表しました|設立された|就任した|記録した|超えた|減少した|向上した|改善します|である|であった|です|was released|announced|founded)/i.test(sentence);
 
       if (hasDate || hasNumber || hasKnownEntity || isFactualAssertion) {
         // Extract numbers
-        const numberMatches = sentence.match(/(?:\d+[\d,]*(?:万|億|兆|%|円|ドル|人|個|GB|MB|kg|km|倍)?)/g) || [];
+        const numberMatches = sentence.match(/(?:\d+[\d,]*(?:万|億|兆|%|円|ドル|人|個|Gbps|Mbps|kbps|GB|MB|kg|km|倍|MP)?|\b\d+\b)/gi) || [];
         // Extract dates
         const dateMatches = sentence.match(/(?:\d{4}年(?:\d{1,2}月)?(?:\d{1,2}日)?|\d{1,2}月\d{1,2}日)/g) || [];
         // Extract entities
@@ -30,13 +33,23 @@ export class MockLLMProvider implements LLMProvider {
         let predicate: string | undefined;
 
         if (/iPhone\s*\d+/i.test(sentence)) {
-          const match = sentence.match(/iPhone\s*\d+/i);
+          const match = sentence.match(/iPhone\s*\d+(?:\s*Pro(?:\s*Max)?)?/i);
           subject = match ? match[0] : "iPhone";
           predicate = sentence.includes("発売") ? "発売日" : sentence.includes("価格") ? "価格" : "仕様";
+          contextSubject = subject;
         } else if (/GPT-\d+/i.test(sentence)) {
           subject = "GPT-5";
           predicate = "発表";
+          contextSubject = subject;
         }
+
+        if (entityMatches.length > 0) {
+          contextEntities = Array.from(new Set([...contextEntities, ...entityMatches]));
+        }
+
+        // Inherit context subject/entities if not present in this sentence
+        const effectiveSubject = subject || contextSubject;
+        const effectiveEntities = entityMatches.length > 0 ? Array.from(new Set(entityMatches)) : [...contextEntities];
 
         let importance: Importance = "normal";
         if (sentence.includes("iPhone 17") || sentence.includes("死亡") || sentence.includes("重大")) {
@@ -52,11 +65,11 @@ export class MockLLMProvider implements LLMProvider {
           id: `claim-${counter++}`,
           originalText: sentence,
           normalizedText,
-          subject,
+          subject: effectiveSubject,
           predicate,
           numbers: Array.from(new Set(numberMatches)),
           dates: Array.from(new Set(dateMatches)),
-          entities: Array.from(new Set(entityMatches)),
+          entities: effectiveEntities,
           importance,
           factCheckRequired: true,
         });

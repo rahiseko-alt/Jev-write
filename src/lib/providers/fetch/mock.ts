@@ -29,6 +29,15 @@ export class MockFetchProvider implements FetchProvider {
       siteName: "ITmedia Mobile",
       statusCode: 200,
     },
+    "https://www.apple.com/jp/newsroom/2023/09/apple-unveils-iphone-15-pro-and-iphone-15-pro-max/": {
+      title: "Apple、iPhone 15 ProとiPhone 15 Pro Maxを発表 - Apple (日本)",
+      content:
+        "2023年9月12日、カリフォルニア州クパティーノ、Appleは本日、iPhone 15 ProとiPhone 15 Pro Maxを発表しました。航空宇宙産業レベルのチタニウムを採用し、A17 Proと新しいアクションボタンを搭載。メインカメラは48MPで、通常撮影では24MPをデフォルトとします。iPhone 15 Pro Maxには最大5倍の光学ズーム望遠カメラを搭載。USB-C端子はUSB 3に対応し最大10Gbpsでデータ転送可能。第2世代の超広帯域無線チップによって通信範囲は従来の最大3倍に拡大。Wi-Fi 6Eに対応。",
+      publishedAt: "2023-09-12T17:00:00Z",
+      author: "Apple Newsroom",
+      siteName: "Apple (日本)",
+      statusCode: 200,
+    },
     "https://www.apple.com/jp/newsroom/2024/09/apple-introduces-iphone-16/": {
       title: "Apple、iPhone 16を発表 - Apple (日本)",
       content:
