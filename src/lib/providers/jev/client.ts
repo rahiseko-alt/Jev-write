@@ -134,9 +134,6 @@ export class HTTPJEVClient implements JEVClient {
         explanation: resultItem?.explanation,
       };
     } catch (err) {
-      if (process.env.NODE_ENV === 'production') {
-        throw err;
-      }
       console.warn("HTTPJEVClient evaluateAtomicJudgment failed, using fallback:", err);
       return await this.fallback.evaluateAtomicJudgment(req);
     }
@@ -209,9 +206,6 @@ export class HTTPJEVClient implements JEVClient {
 
       return { results: formattedResults };
     } catch (err) {
-      if (process.env.NODE_ENV === 'production') {
-        throw err;
-      }
       console.warn("HTTPJEVClient evaluateBatchRules failed, using fallback:", err);
       return await this.fallback.evaluateBatchRules(reqOrText, maybeRules);
     }

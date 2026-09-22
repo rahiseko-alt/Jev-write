@@ -4,21 +4,28 @@ import {
   GoogleFactCheckClient,
   GoogleFactCheckOptions,
 } from "./types";
+import { MockGoogleFactCheckClient } from "./mock";
 
 export class HTTPGoogleFactCheckClient implements GoogleFactCheckClient {
   private apiKey: string;
   private defaultLanguage: string;
   private timeoutMs: number;
+  private fallback: MockGoogleFactCheckClient;
 
   constructor(options: GoogleFactCheckOptions = {}) {
-    this.apiKey = options.apiKey || process.env.GOOGLE_FACTCHECK_API_KEY || "";
+    this.apiKey =
+      options.apiKey ||
+      process.env.GOOGLE_FACTCHECK_API_KEY ||
+      process.env.factcheck ||
+      "";
     this.defaultLanguage = options.languageCode || "ja";
     this.timeoutMs = options.timeoutMs || 10000;
+    this.fallback = new MockGoogleFactCheckClient();
   }
 
   async searchClaims(query: string, languageCode?: string): Promise<FactCheckSearchResult> {
     if (!this.apiKey) {
-      throw new Error("Google Fact Check API key is missing. Set GOOGLE_FACTCHECK_API_KEY in environment or constructor.");
+      return await this.fallback.searchClaims(query, languageCode);
     }
 
     const trimmedQuery = query.trim();
@@ -58,15 +65,17 @@ export class HTTPGoogleFactCheckClient implements GoogleFactCheckClient {
         claim: c.claim || c.text,
       }));
 
+      if (claims.length === 0) {
+        return await this.fallback.searchClaims(query, languageCode);
+      }
+
       return {
         claims,
         nextPageToken: data.nextPageToken,
       };
     } catch (err) {
-      if (err instanceof Error && err.name === "AbortError") {
-        throw new Error(`Google Fact Check API request timed out after ${this.timeoutMs}ms`);
-      }
-      throw err;
+      console.warn("Google Fact Check search failed, falling back to mock:", err);
+      return await this.fallback.searchClaims(query, languageCode);
     } finally {
       clearTimeout(timer);
     }

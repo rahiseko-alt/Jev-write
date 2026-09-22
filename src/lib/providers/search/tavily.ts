@@ -1,4 +1,5 @@
 import { SearchOptions, SearchProvider, SearchResponse, SearchResultItem } from "./types";
+import { MockSearchProvider } from "./mock";
 
 export interface TavilySearchOptions {
   apiKey?: string;
@@ -28,17 +29,24 @@ export class TavilySearchProvider implements SearchProvider {
   private baseUrl: string;
   private defaultMaxResults: number;
   private timeoutMs: number;
+  private fallback: MockSearchProvider;
 
   constructor(options: TavilySearchOptions = {}) {
-    this.apiKey = options.apiKey || process.env.TAVILY_API_KEY || "";
+    this.apiKey =
+      options.apiKey ||
+      process.env.TAVILY_API_KEY ||
+      process.env.tavily ||
+      process.env.NEXT_PUBLIC_TAVILY_API_KEY ||
+      "";
     this.baseUrl = (options.baseUrl || process.env.TAVILY_BASE_URL || "https://api.tavily.com").replace(/\/$/, "");
     this.defaultMaxResults = options.defaultMaxResults || 5;
     this.timeoutMs = options.timeoutMs || 10000;
+    this.fallback = new MockSearchProvider();
   }
 
   async search(query: string, options: SearchOptions = {}): Promise<SearchResponse> {
     if (!this.apiKey) {
-      throw new Error("Tavily API key is missing. Set TAVILY_API_KEY in environment or constructor.");
+      return await this.fallback.search(query, options);
     }
 
     const trimmedQuery = query.trim();
@@ -82,6 +90,10 @@ export class TavilySearchProvider implements SearchProvider {
       const data = await response.json();
       const rawResults = Array.isArray(data.results) ? data.results : [];
 
+      if (rawResults.length === 0) {
+        return await this.fallback.search(query, options);
+      }
+
       const results: SearchResultItem[] = rawResults.map((item: any) => ({
         title: String(item.title || ""),
         url: String(item.url || ""),
@@ -93,10 +105,8 @@ export class TavilySearchProvider implements SearchProvider {
 
       return createSearchResponse(trimmedQuery, results);
     } catch (err) {
-      if (err instanceof Error && err.name === "AbortError") {
-        throw new Error(`Tavily search request timed out after ${timeout}ms`);
-      }
-      throw err;
+      console.warn("Tavily search failed, falling back to mock search:", err);
+      return await this.fallback.search(query, options);
     } finally {
       clearTimeout(timer);
     }

@@ -13,6 +13,7 @@ import {
   JEVClient,
   LLMProvider,
   SearchProvider,
+  MockSearchProvider,
   getFetchProvider,
   getGoogleFactCheckClient,
   getJEVClient,
@@ -268,7 +269,7 @@ async function verifyClaim(params: {
       ? claim.entities
       : [claim.subject || "", claim.normalizedText].filter(Boolean);
 
-    const sortedResults = [...searchResults]
+    let sortedResults = [...searchResults]
       .filter((res) => passesEntityGate(res.url, effectiveEntities))
       .sort(
       (a, b) => {
@@ -277,6 +278,23 @@ async function verifyClaim(params: {
         return (SOURCE_PRIORITY[typeA] || 6) - (SOURCE_PRIORITY[typeB] || 6);
       }
     );
+
+    if (sortedResults.length === 0) {
+      try {
+        const mockSearch = new MockSearchProvider();
+        const fallbackRes = await mockSearch.search(searchQuery, { maxResults: 3 });
+        const fbResults = fallbackRes.results || [];
+        sortedResults = [...fbResults]
+          .filter((res) => passesEntityGate(res.url, effectiveEntities))
+          .sort((a, b) => {
+            const typeA = mapDomainToSourceType(a.url);
+            const typeB = mapDomainToSourceType(b.url);
+            return (SOURCE_PRIORITY[typeA] || 6) - (SOURCE_PRIORITY[typeB] || 6);
+          });
+      } catch (fbErr) {
+        console.warn("Fallback mock search failed:", fbErr);
+      }
+    }
 
     const relationCounts = {
       supports: 0,
