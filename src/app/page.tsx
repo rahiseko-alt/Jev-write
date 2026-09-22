@@ -20,8 +20,6 @@ import {
   ChevronRight,
   MoreHorizontal,
   Loader2,
-  Sparkles,
-  ShieldCheck,
   ArrowRight,
   ChevronDown,
 } from "lucide-react";
@@ -31,9 +29,6 @@ import {
   FactLedgerItem,
   StyleIssue,
 } from "@/types";
-
-// Default benchmark article containing 6 intentional errors (Apple iPhone 15 Pro announcement)
-const SAMPLE_ARTICLE = `Appleは2023年9月13日、iPhone 15 ProとiPhone 15 Pro Maxを発表した。両モデルは航空宇宙産業レベルのチタニウムを採用し、A17 Proと新しいアクションボタンを搭載する。メインカメラは48MPで、通常撮影では20MPをデフォルトとする。iPhone 15 Pro Maxには最大6倍の望遠カメラを搭載。USB-C端子はUSB 3に対応し、最大20Gbpsでデータを転送できる。第2世代の超広帯域無線チップによって通信範囲は従来の約2倍になったほか、Wi-Fi 7にも対応している。`;
 
 interface UnifiedIssue {
   id: string;
@@ -420,16 +415,7 @@ export default function HomePage() {
               )}
 
               {/* Action Buttons Row */}
-              <div className="flex items-center justify-between pt-1">
-                <button
-                  type="button"
-                  onClick={() => setInputText(SAMPLE_ARTICLE)}
-                  className="flex items-center gap-2 px-4 py-2.5 rounded-xl border border-slate-300 text-slate-700 bg-white hover:bg-slate-50 text-sm font-medium transition shadow-sm"
-                >
-                  <FileText className="w-4 h-4 text-slate-500" />
-                  <span>サンプルを入れる</span>
-                </button>
-
+              <div className="flex items-center justify-end pt-1">
                 <button
                   type="button"
                   onClick={() => handleSubmit()}
@@ -448,49 +434,6 @@ export default function HomePage() {
                     </>
                   )}
                 </button>
-              </div>
-            </div>
-
-            {/* 4 Feature Cards at Bottom */}
-            <div className="max-w-4xl mx-auto w-full grid grid-cols-2 md:grid-cols-4 gap-4 mt-8">
-              <div className="bg-white border border-slate-200 rounded-xl p-4 flex items-center gap-3 shadow-sm">
-                <div className="w-10 h-10 rounded-lg bg-blue-50 flex items-center justify-center text-blue-600 shrink-0">
-                  <Search className="w-5 h-5" />
-                </div>
-                <div>
-                  <div className="text-xs font-bold text-slate-800">事実確認</div>
-                  <div className="text-[11px] text-slate-400 mt-0.5">事実の正確性を確認</div>
-                </div>
-              </div>
-
-              <div className="bg-white border border-slate-200 rounded-xl p-4 flex items-center gap-3 shadow-sm">
-                <div className="w-10 h-10 rounded-lg bg-purple-50 flex items-center justify-center text-purple-600 shrink-0">
-                  <Sparkles className="w-5 h-5" />
-                </div>
-                <div>
-                  <div className="text-xs font-bold text-slate-800">AIっぽい表現</div>
-                  <div className="text-[11px] text-slate-400 mt-0.5">不自然な表現を検出</div>
-                </div>
-              </div>
-
-              <div className="bg-white border border-slate-200 rounded-xl p-4 flex items-center gap-3 shadow-sm">
-                <div className="w-10 h-10 rounded-lg bg-amber-50 flex items-center justify-center text-amber-600 shrink-0">
-                  <AlertTriangle className="w-5 h-5" />
-                </div>
-                <div>
-                  <div className="text-xs font-bold text-slate-800">根拠確認</div>
-                  <div className="text-[11px] text-slate-400 mt-0.5">主張の根拠をチェック</div>
-                </div>
-              </div>
-
-              <div className="bg-white border border-slate-200 rounded-xl p-4 flex items-center gap-3 shadow-sm">
-                <div className="w-10 h-10 rounded-lg bg-emerald-50 flex items-center justify-center text-emerald-600 shrink-0">
-                  <ShieldCheck className="w-5 h-5" />
-                </div>
-                <div>
-                  <div className="text-xs font-bold text-slate-800">修正文作成</div>
-                  <div className="text-[11px] text-slate-400 mt-0.5">より良い文章を提案</div>
-                </div>
               </div>
             </div>
           </main>
