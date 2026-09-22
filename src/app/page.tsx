@@ -39,29 +39,38 @@ import {
 // Each kind of mark is told apart by shape as well as by colour: a glyph
 // before the span and a distinct underline, so the distinction survives for a
 // reader who cannot separate the hues.
-const MARK_STYLES: Record<MarkKind, { className: string; glyph: string; label: string }> = {
+const NARROW_SCREEN = "(max-width: 1023px)";
+const WIDE_ONLY_TABS = ["side-by-side", "inline"] as const;
+
+const MARK_STYLES: Record<
+  MarkKind,
+  { className: string; rejectedClassName: string; glyph: string; label: string }
+> = {
   fact: {
     className:
       "bg-red-50 text-red-900 underline decoration-red-400 decoration-2 underline-offset-4",
+    rejectedClassName:
+      "bg-slate-50 text-red-800/70 underline decoration-red-300 decoration-dashed underline-offset-4",
     glyph: "✎",
     label: "事実の修正",
   },
   style: {
     className:
       "bg-purple-50 text-purple-900 underline decoration-purple-400 decoration-wavy underline-offset-4",
+    rejectedClassName:
+      "bg-slate-50 text-purple-800/70 underline decoration-purple-300 decoration-dashed underline-offset-4",
     glyph: "✦",
     label: "AIっぽい表現",
   },
   unverified: {
     className:
       "bg-amber-50 text-amber-900 underline decoration-amber-500 decoration-dotted decoration-2 underline-offset-4",
+    rejectedClassName:
+      "bg-slate-50 text-amber-800/70 underline decoration-amber-400 decoration-dashed underline-offset-4",
     glyph: "?",
     label: "根拠が見つかりません",
   },
 };
-
-const REJECTED_STYLE =
-  "bg-slate-100 text-slate-600 underline decoration-slate-400 decoration-dashed underline-offset-4";
 
 function MarkedText({
   segment,
@@ -82,11 +91,12 @@ function MarkedText({
       onClick={() => onSelect(mark.findingIds)}
       aria-haspopup="dialog"
       className={`inline rounded px-0.5 text-left ${
-        rejected ? REJECTED_STYLE : style.className
+        rejected ? style.rejectedClassName : style.className
       } hover:brightness-95 transition`}
     >
       <span aria-hidden className="mr-0.5 text-[0.7em] align-super font-bold select-none">
-        {rejected ? "↩" : style.glyph}
+        {style.glyph}
+        {rejected ? "↩" : ""}
       </span>
       <span className="sr-only">
         {rejected ? `${style.label}（元に戻しました）` : style.label}:{" "}
@@ -202,17 +212,20 @@ export default function HomePage() {
   // A narrow window offers 修正版 and 原文 only, so a reader carrying one of
   // the comparison views across the breakpoint lands on the document.
   useEffect(() => {
-    const narrow = window.matchMedia("(max-width: 1023px)");
+    const narrow = window.matchMedia(NARROW_SCREEN);
     const settle = () => {
-      if (narrow.matches && (viewTab === "side-by-side" || viewTab === "inline")) {
-        setViewTab("revised");
-      }
+      if (!narrow.matches) return;
+      setViewTab((current) =>
+        WIDE_ONLY_TABS.includes(current as (typeof WIDE_ONLY_TABS)[number])
+          ? "revised"
+          : current
+      );
     };
 
     settle();
     narrow.addEventListener("change", settle);
     return () => narrow.removeEventListener("change", settle);
-  }, [viewTab]);
+  }, []);
 
   // The sheet is how a narrow screen opens a Finding. It has no business
   // surviving a change of view, or a window grown past the breakpoint.
@@ -226,18 +239,18 @@ export default function HomePage() {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") setSheetOpen(false);
     };
-    const wide = window.matchMedia("(min-width: 1024px)");
+    const narrow = window.matchMedia(NARROW_SCREEN);
     const onWidthChange = () => {
-      if (wide.matches) setSheetOpen(false);
+      if (!narrow.matches) setSheetOpen(false);
     };
 
     document.addEventListener("keydown", onKeyDown);
-    wide.addEventListener("change", onWidthChange);
+    narrow.addEventListener("change", onWidthChange);
     sheetRef.current?.focus();
 
     return () => {
       document.removeEventListener("keydown", onKeyDown);
-      wide.removeEventListener("change", onWidthChange);
+      narrow.removeEventListener("change", onWidthChange);
     };
   }, [sheetOpen]);
 
@@ -321,7 +334,7 @@ export default function HomePage() {
   };
 
   const isWideScreen = () =>
-    typeof window !== "undefined" && window.matchMedia("(min-width: 1024px)").matches;
+    typeof window !== "undefined" && !window.matchMedia(NARROW_SCREEN).matches;
 
   // Adoption toggles
   const handleAdoptToggle = (findingId: string, adopt: boolean) => {
@@ -468,14 +481,7 @@ export default function HomePage() {
                   </div>
 
                   {/* 採用 / 元に戻す, where there is a correction to weigh */}
-                  {!currentFinding.adoptable ? (
-                    <div className="flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-900">
-                      <AlertTriangle className="w-4 h-4 shrink-0 text-amber-600 mt-0.5" />
-                      <span>
-                        この箇所は書き換えていません。裏付けが取れなかったため、ご自身で一次情報をお確かめください。
-                      </span>
-                    </div>
-                  ) : (
+                  {currentFinding.adoptable ? (
                   <div className="grid grid-cols-2 gap-3 pt-2">
                     <button
                       onClick={() => handleAdoptToggle(currentFinding.id, true)}
@@ -501,7 +507,19 @@ export default function HomePage() {
                       <span>元に戻す</span>
                     </button>
                   </div>
-                  )}
+                  ) : currentFinding.kind === "unverified" ? (
+                    <div className="flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-900">
+                      <AlertTriangle className="w-4 h-4 shrink-0 text-amber-600 mt-0.5" />
+                      <span>
+                        この箇所は書き換えていません。裏付けが取れなかったため、ご自身で一次情報をお確かめください。
+                      </span>
+                    </div>
+                  ) : currentFinding.kind === "confirmed" ? (
+                    <div className="flex items-start gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-xs text-emerald-900">
+                      <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-600 mt-0.5" />
+                      <span>この箇所は裏付けが取れており、書き換えていません。</span>
+                    </div>
+                  ) : null}
 
                 </div>
               ) : (
