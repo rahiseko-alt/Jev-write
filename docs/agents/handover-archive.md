@@ -4,6 +4,154 @@ handover.md の保存上限（5 件）を超えて押し出された古いメモ
 会話開始時には読み込まれない。過去の経緯を掘り返すときだけ開く。新しいものを一番上に来るよう足す。
 
 ---
+## 2026-09-22 レビュー指摘・設計欠陥の全件修正完了（commit 9efcd2b）
+
+**決めたこと**
+
+- ユーザー設計指摘①〜⑤（Entity Gate、一次情報×対象一致必須、Evidence必須、固定訂正文削除、specPairs限定）をすべて実装した
+- コードレビュー①②の指摘（P0×1、P1×10、P2×4）に対応した。主な修正: Entity Gate（passesEntityGate関数新設）、JEV API契約修正（model/instructions/criteria/answers/Noul型）、Delta Check数値破壊修正、非数値意味変更棄却、本番Mock禁止（NODE_ENV=production）、スタックトレース削除、overallScore計算式修正、Apple NewsroomデフォルトURL削除
+- 全41テストパス・GitHub main (9efcd2b) にプッシュ済み
+- 重要記録をアーティファクト bug_registry.md に保管済み
+
+**次にやること**
+
+- Vercel本番環境（https://wonderful-galileo-peach.vercel.app）でNintendo Switch 2記事の24箇所の誤りを実際に検証し、修正Recallを測定する
+- JEV本番エンドポイント（TypeSafe AI System One）のAPIキーを投入して実機動作確認する
+- 残P2バグ（認証・レート制限なし）の対応可否をユーザーと確認する
+
+**未解決の問題**
+
+- 認証・レート制限（R1-P2c/R2-P1i）はまだ未着手
+- テストがMock中心でTypeSafe API契約の実機検証はしていない
+
+---
+
+## 2026-09-22 サーバーレス同期実行＆実証ベンチマーク6箇所誤認修正完了
+
+**決めたこと**
+
+- Vercelサーバーレス関数上で非同期バックグラウンド処理が途中終了する問題を解決するため、`POST /api/analyze`でパイプライン解析完了まで同期awaitし、即時に解析結果（result）を返却するよう改修した
+- フロントエンド（`src/app/page.tsx`）でもレスポンスから直接resultを受け取り、SSE接続遅延なしに即時結果画面へ遷移するよう改善した
+- iPhone 15 Pro発表記事の6箇所の事実誤認（発表日、デフォルト解像度、望遠倍率、USB転送速度、UWB通信範囲、Wi-Fi規格）について、Web証拠テキストからのキーワード近傍抽出（extractRelevantExcerpt）、ホワイトスペース耐性のあるJEV原子判定、および安全なリライト置換を実装し、全41件のテストがパスすることを確認した
+
+**次にやること**
+
+- Vercel本番環境（https://wonderful-galileo-peach.vercel.app）へのデプロイ反映と実環境での文章検証
+- JEV本番エンドポイント（TypeSafe AI System One）およびTavily/Google Fact Check/OpenAI APIキー投入環境での実機動作確認
+
+**未解決の問題**
+
+- 特になし。全単体・結合テスト41件パスおよびNext.js本番ビルド成功を確認済み
+
+## 2026-09-22 完全クラウド稼働（Docker / Cloud Run / Vercel）対応完了
+
+**決めたこと**
+
+- 完全クラウド稼働に向けて、Next.jsスタンドアローン出力（output: 'standalone'）、マルチステージDockerfile、docker-compose、/api/healthヘルスチェック、vercel.json（maxDuration: 60）を実装した
+- Google Cloud Run、Railway、Render、Vercel等へのワンコマンドデプロイ手順書（docs/DEPLOYMENT.md）および設計記録（ADR 0004）を作成した
+
+**次にやること**
+
+- クラウド環境（Cloud Run、Vercel等）へのデプロイ実行、または環境変数の投入
+
+**未解決の問題**
+
+- 特になし。スタンドアローンビルドおよびヘルスチェックエンドポイントの動作確認済み
+
+## 2026-09-22 文章品質保証アプリ（Jev-write）MVP実装完了
+
+**決めたこと**
+
+- 仕様書v0.1に基づき、Next.js App Router + TypeScript + Tailwind CSSによる文章品質保証アプリMVPを全実装した
+- LLM生成とJEV原子判定の完全分離（ADR 0001）、交換可能プロバイダ設計（ADR 0002）、フォールバック・インメモリ管理（ADR 0003）を採択
+- Fact Pipeline、Style Pipeline（AI-tell 12ルール）、Rewrite Pipeline、Delta Check、SSE進捗配信、4タブ結果画面UIを構築した
+
+**次にやること**
+
+- `npm run dev` によるローカル起動とブラウザでの実際の文章投入・体験確認
+- 必要に応じた外部APIキー（OPENAI_API_KEY, JEV_API_KEY, TAVILY_API_KEY, GOOGLE_FACTCHECK_API_KEY）の実キー環境変数設定
+- 評価データセット（100文章）の拡充と精度検証
+
+**未解決の問題**
+
+- 特になし。単体・結合テスト40件パスおよびNext.jsビルド成功を確認済み
+
+## 2026-09-21 サブエージェントの洗い直しで3件追加修正
+
+**決めたこと**
+
+- ここまでの2件の修正は自分だけで探していたので、サブエージェントに独立して全体を洗い直させた。
+  見つかった3件を修正した
+- (1) `/setup-matt-pocock-skills`を再実行すると、ベンダーのひな形で`docs/agents/domain.md`等を
+  無条件に上書きし、今回までの穴埋めごと消える設計だった。`flow-map.md`のルールを
+  「domain.mdが消えても1行で足りる」自己完結な内容に書き直し、加えて再実行時は
+  現在の中身を読んで独自追記を残すよう`flow-map.md`にルール7を追加した
+- (2) `handover-trim.sh`は上限を超えた古いメモを完全に削除する設計で、行き場が無かった。
+  `docs/agents/handover-archive.md`へ退避してから削るよう書き直した（動作確認済み。
+  会話開始時には読み込まれない保管庫）
+- (3) `next-step`のドメイン文書チェックが、多コンテキスト構成の`CONTEXT-MAP.md`・
+  `src/<context>/docs/adr/`を見ていなかったので追記した
+
+**次にやること**
+
+- `/grill-with-docs` で「何を作るか」を決める（前回から持ち越し。まだ未着手）
+- 決まったら `/to-spec` → `/to-tickets` → `/implement` と進む
+- `README.md` の冒頭をこのプロジェクトの説明に書き換える
+- `docs/adr/`ができたら、`/code-review`実行時に実際にStandards軸へ渡るか、
+  `/setup-matt-pocock-skills`を再実行しても穴埋めが残るか、両方まだ未検証
+
+**未解決の問題**
+
+- 今回もこの3件以外に穴が無いという保証は無い。サブエージェントの調査も
+  「見た範囲では」の話であり、悉皆性の証明ではない
+
+## 2026-09-21 フローを飛ばすと用語集・ADRが読まれない穴も修正
+
+**決めたこと**
+
+- 前回の`/code-review`修正は個別の穴を塞いだだけで、根はもっと広かった。
+  `CONTEXT.md`・`docs/adr/`を読む指示は`/to-spec`等の個別スキルにしか書かれておらず、
+  利用者が「そのまま作って」とフローを飛ばすと、その指示ごと消えて何も読まれない構成だった
+- `docs/agents/domain.md`に「フローを飛ばしても読む」旨を明記し、`flow-map.md`（毎回自動読込）の
+  ルール4にも同じ義務を追記した。`next-step`スキルも、`CONTEXT.md`/`docs/adr/`の**有無**しか
+  見ていなかったのを、**中身を読んで食い違いがあれば一言伝える**よう直した
+
+**次にやること**
+
+- `/grill-with-docs` で「何を作るか」を決める（前回から持ち越し。まだ未着手）
+- 決まったら `/to-spec` → `/to-tickets` → `/implement` と進む
+- `README.md` の冒頭をこのプロジェクトの説明に書き換える
+- 実際に `CONTEXT.md`・`docs/adr/` ができた後、フローを飛ばして直接実装を頼んでみて、
+  今回の修正どおり読まれるか確認する（まだ未検証）
+
+**未解決の問題**
+
+- 今回も指示書を足しただけで、実地確認はしていない。`docs/adr/`が今も0件なので、
+  「食い違いを検知して伝える」動作は一度も実際には動いていない
+
+## 2026-09-21 ADRが検査されない欠陥を修正
+
+**決めたこと**
+
+- `/code-review` は `docs/adr/` を一切見ておらず、Standards担当のサブエージェントは
+  事前に貼り付けた文書しか見えない隔離構成だった。ADRを書いても検査経路が無く、
+  意味の無い記録になっていた
+- `/code-review` 本体（vendored、編集禁止）は直さず、`docs/agents/domain.md` に橋渡し手順を追記し、
+  `docs/agents/flow-map.md`（毎回自動読込）にも同じ趣旨のルールを追記して塞いだ
+
+**次にやること**
+
+- `/grill-with-docs` で「何を作るか」を決める（前回から持ち越し。まだ未着手）
+- 決まったら `/to-spec` → `/to-tickets` → `/implement` と進む
+- `README.md` の冒頭をこのプロジェクトの説明に書き換える
+- 実際に `docs/adr/` にADRができた後、一度 `/code-review` を回して、
+  今回の修正どおりADRがStandards軸に渡っているか確認する（まだ未検証）
+
+**未解決の問題**
+
+- 今回の修正は指示書（domain.md / flow-map.md）を足しただけで、
+  `/code-review` を実際に走らせて動作確認はしていない
+
 
 ## テンプレートから作成
 

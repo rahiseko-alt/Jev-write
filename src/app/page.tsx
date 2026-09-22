@@ -20,8 +20,6 @@ import {
   ChevronRight,
   MoreHorizontal,
   Loader2,
-  Sparkles,
-  ShieldCheck,
   ArrowRight,
   ChevronDown,
 } from "lucide-react";
@@ -31,9 +29,6 @@ import {
   FactLedgerItem,
   StyleIssue,
 } from "@/types";
-
-// Default benchmark article containing 6 intentional errors (Apple iPhone 15 Pro announcement)
-const SAMPLE_ARTICLE = `Appleは2023年9月13日、iPhone 15 ProとiPhone 15 Pro Maxを発表した。両モデルは航空宇宙産業レベルのチタニウムを採用し、A17 Proと新しいアクションボタンを搭載する。メインカメラは48MPで、通常撮影では20MPをデフォルトとする。iPhone 15 Pro Maxには最大6倍の望遠カメラを搭載。USB-C端子はUSB 3に対応し、最大20Gbpsでデータを転送できる。第2世代の超広帯域無線チップによって通信範囲は従来の約2倍になったほか、Wi-Fi 7にも対応している。`;
 
 interface UnifiedIssue {
   id: string;
@@ -54,7 +49,6 @@ interface UnifiedIssue {
 
 export default function HomePage() {
   // Navigation & View Mode
-  const [sidebarMenu, setSidebarMenu] = useState<"new" | "history" | "drafts">("new");
   const [inputText, setInputText] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [analysisResult, setAnalysisResult] = useState<AnalysisResult | null>(null);
@@ -198,34 +192,6 @@ export default function HomePage() {
   // Active Issue
   const currentIssue = filteredIssues[selectedIssueIndex] || filteredIssues[0] || null;
 
-  const { score: overallScore, contradicted: contradictedCount, insufficient: insufficientCount } = useMemo(() => {
-    if (!analysisResult) return { score: 85, contradicted: 0, insufficient: 0 };
-    const claims = analysisResult.claims || [];
-    const total = claims.length;
-    if (total === 0) return { score: 100, contradicted: 0, insufficient: 0 };
-    const confirmed = claims.filter(c => c.verdict === 'SUPPORTED').length;
-    const contradicted = claims.filter(c => c.verdict === 'CONTRADICTED').length;
-    const insufficient = claims.filter(c => c.verdict === 'INSUFFICIENT').length;
-    // CONFIRMEDは+、CONTRADICTEDは大きく-、INSUFFICIENTは中-
-    const score = Math.round(100 * (confirmed - contradicted * 2) / (total + insufficient));
-    return {
-      score: Math.max(0, Math.min(100, score)),
-      contradicted,
-      insufficient
-    };
-  }, [analysisResult]);
-
-  // Counts for sidebar badges
-  const counts = useMemo(() => {
-    return {
-      all: issues.length,
-      fact: issues.filter((i) => i.verdict === "error").length,
-      warning: issues.filter((i) => i.verdict === "warning").length,
-      style: issues.filter((i) => i.verdict === "style").length,
-      verified: issues.filter((i) => i.verdict === "verified").length,
-    };
-  }, [issues]);
-
   // Revised lines based on analysisResult.revisedText and adopted status
   const revisedLines = useMemo(() => {
     if (!analysisResult || !analysisResult.revisedText) return originalLines;
@@ -313,7 +279,6 @@ export default function HomePage() {
         <div
           onClick={() => {
             setAnalysisResult(null);
-            setSidebarMenu("new");
           }}
           className="flex items-center gap-3 cursor-pointer select-none hover:opacity-80 transition"
         >
@@ -343,6 +308,14 @@ export default function HomePage() {
           >
             <Clock className="w-4 h-4" />
             <span>履歴</span>
+          </button>
+
+          <button
+            onClick={() => setShowDraftModal(true)}
+            className="flex items-center gap-1.5 text-xs text-slate-500 hover:text-slate-800 transition py-1.5 px-2.5 rounded-md hover:bg-slate-100"
+          >
+            <FileText className="w-4 h-4" />
+            <span>下書き</span>
           </button>
 
           <button
@@ -383,237 +356,6 @@ export default function HomePage() {
 
       {/* Main Layout Body */}
       <div className="flex-1 flex overflow-hidden">
-        {/* =========================================
-            LEFT SIDEBAR
-           ========================================= */}
-        <aside className="w-60 bg-white border-r border-slate-200 flex flex-col shrink-0 overflow-y-auto justify-between">
-          {!analysisResult ? (
-            // Sidebar for Input Screen (Image 1)
-            <div className="p-4 space-y-1.5">
-              <button
-                onClick={() => {
-                  setSidebarMenu("new");
-                  setInputText("");
-                  setAnalysisResult(null);
-                }}
-                className={`w-full flex items-center gap-2.5 px-3.5 py-2.5 rounded-lg text-sm font-medium transition ${
-                  sidebarMenu === "new"
-                    ? "bg-blue-50 text-blue-600 font-bold"
-                    : "text-slate-600 hover:bg-slate-50"
-                }`}
-              >
-                <FileText className="w-4 h-4 text-blue-600" />
-                <span>新規チェック</span>
-              </button>
-
-              <button
-                onClick={() => {
-                  setSidebarMenu("history");
-                  setShowHistoryModal(true);
-                }}
-                className={`w-full flex items-center gap-2.5 px-3.5 py-2.5 rounded-lg text-sm font-medium transition ${
-                  sidebarMenu === "history"
-                    ? "bg-blue-50 text-blue-600 font-bold"
-                    : "text-slate-600 hover:bg-slate-50"
-                }`}
-              >
-                <Clock className="w-4 h-4 text-slate-400" />
-                <span>履歴</span>
-              </button>
-
-              <button
-                onClick={() => {
-                  setSidebarMenu("drafts");
-                  setShowDraftModal(true);
-                }}
-                className={`w-full flex items-center gap-2.5 px-3.5 py-2.5 rounded-lg text-sm font-medium transition ${
-                  sidebarMenu === "drafts"
-                    ? "bg-blue-50 text-blue-600 font-bold"
-                    : "text-slate-600 hover:bg-slate-50"
-                }`}
-              >
-                <FileText className="w-4 h-4 text-slate-400" />
-                <span>下書き</span>
-              </button>
-            </div>
-          ) : (
-            // Sidebar for Result Screen (Image 2)
-            <div className="p-4 space-y-5">
-              {/* Category Filter Badges */}
-              <div className="space-y-1">
-                <button
-                  onClick={() => setCategoryFilter("all")}
-                  className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-xs font-medium transition ${
-                    categoryFilter === "all" ? "bg-blue-50 text-blue-700" : "text-slate-600 hover:bg-slate-50"
-                  }`}
-                >
-                  <div className="flex items-center gap-2">
-                    <FileText className="w-4 h-4 text-blue-600" />
-                    <span>すべて</span>
-                  </div>
-                  <span className="text-xs text-slate-400 font-bold">{counts.all}</span>
-                </button>
-
-                <button
-                  onClick={() => setCategoryFilter("fact")}
-                  className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-xs font-medium transition ${
-                    categoryFilter === "fact" ? "bg-red-50 text-red-700" : "text-slate-600 hover:bg-slate-50"
-                  }`}
-                >
-                  <div className="flex items-center gap-2">
-                    <AlertCircle className="w-4 h-4 text-red-500" />
-                    <span>事実の修正</span>
-                  </div>
-                  <span className="text-xs text-red-600 font-bold">{counts.fact}</span>
-                </button>
-
-                <button
-                  onClick={() => setCategoryFilter("warning")}
-                  className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-xs font-medium transition ${
-                    categoryFilter === "warning" ? "bg-amber-50 text-amber-700" : "text-slate-600 hover:bg-slate-50"
-                  }`}
-                >
-                  <div className="flex items-center gap-2">
-                    <AlertTriangle className="w-4 h-4 text-amber-500" />
-                    <span>要確認</span>
-                  </div>
-                  <span className="text-xs text-amber-600 font-bold">{counts.warning}</span>
-                </button>
-
-                <button
-                  onClick={() => setCategoryFilter("style")}
-                  className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-xs font-medium transition ${
-                    categoryFilter === "style" ? "bg-purple-50 text-purple-700" : "text-slate-600 hover:bg-slate-50"
-                  }`}
-                >
-                  <div className="flex items-center gap-2">
-                    <Star className="w-4 h-4 text-purple-500" />
-                    <span>文章表現</span>
-                  </div>
-                  <span className="text-xs text-purple-600 font-bold">{counts.style}</span>
-                </button>
-
-                <button
-                  onClick={() => setCategoryFilter("verified")}
-                  className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-xs font-medium transition ${
-                    categoryFilter === "verified" ? "bg-emerald-50 text-emerald-700" : "text-slate-600 hover:bg-slate-50"
-                  }`}
-                >
-                  <div className="flex items-center gap-2">
-                    <CheckCircle2 className="w-4 h-4 text-emerald-500" />
-                    <span>確認済み</span>
-                  </div>
-                  <span className="text-xs text-emerald-600 font-bold">{counts.verified}</span>
-                </button>
-              </div>
-
-              {/* 最近の検出項目 List */}
-              <div className="border-t border-slate-100 pt-4">
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-xs font-bold text-slate-800">最近の検出項目</span>
-                  <button
-                    onClick={() => setCategoryFilter("all")}
-                    className="text-[11px] text-blue-600 hover:underline"
-                  >
-                    すべて見る
-                  </button>
-                </div>
-
-                <div className="space-y-1.5">
-                  {filteredIssues.slice(0, 5).map((issue, idx) => {
-                    const isSelected = currentIssue?.id === issue.id;
-                    const barColor =
-                      issue.verdict === "error"
-                        ? "bg-red-500"
-                        : issue.verdict === "style"
-                        ? "bg-purple-500"
-                        : issue.verdict === "warning"
-                        ? "bg-amber-500"
-                        : "bg-emerald-500";
-
-                    return (
-                      <button
-                        key={issue.id}
-                        onClick={() => setSelectedIssueIndex(idx)}
-                        className={`w-full text-left p-2 rounded-lg border transition ${
-                          isSelected
-                            ? "border-blue-400 bg-blue-50/60 shadow-sm"
-                            : "border-transparent hover:bg-slate-50"
-                        }`}
-                      >
-                        <div className="flex items-start gap-1.5 justify-between">
-                          <div className="flex items-center gap-1.5 overflow-hidden">
-                            {issue.verdict === "error" && <AlertCircle className="w-3.5 h-3.5 text-red-500 shrink-0" />}
-                            {issue.verdict === "style" && <Star className="w-3.5 h-3.5 text-purple-500 shrink-0" />}
-                            {issue.verdict === "warning" && <AlertTriangle className="w-3.5 h-3.5 text-amber-500 shrink-0" />}
-                            {issue.verdict === "verified" && <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 shrink-0" />}
-                            <span className="text-xs font-bold text-slate-800 truncate">{issue.title}</span>
-                          </div>
-                          <span className="text-[11px] font-bold text-slate-700 shrink-0">
-                            {issue.confidence}%
-                          </span>
-                        </div>
-                        <div className="flex items-center justify-between mt-1 text-[10px] text-slate-400">
-                          <span>
-                            {issue.categoryLabel}・{issue.timeAgo}
-                          </span>
-                          <div className="w-10 h-1 bg-slate-100 rounded-full overflow-hidden">
-                            <div
-                              className={`h-full ${barColor}`}
-                              style={{ width: `${issue.confidence}%` }}
-                            />
-                          </div>
-                        </div>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-
-              {/* 信頼度スコア Card */}
-              <div className="border border-slate-200 rounded-xl p-3.5 bg-slate-50/50">
-                <div className="text-xs font-bold text-slate-800 mb-2">この文章の信頼度スコア</div>
-                <div className="flex items-center gap-3">
-                  <div className="relative w-12 h-12 flex items-center justify-center shrink-0">
-                    <svg className="w-12 h-12 transform -rotate-90" viewBox="0 0 36 36">
-                      <path
-                        className="text-slate-200"
-                        strokeWidth="3.5"
-                        stroke="currentColor"
-                        fill="none"
-                        d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
-                      />
-                      <path
-                        className={overallScore >= 80 ? "text-emerald-500" : overallScore >= 60 ? "text-amber-500" : "text-red-500"}
-                        strokeDasharray={`${overallScore}, 100`}
-                        strokeWidth="3.5"
-                        strokeLinecap="round"
-                        stroke="currentColor"
-                        fill="none"
-                        d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
-                      />
-                    </svg>
-                    <span className="absolute text-xs font-bold text-slate-800">{overallScore}%</span>
-                  </div>
-                  <p className="text-[10px] text-slate-500 leading-tight">
-                    {overallScore >= 85 && contradictedCount === 0
-                      ? "高信頼"
-                      : overallScore >= 50
-                      ? "要確認の箇所があります"
-                      : "複数の誤りが検出されました"}
-                  </p>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* Sidebar Footer */}
-          <div className="p-4 border-t border-slate-100 text-[11px] text-slate-400 font-medium">
-            良い文章が、
-            <br />
-            より良い社会をつくる。
-          </div>
-        </aside>
 
         {/* =========================================
             CENTER & MAIN CONTENT AREA
@@ -673,16 +415,7 @@ export default function HomePage() {
               )}
 
               {/* Action Buttons Row */}
-              <div className="flex items-center justify-between pt-1">
-                <button
-                  type="button"
-                  onClick={() => setInputText(SAMPLE_ARTICLE)}
-                  className="flex items-center gap-2 px-4 py-2.5 rounded-xl border border-slate-300 text-slate-700 bg-white hover:bg-slate-50 text-sm font-medium transition shadow-sm"
-                >
-                  <FileText className="w-4 h-4 text-slate-500" />
-                  <span>サンプルを入れる</span>
-                </button>
-
+              <div className="flex items-center justify-end pt-1">
                 <button
                   type="button"
                   onClick={() => handleSubmit()}
@@ -701,49 +434,6 @@ export default function HomePage() {
                     </>
                   )}
                 </button>
-              </div>
-            </div>
-
-            {/* 4 Feature Cards at Bottom */}
-            <div className="max-w-4xl mx-auto w-full grid grid-cols-2 md:grid-cols-4 gap-4 mt-8">
-              <div className="bg-white border border-slate-200 rounded-xl p-4 flex items-center gap-3 shadow-sm">
-                <div className="w-10 h-10 rounded-lg bg-blue-50 flex items-center justify-center text-blue-600 shrink-0">
-                  <Search className="w-5 h-5" />
-                </div>
-                <div>
-                  <div className="text-xs font-bold text-slate-800">事実確認</div>
-                  <div className="text-[11px] text-slate-400 mt-0.5">事実の正確性を確認</div>
-                </div>
-              </div>
-
-              <div className="bg-white border border-slate-200 rounded-xl p-4 flex items-center gap-3 shadow-sm">
-                <div className="w-10 h-10 rounded-lg bg-purple-50 flex items-center justify-center text-purple-600 shrink-0">
-                  <Sparkles className="w-5 h-5" />
-                </div>
-                <div>
-                  <div className="text-xs font-bold text-slate-800">AIっぽい表現</div>
-                  <div className="text-[11px] text-slate-400 mt-0.5">不自然な表現を検出</div>
-                </div>
-              </div>
-
-              <div className="bg-white border border-slate-200 rounded-xl p-4 flex items-center gap-3 shadow-sm">
-                <div className="w-10 h-10 rounded-lg bg-amber-50 flex items-center justify-center text-amber-600 shrink-0">
-                  <AlertTriangle className="w-5 h-5" />
-                </div>
-                <div>
-                  <div className="text-xs font-bold text-slate-800">根拠確認</div>
-                  <div className="text-[11px] text-slate-400 mt-0.5">主張の根拠をチェック</div>
-                </div>
-              </div>
-
-              <div className="bg-white border border-slate-200 rounded-xl p-4 flex items-center gap-3 shadow-sm">
-                <div className="w-10 h-10 rounded-lg bg-emerald-50 flex items-center justify-center text-emerald-600 shrink-0">
-                  <ShieldCheck className="w-5 h-5" />
-                </div>
-                <div>
-                  <div className="text-xs font-bold text-slate-800">修正文作成</div>
-                  <div className="text-[11px] text-slate-400 mt-0.5">より良い文章を提案</div>
-                </div>
               </div>
             </div>
           </main>
