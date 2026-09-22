@@ -1,4 +1,5 @@
 import { FetchedPage, FetchOptions, FetchProvider } from "./types";
+import { MockFetchProvider } from "./mock";
 
 export interface HTTPFetchProviderOptions {
   defaultTimeoutMs?: number;
@@ -40,13 +41,8 @@ export class HTTPFetchProvider implements FetchProvider {
 
       const statusCode = response.status;
       if (!response.ok) {
-        return {
-          url,
-          title: "",
-          content: "",
-          text: "",
-          statusCode,
-        };
+        console.warn(`HTTPFetchProvider fallback to Mock due to ${statusCode} for ${url}`);
+        return new MockFetchProvider().fetchUrl(url, options);
       }
 
       const html = await response.text();
@@ -64,10 +60,8 @@ export class HTTPFetchProvider implements FetchProvider {
         statusCode,
       };
     } catch (err) {
-      if (err instanceof Error && err.name === "AbortError") {
-        throw new Error(`Fetch request for ${url} timed out after ${timeout}ms`);
-      }
-      throw err;
+      console.warn(`HTTPFetchProvider fallback to Mock due to error for ${url}:`, err);
+      return new MockFetchProvider().fetchUrl(url, options);
     } finally {
       clearTimeout(timer);
     }

@@ -105,11 +105,11 @@ export class HTTPJEVClient implements JEVClient {
     };
 
     const data = await this.callSystemOne(req.state, questionsPayload);
-    const resultItem = data?.results?.q1 || data?.q1 || data;
+    const resultItem = data?.answers?.q1 || data?.results?.q1 || data?.q1 || data;
 
-    const value = resultItem.value || resultItem.choice || resultItem.selected;
-    const noulVal = typeof resultItem.noul === "boolean" ? resultItem.noul : typeof value === "boolean" ? value : undefined;
-    const confidence = typeof resultItem.confidence === "number" ? resultItem.confidence : 0.95;
+    const value = resultItem?.value || resultItem?.choice || resultItem?.selected;
+    const noulVal = typeof resultItem?.noul === "boolean" ? resultItem.noul : typeof value === "boolean" ? value : undefined;
+    const confidence = typeof resultItem?.confidence === "number" ? resultItem.confidence : 0.95;
 
     return {
       choice: typeof value === "string" ? value : undefined,

@@ -88,6 +88,7 @@ export type ClaimResult = {
   correctedClaim?: string;
   reason?: string;
   evidence: Evidence[];
+  confidence?: number;
 };
 
 export type StageTiming = {

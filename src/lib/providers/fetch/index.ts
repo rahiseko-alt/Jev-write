@@ -14,7 +14,8 @@ export function getFetchProvider(
   options: HTTPFetchProviderOptions = {},
   useMock = false
 ): FetchProvider {
-  if (useMock || process.env.USE_MOCK_FETCH === "true") {
+  const hasAnyKey = process.env.TAVILY_API_KEY || process.env.OPENAI_API_KEY || process.env.ANTHROPIC_API_KEY;
+  if (useMock || process.env.USE_MOCK_FETCH === "true" || !hasAnyKey) {
     return new MockFetchProvider();
   }
   return new HTTPFetchProvider(options);

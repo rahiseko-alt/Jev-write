@@ -284,12 +284,25 @@ async function verifyClaim(params: {
     for (let i = 0; i < sortedResults.length; i++) {
       const res = sortedResults[i];
       try {
-        const fetched =
-          typeof fetchProvider.fetchUrl === "function"
-            ? await fetchProvider.fetchUrl(res.url)
-            : await (fetchProvider as any).fetch(res.url);
+        let fetched: any = { url: res.url, title: res.title, siteName: "", author: "", publishedAt: "", statusCode: 200 };
+        try {
+          fetched =
+            typeof fetchProvider.fetchUrl === "function"
+              ? await fetchProvider.fetchUrl(res.url)
+              : await (fetchProvider as any).fetch(res.url);
+        } catch (err) {
+          console.warn(`Fetch failed for ${res.url}:`, err);
+        }
 
-        const content = fetched.content || (fetched as any).text || "";
+        const rawContent = fetched.content || (fetched as any).text || "";
+        let content = res.content || (res as any).snippet || "";
+
+        if (!content && rawContent.trim().length > 0 && fetched.statusCode !== 403 && fetched.statusCode !== 404) {
+          content = rawContent;
+        } else if (!content) {
+          content = rawContent;
+        }
+
         const relevantEvidence = extractRelevantExcerpt(content, claim, 2500);
 
         // JEV evidence evaluation
@@ -379,6 +392,7 @@ async function verifyClaim(params: {
     correctedClaim: ledgerItem.correctedClaim,
     reason,
     evidence: claimEvidences,
+    confidence,
   };
 
   return {

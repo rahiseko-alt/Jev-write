@@ -67,6 +67,25 @@ export default function HomePage() {
   const [selectedIssueIndex, setSelectedIssueIndex] = useState(0);
   const [categoryFilter, setCategoryFilter] = useState<"all" | "fact" | "warning" | "style" | "verified">("all");
 
+  // Modals & Popovers
+  const [showHistoryModal, setShowHistoryModal] = useState(false);
+  const [showDraftModal, setShowDraftModal] = useState(false);
+  const [showGuideModal, setShowGuideModal] = useState(false);
+  const [showUserPopover, setShowUserPopover] = useState(false);
+  const [showMoreMenu, setShowMoreMenu] = useState(false);
+  const [historyItems, setHistoryItems] = useState<{ id: string; time: string; text: string }[]>([]);
+  const [lastSavedTime, setLastSavedTime] = useState("");
+
+  // Initialize and load history / draft from localStorage on mount
+  useEffect(() => {
+    try {
+      const savedHist = localStorage.getItem("jev_analysis_history");
+      if (savedHist) setHistoryItems(JSON.parse(savedHist));
+      const now = new Date();
+      setLastSavedTime(`${now.getFullYear()}/${now.getMonth() + 1}/${now.getDate()} ${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`);
+    } catch {}
+  }, []);
+
   // Track user adoption state for each issue
   const [adoptedOverrides, setAdoptedOverrides] = useState<Record<string, boolean>>({});
 
@@ -121,7 +140,7 @@ export default function HomePage() {
         title,
         categoryLabel: isContradicted ? "事実の修正" : isInsufficient ? "要確認" : "確認済み",
         verdict: isContradicted ? "error" : isInsufficient ? "warning" : "verified",
-        confidence: isContradicted ? 92 : isInsufficient ? 61 : 95,
+        confidence: Math.round((item.confidence !== undefined ? item.confidence : isContradicted ? 0.94 : isInsufficient ? 0.68 : 0.97) <= 1 ? (item.confidence !== undefined ? item.confidence : isContradicted ? 0.94 : isInsufficient ? 0.68 : 0.97) * 100 : (item.confidence || (isContradicted ? 94 : isInsufficient ? 68 : 97))),
         originalText: claimText,
         revisedText: item.correctedClaim || claimText,
         sourceTitle: firstEv?.sourceTitle || "一次ソース・公式発表",
@@ -179,6 +198,18 @@ export default function HomePage() {
   // Active Issue
   const currentIssue = filteredIssues[selectedIssueIndex] || filteredIssues[0] || null;
 
+  // Overall Document Score based on verification results
+  const overallScore = useMemo(() => {
+    if (!analysisResult) return 85;
+    const claims = analysisResult.claims || [];
+    if (claims.length === 0) return 90;
+    const contradictedCount = claims.filter((c) => c.verdict === "CONTRADICTED").length;
+    const insufficientCount = claims.filter((c) => c.verdict === "INSUFFICIENT").length;
+    const styleCount = (analysisResult.styleIssues || []).length;
+    const base = 100 - contradictedCount * 12 - insufficientCount * 5 - styleCount * 3;
+    return Math.max(30, Math.min(99, base));
+  }, [analysisResult]);
+
   // Counts for sidebar badges
   const counts = useMemo(() => {
     return {
@@ -230,17 +261,32 @@ export default function HomePage() {
       }
 
       const resData = await response.json();
-      if (resData.result) {
-        setAnalysisResult(resData.result);
-        setSelectedIssueIndex(0);
-      } else if (resData.jobId) {
+      let finalResult = resData.result;
+      if (!finalResult && resData.jobId) {
         // Fallback fetch if not returned synchronously
         const checkRes = await fetch(`/api/analyze/${resData.jobId}`);
         const checkData = await checkRes.json();
-        if (checkData.job?.result) {
-          setAnalysisResult(checkData.job.result);
-          setSelectedIssueIndex(0);
-        }
+        finalResult = checkData.job?.result;
+      }
+
+      if (finalResult) {
+        setAnalysisResult(finalResult);
+        setSelectedIssueIndex(0);
+
+        // Update last saved time
+        const now = new Date();
+        const timeStr = `${now.getFullYear()}/${now.getMonth() + 1}/${now.getDate()} ${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
+        setLastSavedTime(timeStr);
+
+        // Persist history item
+        const newHist = [
+          { id: Date.now().toString(), time: timeStr, text: inputText.trim() },
+          ...historyItems.filter((h) => h.text !== inputText.trim()),
+        ].slice(0, 10);
+        setHistoryItems(newHist);
+        try {
+          localStorage.setItem("jev_analysis_history", JSON.stringify(newHist));
+        } catch {}
       }
     } catch (err: any) {
       console.error(err);
@@ -259,7 +305,13 @@ export default function HomePage() {
     <div className="min-h-screen bg-[#F8FAFC] text-slate-800 flex flex-col font-sans">
       {/* 1. Global Header */}
       <header className="h-14 bg-white border-b border-slate-200 px-6 flex items-center justify-between z-20 shrink-0">
-        <div className="flex items-center gap-3">
+        <div
+          onClick={() => {
+            setAnalysisResult(null);
+            setSidebarMenu("new");
+          }}
+          className="flex items-center gap-3 cursor-pointer select-none hover:opacity-80 transition"
+        >
           <div className="w-8 h-8 rounded-lg bg-blue-50 flex items-center justify-center text-blue-600">
             <Feather className="w-5 h-5" />
           </div>
@@ -271,21 +323,56 @@ export default function HomePage() {
           </div>
         </div>
 
-        <div className="flex items-center gap-4">
+        <div className="flex items-center gap-4 relative">
           <button
-            onClick={() => {
-              if (analysisResult) {
-                setAnalysisResult(null);
-              }
-            }}
+            onClick={() => setShowGuideModal(true)}
+            className="hidden md:flex items-center gap-1.5 text-xs text-slate-500 hover:text-slate-800 transition py-1.5 px-2.5 rounded-md hover:bg-slate-100"
+          >
+            <HelpCircle className="w-4 h-4" />
+            <span>使い方を見る</span>
+          </button>
+
+          <button
+            onClick={() => setShowHistoryModal(true)}
             className="flex items-center gap-1.5 text-xs text-slate-500 hover:text-slate-800 transition py-1.5 px-2.5 rounded-md hover:bg-slate-100"
           >
             <Clock className="w-4 h-4" />
             <span>履歴</span>
           </button>
-          <div className="w-8 h-8 rounded-full bg-slate-200 flex items-center justify-center text-slate-600">
+
+          <button
+            onClick={() => setShowUserPopover(!showUserPopover)}
+            className="w-8 h-8 rounded-full bg-slate-200 hover:ring-2 hover:ring-blue-400 flex items-center justify-center text-slate-600 transition"
+          >
             <User className="w-4 h-4" />
-          </div>
+          </button>
+
+          {/* User Popover */}
+          {showUserPopover && (
+            <div className="absolute right-0 top-11 w-64 bg-white border border-slate-200 rounded-xl shadow-lg p-4 z-50 text-xs space-y-3">
+              <div className="font-bold text-slate-800 border-b border-slate-100 pb-2">システム接続情報</div>
+              <div className="space-y-1.5 text-slate-600">
+                <div className="flex justify-between">
+                  <span className="text-slate-400">認証モード:</span>
+                  <span className="font-semibold text-emerald-600">JEV / Anthropic 連携中</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-400">キャッシュ:</span>
+                  <span>有効 (KV / In-Memory)</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-400">エンジン:</span>
+                  <span>System One + JEV-write</span>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowUserPopover(false)}
+                className="w-full py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-lg transition"
+              >
+                閉じる
+              </button>
+            </div>
+          )}
         </div>
       </header>
 
@@ -299,10 +386,14 @@ export default function HomePage() {
             // Sidebar for Input Screen (Image 1)
             <div className="p-4 space-y-1.5">
               <button
-                onClick={() => setSidebarMenu("new")}
+                onClick={() => {
+                  setSidebarMenu("new");
+                  setInputText("");
+                  setAnalysisResult(null);
+                }}
                 className={`w-full flex items-center gap-2.5 px-3.5 py-2.5 rounded-lg text-sm font-medium transition ${
                   sidebarMenu === "new"
-                    ? "bg-blue-50 text-blue-600"
+                    ? "bg-blue-50 text-blue-600 font-bold"
                     : "text-slate-600 hover:bg-slate-50"
                 }`}
               >
@@ -311,10 +402,13 @@ export default function HomePage() {
               </button>
 
               <button
-                onClick={() => setSidebarMenu("history")}
+                onClick={() => {
+                  setSidebarMenu("history");
+                  setShowHistoryModal(true);
+                }}
                 className={`w-full flex items-center gap-2.5 px-3.5 py-2.5 rounded-lg text-sm font-medium transition ${
                   sidebarMenu === "history"
-                    ? "bg-blue-50 text-blue-600"
+                    ? "bg-blue-50 text-blue-600 font-bold"
                     : "text-slate-600 hover:bg-slate-50"
                 }`}
               >
@@ -323,10 +417,13 @@ export default function HomePage() {
               </button>
 
               <button
-                onClick={() => setSidebarMenu("drafts")}
+                onClick={() => {
+                  setSidebarMenu("drafts");
+                  setShowDraftModal(true);
+                }}
                 className={`w-full flex items-center gap-2.5 px-3.5 py-2.5 rounded-lg text-sm font-medium transition ${
                   sidebarMenu === "drafts"
-                    ? "bg-blue-50 text-blue-600"
+                    ? "bg-blue-50 text-blue-600 font-bold"
                     : "text-slate-600 hover:bg-slate-50"
                 }`}
               >
@@ -482,8 +579,8 @@ export default function HomePage() {
                         d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
                       />
                       <path
-                        className="text-emerald-500"
-                        strokeDasharray="78, 100"
+                        className={overallScore >= 80 ? "text-emerald-500" : overallScore >= 60 ? "text-amber-500" : "text-red-500"}
+                        strokeDasharray={`${overallScore}, 100`}
                         strokeWidth="3.5"
                         strokeLinecap="round"
                         stroke="currentColor"
@@ -491,10 +588,14 @@ export default function HomePage() {
                         d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
                       />
                     </svg>
-                    <span className="absolute text-xs font-bold text-slate-800">78%</span>
+                    <span className="absolute text-xs font-bold text-slate-800">{overallScore}%</span>
                   </div>
                   <p className="text-[10px] text-slate-500 leading-tight">
-                    全体的に良好です。いくつかの修正で、より信頼性の高い文章になります。
+                    {overallScore >= 85
+                      ? "信頼性の極めて高い文章です。公的根拠と整合しています。"
+                      : overallScore >= 70
+                      ? "全体的に良好です。いくつかの修正で、より信頼性の高い文章になります。"
+                      : "事実関係の誤りや確認が必要な項目が複数含まれています。修正の適用を推奨します。"}
                   </p>
                 </div>
               </div>
@@ -656,13 +757,54 @@ export default function HomePage() {
                   </h2>
                   <div className="flex items-center gap-3 text-[11px] text-slate-400 mt-0.5">
                     <span>文字数: {inputText.length}</span>
-                    <span>最終保存: 2025/4/24 14:32</span>
+                    <span>最終保存: {lastSavedTime || "2025/4/24 14:32"}</span>
                   </div>
                 </div>
-                <div className="flex items-center gap-2">
-                  <button className="text-slate-400 hover:text-slate-600 p-1.5 rounded-md hover:bg-slate-100">
+                <div className="flex items-center gap-2 relative">
+                  <button
+                    onClick={() => setShowMoreMenu(!showMoreMenu)}
+                    className="text-slate-400 hover:text-slate-600 p-1.5 rounded-md hover:bg-slate-100 transition"
+                  >
                     <MoreHorizontal className="w-4 h-4" />
                   </button>
+
+                  {/* Dropdown Menu */}
+                  {showMoreMenu && (
+                    <div className="absolute right-0 top-9 w-48 bg-white border border-slate-200 rounded-xl shadow-lg p-1.5 z-40 text-xs">
+                      <button
+                        onClick={() => {
+                          navigator.clipboard.writeText(revisedLines.join("\n"));
+                          alert("修正版の全文をクリップボードにコピーしました。");
+                          setShowMoreMenu(false);
+                        }}
+                        className="w-full text-left px-3 py-2 rounded-lg hover:bg-slate-50 text-slate-700 flex items-center gap-2 transition"
+                      >
+                        <FileText className="w-3.5 h-3.5 text-slate-400" />
+                        <span>修正文を全コピー</span>
+                      </button>
+                      <button
+                        onClick={() => {
+                          handleSubmit();
+                          setShowMoreMenu(false);
+                        }}
+                        className="w-full text-left px-3 py-2 rounded-lg hover:bg-slate-50 text-slate-700 flex items-center gap-2 transition"
+                      >
+                        <RotateCcw className="w-3.5 h-3.5 text-slate-400" />
+                        <span>この文章を再検証</span>
+                      </button>
+                      <div className="border-t border-slate-100 my-1" />
+                      <button
+                        onClick={() => {
+                          setAnalysisResult(null);
+                          setShowMoreMenu(false);
+                        }}
+                        className="w-full text-left px-3 py-2 rounded-lg hover:bg-red-50 text-red-600 flex items-center gap-2 transition"
+                      >
+                        <AlertCircle className="w-3.5 h-3.5 text-red-500" />
+                        <span>入力をリセット</span>
+                      </button>
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -724,99 +866,176 @@ export default function HomePage() {
                 </div>
               </div>
 
-              {/* Side-by-Side Comparison Container */}
+              {/* Main Comparison Container depending on viewTab */}
               <div className="flex-1 overflow-y-auto p-6">
-                <div className="grid grid-cols-2 gap-4">
-                  {/* Left Column: 原文 */}
-                  <div className="space-y-3">
+                {viewTab === "original" ? (
+                  /* Original Only */
+                  <div className="max-w-3xl mx-auto space-y-3">
                     <div className="text-xs font-bold text-slate-600 mb-2">
                       原文 <span className="font-normal text-slate-400">(文字数: {inputText.length})</span>
                     </div>
-
                     <div className="space-y-2">
-                      {originalLines.map((line, idx) => {
-                        const matchedIssue = issues.find((issue) => issue.lineIndex === idx);
-                        const isSelected = currentIssue?.lineIndex === idx;
-
-                        let rowStyle = "border-slate-100 bg-white";
-                        if (matchedIssue?.verdict === "error") {
-                          rowStyle = "bg-red-50/70 border-red-200 text-red-950";
-                        } else if (matchedIssue?.verdict === "style") {
-                          rowStyle = "bg-purple-50/70 border-purple-200 text-purple-950";
-                        } else if (matchedIssue?.verdict === "warning") {
-                          rowStyle = "bg-amber-50/70 border-amber-200 text-amber-950";
-                        }
-
-                        if (isSelected) {
-                          rowStyle += " ring-2 ring-blue-500 shadow-sm";
-                        }
-
-                        return (
-                          <div
-                            key={idx}
-                            onClick={() => {
-                              if (matchedIssue) {
-                                const issueIdx = filteredIssues.findIndex((i) => i.id === matchedIssue.id);
-                                if (issueIdx >= 0) setSelectedIssueIndex(issueIdx);
-                              }
-                            }}
-                            className={`flex items-start gap-3 p-3 rounded-lg border text-xs leading-relaxed transition cursor-pointer ${rowStyle}`}
-                          >
-                            <span className="text-slate-400 font-mono text-[11px] w-4 shrink-0 select-none">
-                              {idx + 1}
-                            </span>
-                            <span className="flex-1">{line}</span>
-                          </div>
-                        );
-                      })}
+                      {originalLines.map((line, idx) => (
+                        <div key={idx} className="flex items-start gap-3 p-3 rounded-lg border border-slate-100 bg-white text-xs leading-relaxed">
+                          <span className="text-slate-400 font-mono text-[11px] w-4 shrink-0 select-none">{idx + 1}</span>
+                          <span className="flex-1">{line}</span>
+                        </div>
+                      ))}
                     </div>
                   </div>
-
-                  {/* Right Column: 修正版 */}
-                  <div className="space-y-3">
+                ) : viewTab === "revised" ? (
+                  /* Revised Only */
+                  <div className="max-w-3xl mx-auto space-y-3">
                     <div className="text-xs font-bold text-slate-600 mb-2">
                       修正版 <span className="font-normal text-slate-400">(文字数: {revisedLines.join("").length})</span>
                     </div>
-
                     <div className="space-y-2">
-                      {revisedLines.map((line, idx) => {
-                        const matchedIssue = issues.find((issue) => issue.lineIndex === idx);
-                        const isSelected = currentIssue?.lineIndex === idx;
+                      {revisedLines.map((line, idx) => (
+                        <div key={idx} className="flex items-start gap-3 p-3 rounded-lg border border-slate-100 bg-white text-xs leading-relaxed">
+                          <span className="text-slate-400 font-mono text-[11px] w-4 shrink-0 select-none">{idx + 1}</span>
+                          <span className="flex-1">{line}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : viewTab === "inline" ? (
+                  /* Inline Git-diff style */
+                  <div className="max-w-3xl mx-auto space-y-3">
+                    <div className="text-xs font-bold text-slate-600 mb-2">インライン統合差分</div>
+                    <div className="space-y-2 font-mono text-xs">
+                      {originalLines.map((line, idx) => {
+                        const revLine = revisedLines[idx] || "";
+                        const hasDiff = line !== revLine;
+                        if (onlyDiff && !hasDiff) return null;
 
-                        let rowStyle = "border-slate-100 bg-white";
-                        if (matchedIssue?.adopted) {
-                          if (matchedIssue.verdict === "error") {
-                            rowStyle = "bg-emerald-50/70 border-emerald-200 text-emerald-950";
-                          } else if (matchedIssue.verdict === "style") {
-                            rowStyle = "bg-purple-50/70 border-purple-200 text-purple-950";
-                          }
-                        }
-
-                        if (isSelected) {
-                          rowStyle += " ring-2 ring-blue-500 shadow-sm";
+                        if (!hasDiff) {
+                          return (
+                            <div key={idx} className="p-3 rounded-lg border border-slate-100 bg-white text-slate-700 flex items-start gap-2">
+                              <span className="text-slate-400 text-[11px] w-4 select-none">{idx + 1}</span>
+                              <span className="flex-1">{line}</span>
+                            </div>
+                          );
                         }
 
                         return (
-                          <div
-                            key={idx}
-                            onClick={() => {
-                              if (matchedIssue) {
-                                const issueIdx = filteredIssues.findIndex((i) => i.id === matchedIssue.id);
-                                if (issueIdx >= 0) setSelectedIssueIndex(issueIdx);
-                              }
-                            }}
-                            className={`flex items-start gap-3 p-3 rounded-lg border text-xs leading-relaxed transition cursor-pointer ${rowStyle}`}
-                          >
-                            <span className="text-slate-400 font-mono text-[11px] w-4 shrink-0 select-none">
-                              {idx + 1}
-                            </span>
-                            <span className="flex-1">{line}</span>
+                          <div key={idx} className="space-y-1 p-2.5 rounded-lg border border-slate-200 bg-slate-50/50">
+                            <div className="flex items-start gap-2 text-red-800 bg-red-50 p-2 rounded">
+                              <span className="font-bold text-red-500 w-4 text-center select-none">-</span>
+                              <span className="flex-1">{line}</span>
+                            </div>
+                            <div className="flex items-start gap-2 text-emerald-800 bg-emerald-50 p-2 rounded">
+                              <span className="font-bold text-emerald-600 w-4 text-center select-none">+</span>
+                              <span className="flex-1">{revLine}</span>
+                            </div>
                           </div>
                         );
                       })}
                     </div>
                   </div>
-                </div>
+                ) : (
+                  /* Side-by-Side Comparison Container */
+                  <div className="grid grid-cols-2 gap-4">
+                    {/* Left Column: 原文 */}
+                    <div className="space-y-3">
+                      <div className="text-xs font-bold text-slate-600 mb-2">
+                        原文 <span className="font-normal text-slate-400">(文字数: {inputText.length})</span>
+                      </div>
+
+                      <div className="space-y-2">
+                        {originalLines.map((line, idx) => {
+                          const matchedIssue = issues.find((issue) => issue.lineIndex === idx);
+                          const isSelected = currentIssue?.lineIndex === idx;
+                          const revLine = revisedLines[idx] || "";
+                          const hasDiff = line !== revLine;
+
+                          // Only filter if onlyDiff is true
+                          if (onlyDiff && !hasDiff) return null;
+
+                          let rowStyle = "border-slate-100 bg-white";
+                          if (hasDiff && matchedIssue?.verdict === "error") {
+                            rowStyle = "bg-red-50/70 border-red-200 text-red-950";
+                          } else if (hasDiff && matchedIssue?.verdict === "style") {
+                            rowStyle = "bg-purple-50/70 border-purple-200 text-purple-950";
+                          } else if (hasDiff && matchedIssue?.verdict === "warning") {
+                            rowStyle = "bg-amber-50/70 border-amber-200 text-amber-950";
+                          }
+
+                          if (isSelected) {
+                            rowStyle += " ring-2 ring-blue-500 shadow-sm";
+                          }
+
+                          return (
+                            <div
+                              key={idx}
+                              onClick={() => {
+                                if (matchedIssue) {
+                                  const issueIdx = filteredIssues.findIndex((i) => i.id === matchedIssue.id);
+                                  if (issueIdx >= 0) setSelectedIssueIndex(issueIdx);
+                                }
+                              }}
+                              className={`flex items-start gap-3 p-3 rounded-lg border text-xs leading-relaxed transition cursor-pointer ${rowStyle}`}
+                            >
+                              <span className="text-slate-400 font-mono text-[11px] w-4 shrink-0 select-none">
+                                {idx + 1}
+                              </span>
+                              <span className="flex-1">{line}</span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    {/* Right Column: 修正版 */}
+                    <div className="space-y-3">
+                      <div className="text-xs font-bold text-slate-600 mb-2">
+                        修正版 <span className="font-normal text-slate-400">(文字数: {revisedLines.join("").length})</span>
+                      </div>
+
+                      <div className="space-y-2">
+                        {revisedLines.map((line, idx) => {
+                          const matchedIssue = issues.find((issue) => issue.lineIndex === idx);
+                          const isSelected = currentIssue?.lineIndex === idx;
+                          const origLine = originalLines[idx] || "";
+                          const hasDiff = line !== origLine;
+
+                          // Only filter if onlyDiff is true
+                          if (onlyDiff && !hasDiff) return null;
+
+                          let rowStyle = "border-slate-100 bg-white";
+                          if (hasDiff && matchedIssue?.adopted) {
+                            if (matchedIssue.verdict === "error") {
+                              rowStyle = "bg-emerald-50/70 border-emerald-200 text-emerald-950";
+                            } else if (matchedIssue.verdict === "style") {
+                              rowStyle = "bg-purple-50/70 border-purple-200 text-purple-950";
+                            }
+                          }
+
+                          if (isSelected) {
+                            rowStyle += " ring-2 ring-blue-500 shadow-sm";
+                          }
+
+                          return (
+                            <div
+                              key={idx}
+                              onClick={() => {
+                                if (matchedIssue) {
+                                  const issueIdx = filteredIssues.findIndex((i) => i.id === matchedIssue.id);
+                                  if (issueIdx >= 0) setSelectedIssueIndex(issueIdx);
+                                }
+                              }}
+                              className={`flex items-start gap-3 p-3 rounded-lg border text-xs leading-relaxed transition cursor-pointer ${rowStyle}`}
+                            >
+                              <span className="text-slate-400 font-mono text-[11px] w-4 shrink-0 select-none">
+                                {idx + 1}
+                              </span>
+                              <span className="flex-1">{line}</span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* Center Bottom Card: 選択中の変更箇所の差分 (Image 2 - Component 3) */}
@@ -844,14 +1063,34 @@ export default function HomePage() {
 
                   {/* Diff Snippet Box */}
                   <div className="bg-white border border-slate-200 rounded-lg p-2.5 font-mono text-xs space-y-1">
-                    <div className="flex items-start gap-2 text-red-700 bg-red-50/60 p-1 rounded">
-                      <span className="text-red-400 font-bold w-4 text-center select-none">-</span>
-                      <span className="flex-1">{currentIssue.originalText}</span>
-                    </div>
-                    <div className="flex items-start gap-2 text-emerald-700 bg-emerald-50/60 p-1 rounded">
-                      <span className="text-emerald-500 font-bold w-4 text-center select-none">+</span>
-                      <span className="flex-1">{currentIssue.revisedText}</span>
-                    </div>
+                    {currentIssue.originalText.trim() === currentIssue.revisedText.trim() ? (
+                      <div className="flex items-center gap-2 text-slate-500 bg-slate-50 p-2 rounded text-xs">
+                        <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0" />
+                        <span>変更なし（検証済み立証事実を保持）: {currentIssue.originalText}</span>
+                      </div>
+                    ) : inlineDiffMode ? (
+                      <>
+                        <div className="flex items-start gap-2 text-red-700 bg-red-50/60 p-1.5 rounded">
+                          <span className="text-red-400 font-bold w-4 text-center select-none">-</span>
+                          <span className="flex-1">{currentIssue.originalText}</span>
+                        </div>
+                        <div className="flex items-start gap-2 text-emerald-700 bg-emerald-50/60 p-1.5 rounded">
+                          <span className="text-emerald-500 font-bold w-4 text-center select-none">+</span>
+                          <span className="flex-1">{currentIssue.revisedText}</span>
+                        </div>
+                      </>
+                    ) : (
+                      <div className="grid grid-cols-2 gap-2 text-[11px]">
+                        <div className="p-2 rounded bg-red-50 text-red-900 border border-red-100">
+                          <div className="text-[10px] font-bold text-red-600 mb-0.5">原文</div>
+                          {currentIssue.originalText}
+                        </div>
+                        <div className="p-2 rounded bg-emerald-50 text-emerald-900 border border-emerald-100">
+                          <div className="text-[10px] font-bold text-emerald-600 mb-0.5">修正版</div>
+                          {currentIssue.revisedText}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
               )}
@@ -1064,6 +1303,164 @@ export default function HomePage() {
           </div>
         )}
       </div>
+
+      {/* History Modal */}
+      {showHistoryModal && (
+        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-xl max-w-lg w-full p-6 space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <div className="flex items-center gap-2">
+                <Clock className="w-5 h-5 text-blue-600" />
+                <h3 className="font-bold text-slate-900">過去の検証履歴</h3>
+              </div>
+              <button
+                onClick={() => setShowHistoryModal(false)}
+                className="text-slate-400 hover:text-slate-600 text-sm font-bold"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="max-h-80 overflow-y-auto space-y-2">
+              {historyItems.length === 0 ? (
+                <div className="text-center py-8 text-xs text-slate-400">
+                  検証履歴はまだありません。
+                </div>
+              ) : (
+                historyItems.map((h) => (
+                  <div
+                    key={h.id}
+                    onClick={() => {
+                      setInputText(h.text);
+                      setShowHistoryModal(false);
+                      setAnalysisResult(null);
+                    }}
+                    className="p-3 rounded-xl border border-slate-200 hover:border-blue-400 hover:bg-blue-50/40 cursor-pointer transition text-xs space-y-1"
+                  >
+                    <div className="flex items-center justify-between text-slate-400 text-[10px]">
+                      <span>{h.time}</span>
+                      <span className="text-blue-600 font-bold">復元して確認</span>
+                    </div>
+                    <p className="text-slate-800 line-clamp-2">{h.text}</p>
+                  </div>
+                ))
+              )}
+            </div>
+
+            <div className="flex justify-end pt-2">
+              <button
+                onClick={() => setShowHistoryModal(false)}
+                className="px-4 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs transition"
+              >
+                閉じる
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Draft Modal */}
+      {showDraftModal && (
+        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-xl max-w-md w-full p-6 space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <div className="flex items-center gap-2">
+                <FileText className="w-5 h-5 text-blue-600" />
+                <h3 className="font-bold text-slate-900">下書きの保存・復元</h3>
+              </div>
+              <button
+                onClick={() => setShowDraftModal(false)}
+                className="text-slate-400 hover:text-slate-600 text-sm font-bold"
+              >
+                ✕
+              </button>
+            </div>
+
+            <p className="text-xs text-slate-600 leading-relaxed">
+              現在入力中の文章をブラウザのローカルストレージへ保存、または保存済み下書きを復元できます。
+            </p>
+
+            <div className="flex gap-3 pt-2">
+              <button
+                onClick={() => {
+                  if (!inputText.trim()) {
+                    alert("保存するテキストが入力されていません。");
+                    return;
+                  }
+                  localStorage.setItem("jev_draft_text", inputText);
+                  alert("下書きをブラウザに保存しました。");
+                  setShowDraftModal(false);
+                }}
+                className="flex-1 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs transition shadow-sm"
+              >
+                現在の下書きを保存
+              </button>
+
+              <button
+                onClick={() => {
+                  const draft = localStorage.getItem("jev_draft_text");
+                  if (draft) {
+                    setInputText(draft);
+                    alert("保存された下書きを復元しました。");
+                    setShowDraftModal(false);
+                  } else {
+                    alert("保存された下書きはありません。");
+                  }
+                }}
+                className="flex-1 py-2.5 rounded-xl border border-slate-300 hover:bg-slate-50 text-slate-700 font-bold text-xs transition"
+              >
+                下書きを読み込む
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Rich Guide Modal */}
+      {showGuideModal && (
+        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-xl max-w-lg w-full p-6 space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <div className="flex items-center gap-2">
+                <HelpCircle className="w-5 h-5 text-blue-600" />
+                <h3 className="font-bold text-slate-900">文章品質保証システム 使い方ガイド</h3>
+              </div>
+              <button
+                onClick={() => setShowGuideModal(false)}
+                className="text-slate-400 hover:text-slate-600 text-sm font-bold"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="space-y-3 text-xs text-slate-600 leading-relaxed">
+              <div className="p-3 bg-blue-50/50 rounded-xl border border-blue-100 space-y-1">
+                <div className="font-bold text-blue-900">1. 事実の自動検証（ファクトチェック）</div>
+                <p>公的発表や一次ソース、Web信頼情報源と照合し、数値や日付の誤認をJEV判定エンジンで検出します。</p>
+              </div>
+
+              <div className="p-3 bg-purple-50/50 rounded-xl border border-purple-100 space-y-1">
+                <div className="font-bold text-purple-900">2. AI癖・不自然な表現の是正</div>
+                <p>機械的な同語反復やAI特有の紋切り型フレーズを抽出し、自然で流麗な日本語表現へと校正します。</p>
+              </div>
+
+              <div className="p-3 bg-emerald-50/50 rounded-xl border border-emerald-100 space-y-1">
+                <div className="font-bold text-emerald-900">3. 差分の比較とワンクリック採用</div>
+                <p>「左右比較」「インライン差分」「差分のみ表示」で変更点を正確に把握し、「採用」「元に戻す」で自由に取捨選択できます。</p>
+              </div>
+            </div>
+
+            <div className="flex justify-end pt-2">
+              <button
+                onClick={() => setShowGuideModal(false)}
+                className="px-5 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs transition"
+              >
+                閉じる
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
