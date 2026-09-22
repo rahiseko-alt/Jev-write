@@ -8,6 +8,28 @@
 
 ---
 
+## 2026-09-22 レビュー指摘・設計欠陥の全件修正完了（commit 9efcd2b）
+
+**決めたこと**
+
+- ユーザー設計指摘①〜⑤（Entity Gate、一次情報×対象一致必須、Evidence必須、固定訂正文削除、specPairs限定）をすべて実装した
+- コードレビュー①②の指摘（P0×1、P1×10、P2×4）に対応した。主な修正: Entity Gate（passesEntityGate関数新設）、JEV API契約修正（model/instructions/criteria/answers/Noul型）、Delta Check数値破壊修正、非数値意味変更棄却、本番Mock禁止（NODE_ENV=production）、スタックトレース削除、overallScore計算式修正、Apple NewsroomデフォルトURL削除
+- 全41テストパス・GitHub main (9efcd2b) にプッシュ済み
+- 重要記録をアーティファクト bug_registry.md に保管済み
+
+**次にやること**
+
+- Vercel本番環境（https://wonderful-galileo-peach.vercel.app）でNintendo Switch 2記事の24箇所の誤りを実際に検証し、修正Recallを測定する
+- JEV本番エンドポイント（TypeSafe AI System One）のAPIキーを投入して実機動作確認する
+- 残P2バグ（認証・レート制限なし）の対応可否をユーザーと確認する
+
+**未解決の問題**
+
+- 認証・レート制限（R1-P2c/R2-P1i）はまだ未着手
+- テストがMock中心でTypeSafe API契約の実機検証はしていない
+
+---
+
 ## 2026-09-22 サーバーレス同期実行＆実証ベンチマーク6箇所誤認修正完了
 
 **決めたこと**
