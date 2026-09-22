@@ -29,7 +29,51 @@ import {
   FactLedgerItem,
   StyleIssue,
 } from "@/types";
-import { buildRevisedDocument, type Finding } from "@/lib/revised-document";
+import {
+  buildRevisedDocument,
+  type Finding,
+  type MarkKind,
+  type Segment,
+} from "@/lib/revised-document";
+
+// Each kind of mark is told apart by shape as well as by colour: a glyph
+// before the span and a distinct underline, so the distinction survives for a
+// reader who cannot separate the hues.
+const MARK_STYLES: Record<MarkKind, { className: string; glyph: string; label: string }> = {
+  fact: {
+    className:
+      "bg-red-50 text-red-900 underline decoration-red-400 decoration-2 underline-offset-4",
+    glyph: "✎",
+    label: "事実の修正",
+  },
+  style: {
+    className:
+      "bg-purple-50 text-purple-900 underline decoration-purple-400 decoration-wavy underline-offset-4",
+    glyph: "✦",
+    label: "AIっぽい表現",
+  },
+  unverified: {
+    className:
+      "bg-amber-50 text-amber-900 underline decoration-amber-500 decoration-dotted decoration-2 underline-offset-4",
+    glyph: "?",
+    label: "根拠が見つかりません",
+  },
+};
+
+function MarkedText({ segment }: { segment: Segment }) {
+  if (!segment.mark) return <>{segment.text}</>;
+
+  const style = MARK_STYLES[segment.mark.kind];
+  return (
+    <span className={`rounded px-0.5 ${style.className}`}>
+      <span aria-hidden className="mr-0.5 text-[0.7em] align-super font-bold select-none">
+        {style.glyph}
+      </span>
+      <span className="sr-only">{style.label}: </span>
+      {segment.text}
+    </span>
+  );
+}
 
 export default function HomePage() {
   // Navigation & View Mode
@@ -528,7 +572,7 @@ export default function HomePage() {
                       {revisedDocument?.paragraphs.map((paragraph, idx) => (
                         <span key={idx}>
                           {paragraph.segments.map((segment, segIdx) => (
-                            <span key={segIdx}>{segment.text}</span>
+                            <MarkedText key={segIdx} segment={segment} />
                           ))}
                           {paragraph.separator}
                         </span>

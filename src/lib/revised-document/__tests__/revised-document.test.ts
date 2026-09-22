@@ -603,3 +603,137 @@ describe("buildRevisedDocument", () => {
 function paragraphText(paragraph: { segments: { text: string }[] }): string {
   return paragraph.segments.map((s) => s.text).join("");
 }
+
+describe("inline marks", () => {
+  function marks(view: { paragraphs: { segments: { text: string; mark?: { findingId: string; kind: string } }[] }[] }) {
+    return view.paragraphs
+      .flatMap((p) => p.segments)
+      .filter((s) => s.mark)
+      .map((s) => ({ text: s.text, kind: s.mark!.kind, findingId: s.mark!.findingId }));
+  }
+
+  it("marks the corrected span of a fact, not the whole sentence", () => {
+    const original = "アップルは2023年9月13日、iPhone 15 Proを発表した。";
+    const revised = "アップルは2023年9月12日、iPhone 15 Proを発表した。";
+
+    const view = buildRevisedDocument({
+      originalText: original,
+      analysis: analysis(original, revised, [
+        claim("アップルは2023年9月13日", "CONTRADICTED", "アップルは2023年9月12日"),
+      ]),
+      adoption: {},
+    });
+
+    expect(marks(view)).toEqual([
+      { text: "アップルは2023年9月12日", kind: "fact", findingId: "fact-0" },
+    ]);
+  });
+
+  it("marks a repaired AI-tell across its whole sentence", () => {
+    const original = "まとめると、まとめると、こうなる。";
+    const revised = "こうなる。";
+
+    const view = buildRevisedDocument({
+      originalText: original,
+      analysis: analysis(original, revised, [], [styleIssue("まとめると、まとめると、こうなる。")]),
+      adoption: {},
+    });
+
+    expect(marks(view)).toEqual([
+      { text: "こうなる。", kind: "style", findingId: "style-0" },
+    ]);
+  });
+
+  it("marks an unverified claim across its sentence and leaves the wording alone", () => {
+    const original = "価格は10万円である。";
+
+    const view = buildRevisedDocument({
+      originalText: original,
+      analysis: analysis(original, original, [claim("価格は10万円である。", "INSUFFICIENT")]),
+      adoption: {},
+    });
+
+    expect(marks(view)).toEqual([
+      { text: "価格は10万円である。", kind: "unverified", findingId: "fact-0" },
+    ]);
+  });
+
+  it("leaves a supported claim unmarked", () => {
+    const original = "価格は10万円である。";
+
+    const view = buildRevisedDocument({
+      originalText: original,
+      analysis: analysis(original, original, [claim("価格は10万円である。", "SUPPORTED")]),
+      adoption: {},
+    });
+
+    expect(marks(view)).toEqual([]);
+  });
+
+  it("falls back to the sentence when the corrected span cannot be located", () => {
+    const original = "価格は10万円である。";
+    const revised = "価格は12万円である。";
+
+    const view = buildRevisedDocument({
+      originalText: original,
+      analysis: analysis(original, revised, [
+        claim("価格は10万円である。", "CONTRADICTED", "まったく別の文言"),
+      ]),
+      adoption: {},
+    });
+
+    expect(marks(view)).toEqual([
+      { text: "価格は12万円である。", kind: "fact", findingId: "fact-0" },
+    ]);
+  });
+
+  it("loses no text to the marks", () => {
+    const original = "アップルは2023年9月13日、iPhone 15 Proを発表した。";
+    const revised = "アップルは2023年9月12日、iPhone 15 Proを発表した。";
+
+    const view = buildRevisedDocument({
+      originalText: original,
+      analysis: analysis(original, revised, [
+        claim("アップルは2023年9月13日", "CONTRADICTED", "アップルは2023年9月12日"),
+      ]),
+      adoption: {},
+    });
+
+    expect(paragraphText(view.paragraphs[0])).toBe(revised);
+  });
+
+  it("keeps marks out of the clipboard body", () => {
+    const original = "アップルは2023年9月13日、iPhone 15 Proを発表した。";
+    const revised = "アップルは2023年9月12日、iPhone 15 Proを発表した。";
+
+    const view = buildRevisedDocument({
+      originalText: original,
+      analysis: analysis(original, revised, [
+        claim("アップルは2023年9月13日", "CONTRADICTED", "アップルは2023年9月12日"),
+      ]),
+      adoption: {},
+    });
+
+    expect(view.clipboardText).toBe(revised);
+  });
+
+  it("reaches both Findings when a fact and an AI-tell share a sentence", () => {
+    const original = "まとめると、価格は10万円である。";
+    const revised = "まとめると、価格は12万円である。";
+
+    const view = buildRevisedDocument({
+      originalText: original,
+      analysis: analysis(
+        original,
+        revised,
+        [claim("価格は10万円である", "CONTRADICTED", "価格は12万円である")],
+        [styleIssue("まとめると、価格は10万円である。")]
+      ),
+      adoption: {},
+    });
+
+    const found = marks(view);
+    expect([...new Set(found.map((m) => m.findingId))].sort()).toEqual(["fact-0", "style-0"]);
+    expect(paragraphText(view.paragraphs[0])).toBe(revised);
+  });
+});

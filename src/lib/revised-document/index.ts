@@ -7,8 +7,18 @@ import type { AnalysisResult, ClaimResult, StyleIssue } from "@/types";
  * no splitting, matching or diffing lives in the component.
  */
 
+/** What a mark says about the text it covers. */
+export type MarkKind = "fact" | "style" | "unverified";
+
+export type Mark = {
+  findingId: string;
+  kind: MarkKind;
+};
+
 export type Segment = {
   text: string;
+  /** Absent on the text the tool did not touch and had no doubt about. */
+  mark?: Mark;
 };
 
 export type Paragraph = {
@@ -38,6 +48,8 @@ export type Finding = {
   /** Index into `comparison` — the sentence this Finding sits in. */
   lineIndex: number;
   adopted: boolean;
+  /** How this Finding marks the document, or null when it leaves no mark. */
+  markKind: MarkKind | null;
 };
 
 export type RevisedDocumentView = {
@@ -169,6 +181,7 @@ function factFinding(
     explanation: result.reason || defaultExplanation(contradicted, insufficient),
     lineIndex: sentenceIndex >= 0 ? sentenceIndex : index,
     adopted: isAdopted(adoption, id),
+    markKind: contradicted ? "fact" : insufficient ? "unverified" : null,
   };
 }
 
@@ -217,6 +230,7 @@ function styleFinding(
       styleIssue.repairInstruction || "AI特有の紋切り型表現または重複が検出されました。",
     lineIndex: sentenceIndex >= 0 ? sentenceIndex : 0,
     adopted: isAdopted(adoption, id),
+    markKind: isRaised(styleIssue) ? "style" : null,
   };
 }
 
@@ -263,9 +277,10 @@ export function buildRevisedDocument(
 
   let cursor = 0;
   const paragraphs: Paragraph[] = sourceParagraphs.map((paragraph) => ({
-    segments: paragraph.sentences.map(() => ({
-      text: comparison[cursor++].revised,
-    })),
+    segments: paragraph.sentences.flatMap(() => {
+      const index = cursor++;
+      return markSentence(comparison[index].revised, findings, index);
+    }),
     separator: paragraph.separator,
   }));
 
@@ -287,6 +302,69 @@ export function buildRevisedDocument(
       analysis.claims.some((result) => result.verdict !== "SUPPORTED") ||
       analysis.styleIssues.some(isRaised),
   };
+}
+
+type Span = {
+  start: number;
+  end: number;
+  mark: Mark;
+};
+
+/**
+ * A corrected fact marks the words that changed; an AI-tell repair and an
+ * unverified claim mark the sentence they sit in. Where a correction's span
+ * cannot be found in the sentence — the pipeline rephrased more than the
+ * claim, or the reader refused it — the mark widens to the sentence rather
+ * than disappearing.
+ */
+function markSentence(
+  text: string,
+  findings: Finding[],
+  sentenceIndex: number
+): Segment[] {
+  const onThisSentence = findings.filter(
+    (finding) => finding.lineIndex === sentenceIndex && finding.markKind !== null
+  );
+
+  const spans: Span[] = [];
+  const wholeSentence: Mark[] = [];
+
+  for (const finding of onThisSentence) {
+    const mark: Mark = { findingId: finding.id, kind: finding.markKind! };
+    const start =
+      finding.markKind === "fact" ? text.indexOf(finding.revisedText) : -1;
+
+    if (start >= 0 && finding.revisedText.length > 0) {
+      spans.push({ start, end: start + finding.revisedText.length, mark });
+    } else {
+      wholeSentence.push(mark);
+    }
+  }
+
+  spans.sort((a, b) => a.start - b.start);
+  const background = wholeSentence[0];
+
+  if (spans.length === 0) {
+    return background ? [{ text, mark: background }] : [{ text }];
+  }
+
+  const segments: Segment[] = [];
+  let at = 0;
+
+  for (const span of spans) {
+    if (span.start < at) continue; // overlapping spans: the first one wins
+    if (span.start > at) segments.push(gap(text.slice(at, span.start), background));
+    segments.push({ text: text.slice(span.start, span.end), mark: span.mark });
+    at = span.end;
+  }
+
+  if (at < text.length) segments.push(gap(text.slice(at), background));
+
+  return segments;
+}
+
+function gap(text: string, background?: Mark): Segment {
+  return background ? { text, mark: background } : { text };
 }
 
 function paragraphText(paragraph: Paragraph): string {
