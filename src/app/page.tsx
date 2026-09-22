@@ -86,7 +86,7 @@ export default function HomePage() {
   const [viewTab, setViewTab] = useState<"original" | "revised" | "side-by-side" | "inline">("revised");
   const [onlyDiff, setOnlyDiff] = useState(false);
   const [inlineDiffMode, setInlineDiffMode] = useState(true);
-  const [selectedIssueIndex, setSelectedIssueIndex] = useState(0);
+  const [selectedFindingIndex, setSelectedFindingIndex] = useState(0);
   const [categoryFilter, setCategoryFilter] = useState<"all" | "fact" | "warning" | "style" | "verified">("all");
 
   // Modals & Popovers
@@ -108,7 +108,7 @@ export default function HomePage() {
     } catch {}
   }, []);
 
-  // Track user adoption state for each issue
+  // Track user adoption state for each Finding
   const [adoptedOverrides, setAdoptedOverrides] = useState<Record<string, boolean>>({});
   const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle");
 
@@ -130,23 +130,23 @@ export default function HomePage() {
     [revisedDocument]
   );
 
-  const issues: Finding[] = useMemo(
+  const findings: Finding[] = useMemo(
     () => revisedDocument?.findings ?? [],
     [revisedDocument]
   );
 
-  // Filtered issues list
-  const filteredIssues = useMemo(() => {
-    if (categoryFilter === "all") return issues;
-    if (categoryFilter === "fact") return issues.filter((i) => i.verdict === "error");
-    if (categoryFilter === "warning") return issues.filter((i) => i.verdict === "warning");
-    if (categoryFilter === "style") return issues.filter((i) => i.verdict === "style");
-    if (categoryFilter === "verified") return issues.filter((i) => i.verdict === "verified");
-    return issues;
-  }, [issues, categoryFilter]);
+  // Findings the category filter lets through
+  const filteredFindings = useMemo(() => {
+    if (categoryFilter === "all") return findings;
+    if (categoryFilter === "fact") return findings.filter((i) => i.kind === "corrected");
+    if (categoryFilter === "warning") return findings.filter((i) => i.kind === "unverified");
+    if (categoryFilter === "style") return findings.filter((i) => i.kind === "ai-tell");
+    if (categoryFilter === "verified") return findings.filter((i) => i.kind === "confirmed");
+    return findings;
+  }, [findings, categoryFilter]);
 
   // Active Issue
-  const currentIssue = filteredIssues[selectedIssueIndex] || filteredIssues[0] || null;
+  const currentFinding = filteredFindings[selectedFindingIndex] || filteredFindings[0] || null;
 
   const revisedLines = useMemo(
     () => revisedDocument?.comparison.map((pair) => pair.revised) ?? [],
@@ -202,7 +202,7 @@ export default function HomePage() {
 
       if (finalResult) {
         setAnalysisResult(finalResult);
-        setSelectedIssueIndex(0);
+        setSelectedFindingIndex(0);
 
         // Update last saved time
         const now = new Date();
@@ -228,8 +228,8 @@ export default function HomePage() {
   };
 
   // Adoption toggles
-  const handleAdoptToggle = (issueId: string, adopt: boolean) => {
-    setAdoptedOverrides((prev) => ({ ...prev, [issueId]: adopt }));
+  const handleAdoptToggle = (findingId: string, adopt: boolean) => {
+    setAdoptedOverrides((prev) => ({ ...prev, [findingId]: adopt }));
   };
 
   return (
@@ -408,10 +408,10 @@ export default function HomePage() {
               <div className="p-4 border-b border-slate-200 flex items-center justify-between shrink-0">
                 <div>
                   <h2 className="text-sm font-bold text-slate-900 truncate max-w-md">
-                    {originalLines[0]?.slice(0, 36) || "文章の品質検証レポート"}
+                    {revisedDocument?.title ?? "文章の品質検証レポート"}
                   </h2>
                   <div className="flex items-center gap-3 text-[11px] text-slate-400 mt-0.5">
-                    <span>文字数: {revisedDocument?.originalText.length ?? inputText.length}</span>
+                    <span>文字数: {revisedDocument?.originalText.length ?? 0}</span>
                     <span>最終保存: {lastSavedTime || "2025/4/24 14:32"}</span>
                   </div>
                 </div>
@@ -568,14 +568,18 @@ export default function HomePage() {
                       </div>
                     )}
 
-                    <article className="whitespace-pre-wrap rounded-xl border border-slate-100 bg-white p-5 text-sm leading-loose text-slate-800">
+                    <article className="rounded-xl border border-slate-100 bg-white p-5 text-sm leading-loose text-slate-800">
                       {revisedDocument?.paragraphs.map((paragraph, idx) => (
-                        <span key={idx}>
+                        <p
+                          key={idx}
+                          className={`whitespace-pre-wrap ${
+                            paragraph.separator.includes("\n\n") ? "mb-4 last:mb-0" : "mb-0"
+                          }`}
+                        >
                           {paragraph.segments.map((segment, segIdx) => (
                             <MarkedText key={segIdx} segment={segment} />
                           ))}
-                          {paragraph.separator}
-                        </span>
+                        </p>
                       ))}
                     </article>
                   </div>
@@ -624,8 +628,8 @@ export default function HomePage() {
 
                       <div className="space-y-2">
                         {originalLines.map((line, idx) => {
-                          const matchedIssue = issues.find((issue) => issue.lineIndex === idx);
-                          const isSelected = currentIssue?.lineIndex === idx;
+                          const matchedFinding = findings.find((finding) => finding.lineIndex === idx);
+                          const isSelected = currentFinding?.lineIndex === idx;
                           const revLine = revisedLines[idx] || "";
                           const hasDiff = line !== revLine;
 
@@ -633,11 +637,11 @@ export default function HomePage() {
                           if (onlyDiff && !hasDiff) return null;
 
                           let rowStyle = "border-slate-100 bg-white";
-                          if (hasDiff && matchedIssue?.verdict === "error") {
+                          if (hasDiff && matchedFinding?.kind === "corrected") {
                             rowStyle = "bg-red-50/70 border-red-200 text-red-950";
-                          } else if (hasDiff && matchedIssue?.verdict === "style") {
+                          } else if (hasDiff && matchedFinding?.kind === "ai-tell") {
                             rowStyle = "bg-purple-50/70 border-purple-200 text-purple-950";
-                          } else if (hasDiff && matchedIssue?.verdict === "warning") {
+                          } else if (hasDiff && matchedFinding?.kind === "unverified") {
                             rowStyle = "bg-amber-50/70 border-amber-200 text-amber-950";
                           }
 
@@ -649,9 +653,9 @@ export default function HomePage() {
                             <div
                               key={idx}
                               onClick={() => {
-                                if (matchedIssue) {
-                                  const issueIdx = filteredIssues.findIndex((i) => i.id === matchedIssue.id);
-                                  if (issueIdx >= 0) setSelectedIssueIndex(issueIdx);
+                                if (matchedFinding) {
+                                  const at = filteredFindings.findIndex((f) => f.id === matchedFinding.id);
+                                  if (at >= 0) setSelectedFindingIndex(at);
                                 }
                               }}
                               className={`flex items-start gap-3 p-3 rounded-lg border text-xs leading-relaxed transition cursor-pointer ${rowStyle}`}
@@ -674,8 +678,8 @@ export default function HomePage() {
 
                       <div className="space-y-2">
                         {revisedLines.map((line, idx) => {
-                          const matchedIssue = issues.find((issue) => issue.lineIndex === idx);
-                          const isSelected = currentIssue?.lineIndex === idx;
+                          const matchedFinding = findings.find((finding) => finding.lineIndex === idx);
+                          const isSelected = currentFinding?.lineIndex === idx;
                           const origLine = originalLines[idx] || "";
                           const hasDiff = line !== origLine;
 
@@ -683,10 +687,10 @@ export default function HomePage() {
                           if (onlyDiff && !hasDiff) return null;
 
                           let rowStyle = "border-slate-100 bg-white";
-                          if (hasDiff && matchedIssue?.adopted) {
-                            if (matchedIssue.verdict === "error") {
+                          if (hasDiff && matchedFinding?.adopted) {
+                            if (matchedFinding.kind === "corrected") {
                               rowStyle = "bg-emerald-50/70 border-emerald-200 text-emerald-950";
-                            } else if (matchedIssue.verdict === "style") {
+                            } else if (matchedFinding.kind === "ai-tell") {
                               rowStyle = "bg-purple-50/70 border-purple-200 text-purple-950";
                             }
                           }
@@ -699,9 +703,9 @@ export default function HomePage() {
                             <div
                               key={idx}
                               onClick={() => {
-                                if (matchedIssue) {
-                                  const issueIdx = filteredIssues.findIndex((i) => i.id === matchedIssue.id);
-                                  if (issueIdx >= 0) setSelectedIssueIndex(issueIdx);
+                                if (matchedFinding) {
+                                  const at = filteredFindings.findIndex((f) => f.id === matchedFinding.id);
+                                  if (at >= 0) setSelectedFindingIndex(at);
                                 }
                               }}
                               className={`flex items-start gap-3 p-3 rounded-lg border text-xs leading-relaxed transition cursor-pointer ${rowStyle}`}
@@ -720,13 +724,13 @@ export default function HomePage() {
               </div>
 
               {/* Center Bottom Card: 選択中の変更箇所の差分 (Image 2 - Component 3) */}
-              {currentIssue && (
+              {currentFinding && (
                 <div className="border-t border-slate-200 p-4 bg-slate-50/50 shrink-0">
                   <div className="flex items-center justify-between mb-2">
                     <div className="flex items-center gap-2 text-xs font-bold text-slate-800">
                       <span>選択中の変更箇所の差分</span>
                       <span className="text-slate-400 font-normal">
-                        ({currentIssue.lineIndex + 1}行目: {currentIssue.title})
+                        ({currentFinding.lineIndex >= 0 ? `${currentFinding.lineIndex + 1}行目: ` : ""}{currentFinding.title})
                       </span>
                     </div>
                     <div className="flex items-center gap-1.5 text-xs text-slate-500">
@@ -744,31 +748,31 @@ export default function HomePage() {
 
                   {/* Diff Snippet Box */}
                   <div className="bg-white border border-slate-200 rounded-lg p-2.5 font-mono text-xs space-y-1">
-                    {currentIssue.originalText.trim() === currentIssue.revisedText.trim() ? (
+                    {currentFinding.originalText.trim() === currentFinding.revisedText.trim() ? (
                       <div className="flex items-center gap-2 text-slate-500 bg-slate-50 p-2 rounded text-xs">
                         <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0" />
-                        <span>変更なし（検証済み立証事実を保持）: {currentIssue.originalText}</span>
+                        <span>変更なし（検証済み立証事実を保持）: {currentFinding.originalText}</span>
                       </div>
                     ) : inlineDiffMode ? (
                       <>
                         <div className="flex items-start gap-2 text-red-700 bg-red-50/60 p-1.5 rounded">
                           <span className="text-red-400 font-bold w-4 text-center select-none">-</span>
-                          <span className="flex-1">{currentIssue.originalText}</span>
+                          <span className="flex-1">{currentFinding.originalText}</span>
                         </div>
                         <div className="flex items-start gap-2 text-emerald-700 bg-emerald-50/60 p-1.5 rounded">
                           <span className="text-emerald-500 font-bold w-4 text-center select-none">+</span>
-                          <span className="flex-1">{currentIssue.revisedText}</span>
+                          <span className="flex-1">{currentFinding.revisedText}</span>
                         </div>
                       </>
                     ) : (
                       <div className="grid grid-cols-2 gap-2 text-[11px]">
                         <div className="p-2 rounded bg-red-50 text-red-900 border border-red-100">
                           <div className="text-[10px] font-bold text-red-600 mb-0.5">原文</div>
-                          {currentIssue.originalText}
+                          {currentFinding.originalText}
                         </div>
                         <div className="p-2 rounded bg-emerald-50 text-emerald-900 border border-emerald-100">
                           <div className="text-[10px] font-bold text-emerald-600 mb-0.5">修正版</div>
-                          {currentIssue.revisedText}
+                          {currentFinding.revisedText}
                         </div>
                       </div>
                     )}
@@ -782,25 +786,25 @@ export default function HomePage() {
                 (Image 2 - Component 4 & 5)
                ========================================= */}
             <aside className="w-full lg:w-96 lg:shrink-0 bg-white border-t lg:border-t-0 lg:border-l border-slate-200 flex flex-col justify-between lg:overflow-y-auto">
-              {currentIssue ? (
+              {currentFinding ? (
                 <div className="p-6 space-y-5">
                   {/* Top Pagination Control */}
                   <div className="flex items-center justify-between border-b border-slate-100 pb-3">
                     <span className="text-xs font-mono font-bold text-slate-600">
-                      {selectedIssueIndex + 1} / {filteredIssues.length}
+                      {selectedFindingIndex + 1} / {filteredFindings.length}
                     </span>
                     <div className="flex items-center gap-1">
                       <button
-                        disabled={selectedIssueIndex === 0}
-                        onClick={() => setSelectedIssueIndex((prev) => Math.max(0, prev - 1))}
+                        disabled={selectedFindingIndex === 0}
+                        onClick={() => setSelectedFindingIndex((prev) => Math.max(0, prev - 1))}
                         className="p-1 text-slate-500 hover:text-slate-800 disabled:opacity-30 rounded hover:bg-slate-100"
                       >
                         <ChevronLeft className="w-4 h-4" />
                       </button>
                       <button
-                        disabled={selectedIssueIndex === filteredIssues.length - 1}
+                        disabled={selectedFindingIndex === filteredFindings.length - 1}
                         onClick={() =>
-                          setSelectedIssueIndex((prev) => Math.min(filteredIssues.length - 1, prev + 1))
+                          setSelectedFindingIndex((prev) => Math.min(filteredFindings.length - 1, prev + 1))
                         }
                         className="p-1 text-slate-500 hover:text-slate-800 disabled:opacity-30 rounded hover:bg-slate-100"
                       >
@@ -812,25 +816,25 @@ export default function HomePage() {
                   {/* Header Title & Category Badge */}
                   <div className="flex items-start justify-between gap-2">
                     <div className="flex items-center gap-2">
-                      {currentIssue.verdict === "error" ? (
+                      {currentFinding.kind === "corrected" ? (
                         <AlertCircle className="w-5 h-5 text-red-500 shrink-0" />
-                      ) : currentIssue.verdict === "style" ? (
+                      ) : currentFinding.kind === "ai-tell" ? (
                         <Star className="w-5 h-5 text-purple-500 shrink-0" />
                       ) : (
                         <AlertTriangle className="w-5 h-5 text-amber-500 shrink-0" />
                       )}
-                      <h3 className="font-bold text-slate-900 text-sm">{currentIssue.title}</h3>
+                      <h3 className="font-bold text-slate-900 text-sm">{currentFinding.title}</h3>
                     </div>
                     <span
                       className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
-                        currentIssue.verdict === "error"
+                        currentFinding.kind === "corrected"
                           ? "bg-red-50 text-red-600"
-                          : currentIssue.verdict === "style"
+                          : currentFinding.kind === "ai-tell"
                           ? "bg-purple-50 text-purple-600"
                           : "bg-amber-50 text-amber-600"
                       }`}
                     >
-                      {currentIssue.categoryLabel}
+                      {currentFinding.categoryLabel}
                     </span>
                   </div>
 
@@ -841,14 +845,14 @@ export default function HomePage() {
                       <span className="text-slate-400 font-medium">判定</span>
                       <span
                         className={`font-bold px-2 py-0.5 rounded ${
-                          currentIssue.verdict === "error"
+                          currentFinding.kind === "corrected"
                             ? "bg-red-100 text-red-700"
-                            : currentIssue.verdict === "style"
+                            : currentFinding.kind === "ai-tell"
                             ? "bg-purple-100 text-purple-700"
                             : "bg-amber-100 text-amber-700"
                         }`}
                       >
-                        {currentIssue.verdict === "error" ? "誤り" : currentIssue.verdict === "style" ? "AI癖表現" : "要確認"}
+                        {currentFinding.kind === "corrected" ? "誤り" : currentFinding.kind === "ai-tell" ? "AI癖表現" : "要確認"}
                       </span>
                     </div>
 
@@ -856,18 +860,18 @@ export default function HomePage() {
                     <div className="py-1 border-b border-slate-50 space-y-1">
                       <div className="flex items-center justify-between">
                         <span className="text-slate-400 font-medium">信頼度</span>
-                        <span className="font-bold text-slate-900 text-sm">{currentIssue.confidence}%</span>
+                        <span className="font-bold text-slate-900 text-sm">{currentFinding.confidence}%</span>
                       </div>
                       <div className="w-full h-1.5 bg-slate-100 rounded-full overflow-hidden">
                         <div
                           className={`h-full ${
-                            currentIssue.verdict === "error"
+                            currentFinding.kind === "corrected"
                               ? "bg-red-500"
-                              : currentIssue.verdict === "style"
+                              : currentFinding.kind === "ai-tell"
                               ? "bg-purple-500"
                               : "bg-amber-500"
                           }`}
-                          style={{ width: `${currentIssue.confidence}%` }}
+                          style={{ width: `${currentFinding.confidence}%` }}
                         />
                       </div>
                       <p className="text-[10px] text-slate-400 leading-tight pt-0.5">
@@ -879,7 +883,7 @@ export default function HomePage() {
                     <div className="space-y-1">
                       <span className="text-slate-400 font-medium">原文</span>
                       <div className="bg-red-50 text-red-900 border border-red-200 rounded-lg p-2 leading-relaxed">
-                        {currentIssue.originalText}
+                        {currentFinding.originalText}
                       </div>
                     </div>
 
@@ -887,39 +891,39 @@ export default function HomePage() {
                     <div className="space-y-1">
                       <span className="text-slate-400 font-medium">修正版</span>
                       <div className="bg-emerald-50 text-emerald-900 border border-emerald-200 rounded-lg p-2 leading-relaxed">
-                        {currentIssue.revisedText}
+                        {currentFinding.revisedText}
                       </div>
                     </div>
 
                     {/* 根拠 */}
                     <div className="flex items-center justify-between py-1 border-b border-slate-50">
                       <span className="text-slate-400 font-medium">根拠</span>
-                      {currentIssue.sourceUrl ? (
+                      {currentFinding.sourceUrl ? (
                         <a
-                          href={currentIssue.sourceUrl}
+                          href={currentFinding.sourceUrl}
                           target="_blank"
                           rel="noopener noreferrer"
                           className="text-blue-600 hover:underline flex items-center gap-1 font-medium"
                         >
-                          <span>{currentIssue.sourceTitle || currentIssue.sourceUrl}</span>
+                          <span>{currentFinding.sourceTitle || currentFinding.sourceUrl}</span>
                           <ExternalLink className="w-3 h-3" />
                         </a>
                       ) : (
-                        <span className="text-slate-500 font-medium">{currentIssue.sourceTitle || "根拠なし"}</span>
+                        <span className="text-slate-500 font-medium">{currentFinding.sourceTitle || "根拠なし"}</span>
                       )}
                     </div>
 
                     {/* 種別 */}
                     <div className="flex items-center justify-between py-1 border-b border-slate-50">
                       <span className="text-slate-400 font-medium">種別</span>
-                      <span className="text-slate-700 font-medium">{currentIssue.categoryLabel}</span>
+                      <span className="text-slate-700 font-medium">{currentFinding.categoryLabel}</span>
                     </div>
 
                     {/* 説明 */}
                     <div className="space-y-1">
                       <span className="text-slate-400 font-medium">説明</span>
                       <p className="text-slate-600 leading-relaxed bg-slate-50 p-2.5 rounded-lg border border-slate-100">
-                        {currentIssue.explanation}
+                        {currentFinding.explanation}
                       </p>
                     </div>
                   </div>
@@ -927,9 +931,9 @@ export default function HomePage() {
                   {/* 採用 / 元に戻す Buttons (Image 2 - Component 5) */}
                   <div className="grid grid-cols-2 gap-3 pt-2">
                     <button
-                      onClick={() => handleAdoptToggle(currentIssue.id, true)}
+                      onClick={() => handleAdoptToggle(currentFinding.id, true)}
                       className={`flex items-center justify-center gap-1.5 py-2.5 rounded-xl font-bold text-xs transition shadow-sm ${
-                        currentIssue.adopted
+                        currentFinding.adopted
                           ? "bg-blue-600 text-white hover:bg-blue-700"
                           : "bg-slate-100 text-slate-700 hover:bg-slate-200"
                       }`}
@@ -939,9 +943,9 @@ export default function HomePage() {
                     </button>
 
                     <button
-                      onClick={() => handleAdoptToggle(currentIssue.id, false)}
+                      onClick={() => handleAdoptToggle(currentFinding.id, false)}
                       className={`flex items-center justify-center gap-1.5 py-2.5 rounded-xl font-bold text-xs border transition ${
-                        !currentIssue.adopted
+                        !currentFinding.adopted
                           ? "border-blue-600 text-blue-600 bg-blue-50"
                           : "border-slate-300 text-slate-600 hover:bg-slate-50"
                       }`}
@@ -952,18 +956,18 @@ export default function HomePage() {
                   </div>
 
                   {/* 関連する指摘 */}
-                  {filteredIssues.length > 1 && (
+                  {filteredFindings.length > 1 && (
                     <div className="border-t border-slate-100 pt-4 space-y-2">
                       <span className="text-xs font-bold text-slate-800">関連する指摘</span>
-                      {filteredIssues
-                        .filter((i) => i.id !== currentIssue.id)
+                      {filteredFindings
+                        .filter((i) => i.id !== currentFinding.id)
                         .slice(0, 2)
                         .map((rel) => (
                           <div
                             key={rel.id}
                             onClick={() => {
-                              const relIdx = filteredIssues.findIndex((i) => i.id === rel.id);
-                              if (relIdx >= 0) setSelectedIssueIndex(relIdx);
+                              const relIdx = filteredFindings.findIndex((i) => i.id === rel.id);
+                              if (relIdx >= 0) setSelectedFindingIndex(relIdx);
                             }}
                             className="p-2.5 rounded-lg border border-slate-200 hover:border-slate-300 cursor-pointer flex items-center justify-between text-xs transition bg-slate-50/50"
                           >

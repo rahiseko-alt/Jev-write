@@ -605,11 +605,11 @@ function paragraphText(paragraph: { segments: { text: string }[] }): string {
 }
 
 describe("inline marks", () => {
-  function marks(view: { paragraphs: { segments: { text: string; mark?: { findingId: string; kind: string } }[] }[] }) {
+  function marks(view: { paragraphs: { segments: { text: string; mark?: { findingIds: string[]; kind: string } }[] }[] }) {
     return view.paragraphs
       .flatMap((p) => p.segments)
       .filter((s) => s.mark)
-      .map((s) => ({ text: s.text, kind: s.mark!.kind, findingId: s.mark!.findingId }));
+      .map((s) => ({ text: s.text, kind: s.mark!.kind, findingId: s.mark!.findingIds[0] }));
   }
 
   it("marks the corrected span of a fact, not the whole sentence", () => {
@@ -625,7 +625,7 @@ describe("inline marks", () => {
     });
 
     expect(marks(view)).toEqual([
-      { text: "アップルは2023年9月12日", kind: "fact", findingId: "fact-0" },
+      { text: "12", kind: "fact", findingId: "fact-0" },
     ]);
   });
 
@@ -735,5 +735,167 @@ describe("inline marks", () => {
     const found = marks(view);
     expect([...new Set(found.map((m) => m.findingId))].sort()).toEqual(["fact-0", "style-0"]);
     expect(paragraphText(view.paragraphs[0])).toBe(revised);
+  });
+});
+
+describe("a Finding that cannot be placed", () => {
+  it("reports no sentence rather than guessing at one", () => {
+    const original = "価格は10万円である。";
+
+    const view = buildRevisedDocument({
+      originalText: original,
+      analysis: analysis(original, original, [
+        claim("この文章に存在しない主張", "CONTRADICTED", "訂正後の文言"),
+      ]),
+      adoption: {},
+    });
+
+    expect(view.findings[0].lineIndex).toBe(-1);
+  });
+
+  it("marks nothing at all", () => {
+    const original = "価格は10万円である。";
+
+    const view = buildRevisedDocument({
+      originalText: original,
+      analysis: analysis(original, original, [
+        claim("この文章に存在しない主張", "CONTRADICTED", "訂正後の文言"),
+      ]),
+      adoption: {},
+    });
+
+    const marked = view.paragraphs.flatMap((p) => p.segments).filter((s) => s.mark);
+    expect(marked).toEqual([]);
+  });
+
+  it("does not revert another sentence when it is rejected", () => {
+    const original = "価格は10万円である。";
+    const revised = "価格は12万円である。";
+
+    const view = buildRevisedDocument({
+      originalText: original,
+      analysis: analysis(original, revised, [
+        claim("この文章に存在しない主張", "CONTRADICTED", "訂正後の文言"),
+      ]),
+      adoption: { "fact-0": false },
+    });
+
+    expect(view.clipboardText).toBe(revised);
+  });
+
+  it("does not mark the first sentence for an unplaceable style issue", () => {
+    const original = "一文目。二文目。";
+
+    const view = buildRevisedDocument({
+      originalText: original,
+      analysis: analysis(original, original, [], [styleIssue("どこにも無い言い回し")]),
+      adoption: {},
+    });
+
+    expect(view.findings[0].lineIndex).toBe(-1);
+    expect(view.paragraphs.flatMap((p) => p.segments).filter((s) => s.mark)).toEqual([]);
+  });
+});
+
+describe("locating the changed wording", () => {
+  function marked(view: { paragraphs: { segments: { text: string; mark?: { findingIds: string[]; kind: string } }[] }[] }) {
+    return view.paragraphs
+      .flatMap((p) => p.segments)
+      .filter((s) => s.mark)
+      .map((s) => ({ text: s.text, ids: s.mark!.findingIds, kind: s.mark!.kind }));
+  }
+
+  it("marks the figure that changed, not the claim around it", () => {
+    const original = "本体価格は49980円です。";
+    const revised = "本体価格は69980円です。";
+
+    const view = buildRevisedDocument({
+      originalText: original,
+      analysis: analysis(original, revised, [
+        claim("本体価格は49980円", "CONTRADICTED", "本体価格は69980円"),
+      ]),
+      adoption: {},
+    });
+
+    expect(marked(view).map((m) => m.text)).toEqual(["69980"]);
+  });
+
+  it("marks the right occurrence when the figure appears twice", () => {
+    const original = "12月の売上は12億円でした。";
+    const revised = "12月の売上は15億円でした。";
+
+    const view = buildRevisedDocument({
+      originalText: original,
+      analysis: analysis(original, revised, [
+        claim("12月の売上は12億円", "CONTRADICTED", "12月の売上は15億円"),
+      ]),
+      adoption: {},
+    });
+
+    const found = marked(view);
+    expect(found.map((m) => m.text)).toEqual(["15"]);
+    expect(paragraphText(view.paragraphs[0])).toBe(revised);
+  });
+
+  it("keeps both corrections reachable when one sentence carries two", () => {
+    const original = "価格は10万円で、重さは500gです。";
+    const revised = "価格は12万円で、重さは600gです。";
+
+    const view = buildRevisedDocument({
+      originalText: original,
+      analysis: analysis(original, revised, [
+        claim("価格は10万円", "CONTRADICTED", "価格は12万円"),
+        claim("重さは500g", "CONTRADICTED", "重さは600g"),
+      ]),
+      adoption: {},
+    });
+
+    const ids = marked(view).flatMap((m) => m.ids);
+    expect(ids.sort()).toEqual(["fact-0", "fact-1"]);
+    expect(paragraphText(view.paragraphs[0])).toBe(revised);
+  });
+
+  it("keeps both reachable when neither can be located", () => {
+    const original = "価格は10万円である。";
+
+    const view = buildRevisedDocument({
+      originalText: original,
+      analysis: analysis(original, original, [
+        claim("価格は10万円である。", "CONTRADICTED", "まったく別の文言"),
+        claim("価格は10万円である。", "CONTRADICTED", "これも別の文言"),
+      ]),
+      adoption: {},
+    });
+
+    const found = marked(view);
+    expect(found).toHaveLength(1);
+    expect(found[0].ids.sort()).toEqual(["fact-0", "fact-1"]);
+  });
+
+  it("treats a MIXED claim as needing a person, not as confirmed", () => {
+    const original = "価格は10万円である。";
+
+    const view = buildRevisedDocument({
+      originalText: original,
+      analysis: analysis(original, original, [claim("価格は10万円である。", "MIXED")]),
+      adoption: {},
+    });
+
+    expect(view.findings[0].kind).toBe("unverified");
+    expect(view.findings[0].categoryLabel).toBe("要確認");
+    expect(marked(view).map((m) => m.kind)).toEqual(["unverified"]);
+    expect(view.hasFindings).toBe(true);
+  });
+
+  it("names the document after its opening sentence", () => {
+    const original = "PlayStation 5 Proは家庭用ゲーム機です。次の文。";
+
+    const view = buildRevisedDocument({
+      originalText: original,
+      analysis: analysis(original, original),
+      adoption: {},
+    });
+
+    expect(view.title).toBe("PlayStation 5 Proは家庭用ゲーム機です。");
   });
 });

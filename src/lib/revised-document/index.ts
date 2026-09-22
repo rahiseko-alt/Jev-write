@@ -1,4 +1,4 @@
-import type { AnalysisResult, ClaimResult, StyleIssue } from "@/types";
+import type { AnalysisResult, ClaimResult, ClaimVerdict, StyleIssue } from "@/types";
 
 /**
  * The Revised Document and everything derived from it, built in one place.
@@ -11,7 +11,9 @@ import type { AnalysisResult, ClaimResult, StyleIssue } from "@/types";
 export type MarkKind = "fact" | "style" | "unverified";
 
 export type Mark = {
-  findingId: string;
+  /** Every Finding covering this text; more than one can share a span. */
+  findingIds: string[];
+  /** The most pressing kind among them. */
   kind: MarkKind;
 };
 
@@ -32,24 +34,70 @@ export type SentencePair = {
   revised: string;
 };
 
+/**
+ * What a Finding says about its text. Kept apart from the pipeline's
+ * ClaimVerdict, which answers a different question.
+ */
+export type FindingKind = "corrected" | "unverified" | "ai-tell" | "confirmed";
+
 /** One judgement tied to one place in the document. */
 export type Finding = {
   id: string;
   type: "fact" | "style";
   title: string;
   categoryLabel: string;
-  verdict: "error" | "warning" | "style" | "verified";
+  kind: FindingKind;
   confidence: number;
   originalText: string;
   revisedText: string;
   sourceTitle: string;
   sourceUrl: string;
   explanation: string;
-  /** Index into `comparison` — the sentence this Finding sits in. */
+  /** Index into `comparison` — the sentence this Finding sits in, or -1 when it could not be placed. */
   lineIndex: number;
   adopted: boolean;
   /** How this Finding marks the document, or null when it leaves no mark. */
   markKind: MarkKind | null;
+};
+
+/** Everything that follows from a Finding's kind, in one place. */
+const FINDING_KINDS: Record<
+  FindingKind,
+  { label: string; markKind: MarkKind | null; confidence: number; explanation: string }
+> = {
+  corrected: {
+    label: "事実の修正",
+    markKind: "fact",
+    confidence: 0.94,
+    explanation:
+      "公的発表・一次ソースと照合した結果、数値または日付の記述に明確な食い違いが確認されました。",
+  },
+  unverified: {
+    label: "要確認",
+    markKind: "unverified",
+    confidence: 0.68,
+    explanation: "十分な一次証拠が確認できませんでした。専門情報源による再確認を推奨します。",
+  },
+  "ai-tell": {
+    label: "文章表現",
+    markKind: "style",
+    confidence: 0.85,
+    explanation: "AI特有の紋切り型表現または重複が検出されました。",
+  },
+  confirmed: {
+    label: "確認済み",
+    markKind: null,
+    confidence: 0.97,
+    explanation: "公式ソースの記述と整合しており、事実の正しさが確認されています。",
+  },
+};
+
+/** A MIXED claim is not confirmed: it still needs a person to look at it. */
+const KIND_BY_VERDICT: Record<ClaimVerdict, FindingKind> = {
+  CONTRADICTED: "corrected",
+  INSUFFICIENT: "unverified",
+  MIXED: "unverified",
+  SUPPORTED: "confirmed",
 };
 
 export type RevisedDocumentView = {
@@ -66,6 +114,8 @@ export type RevisedDocumentView = {
   comparison: SentencePair[];
   /** Every Finding, ready to display. */
   findings: Finding[];
+  /** A short name for the document, taken from its opening. */
+  title: string;
   /** Whether the pipeline found anything at all — false means a clean run, not a failed one. */
   hasFindings: boolean;
 };
@@ -116,16 +166,16 @@ function splitRevised(revisedText: string): string[] {
 }
 
 /** How a Finding is identified, wherever it is referred to. */
-export function factFindingId(index: number): string {
+function factFindingId(index: number): string {
   return `fact-${index}`;
 }
 
-export function styleFindingId(index: number): string {
+function styleFindingId(index: number): string {
   return `style-${index}`;
 }
 
 /** The sentence a Finding sits in, or -1 when it cannot be placed. */
-export function sentenceIndexOf(sentences: string[], target: string): number {
+function sentenceIndexOf(sentences: string[], target: string): number {
   const needle = target.trim();
   if (!needle) return -1;
   return sentences.findIndex((sentence) => {
@@ -158,30 +208,27 @@ function factFinding(
   adoption: Record<string, boolean>
 ): Finding {
   const text = claimText(result);
-  const contradicted = result.verdict === "CONTRADICTED";
-  const insufficient = result.verdict === "INSUFFICIENT";
+  const kind = KIND_BY_VERDICT[result.verdict];
+  const shape = FINDING_KINDS[kind];
   const id = factFindingId(index);
   const firstEvidence = result.evidence?.[0];
-  const sentenceIndex = sentenceIndexOf(sentences, text);
-
-  const defaultConfidence = contradicted ? 0.94 : insufficient ? 0.68 : 0.97;
 
   return {
     id,
     type: "fact",
     // TODO(#5): compose the heading from kind and target span.
-    title: factTitle(text, contradicted),
-    categoryLabel: contradicted ? "事実の修正" : insufficient ? "要確認" : "確認済み",
-    verdict: contradicted ? "error" : insufficient ? "warning" : "verified",
-    confidence: toPercent(result.confidence ?? defaultConfidence),
+    title: factTitle(text, kind === "corrected"),
+    categoryLabel: shape.label,
+    kind,
+    confidence: toPercent(result.confidence ?? shape.confidence),
     originalText: text,
     revisedText: result.correctedClaim || text,
     sourceTitle: firstEvidence?.sourceTitle || "",
     sourceUrl: firstEvidence?.sourceUrl || "",
-    explanation: result.reason || defaultExplanation(contradicted, insufficient),
-    lineIndex: sentenceIndex >= 0 ? sentenceIndex : index,
+    explanation: result.reason || shape.explanation,
+    lineIndex: sentenceIndexOf(sentences, text),
     adopted: isAdopted(adoption, id),
-    markKind: contradicted ? "fact" : insufficient ? "unverified" : null,
+    markKind: shape.markKind,
   };
 }
 
@@ -196,16 +243,6 @@ function factTitle(text: string, contradicted: boolean): string {
   return "事実に関する確認";
 }
 
-function defaultExplanation(contradicted: boolean, insufficient: boolean): string {
-  if (contradicted) {
-    return "公的発表・一次ソースと照合した結果、数値または日付の記述に明確な食い違いが確認されました。";
-  }
-  if (insufficient) {
-    return "十分な一次証拠が確認できませんでした。専門情報源による再確認を推奨します。";
-  }
-  return "公式ソースの記述と整合しており、事実の正しさが確認されています。";
-}
-
 function styleFinding(
   styleIssue: StyleIssue,
   index: number,
@@ -213,24 +250,23 @@ function styleFinding(
   adoption: Record<string, boolean>
 ): Finding {
   const id = styleFindingId(index);
-  const sentenceIndex = sentenceIndexOf(sentences, styleIssue.targetText ?? "");
+  const shape = FINDING_KINDS["ai-tell"];
 
   return {
     id,
     type: "style",
     title: styleIssue.ruleName || "不自然な表現",
-    categoryLabel: "文章表現",
-    verdict: "style",
-    confidence: toPercent(styleIssue.confidence || 0.85),
+    categoryLabel: shape.label,
+    kind: "ai-tell",
+    confidence: toPercent(styleIssue.confidence || shape.confidence),
     originalText: styleIssue.targetText || "",
     revisedText: "自然な散文へリライト",
     sourceTitle: "文章品質ガイドライン",
     sourceUrl: "#",
-    explanation:
-      styleIssue.repairInstruction || "AI特有の紋切り型表現または重複が検出されました。",
-    lineIndex: sentenceIndex >= 0 ? sentenceIndex : 0,
+    explanation: styleIssue.repairInstruction || shape.explanation,
+    lineIndex: sentenceIndexOf(sentences, styleIssue.targetText ?? ""),
     adopted: isAdopted(adoption, id),
-    markKind: isRaised(styleIssue) ? "style" : null,
+    markKind: isRaised(styleIssue) ? shape.markKind : null,
   };
 }
 
@@ -298,17 +334,105 @@ export function buildRevisedDocument(
     originalText: assembledOriginal,
     comparison,
     findings,
-    hasFindings:
-      analysis.claims.some((result) => result.verdict !== "SUPPORTED") ||
-      analysis.styleIssues.some(isRaised),
+    title: documentTitle(originalSentences),
+    hasFindings: findings.some((finding) => finding.markKind !== null),
   };
 }
 
 type Span = {
   start: number;
   end: number;
-  mark: Mark;
+  findingIds: string[];
+  kind: MarkKind;
 };
+
+/** Which mark wins where two cover the same text. */
+const MARK_PRECEDENCE: MarkKind[] = ["fact", "unverified", "style"];
+
+function strongest(kinds: MarkKind[]): MarkKind {
+  return MARK_PRECEDENCE.find((kind) => kinds.includes(kind)) ?? kinds[0];
+}
+
+/**
+ * The words a correction actually changed: what is left of the corrected
+ * claim once the wording it shares with the original is stripped from both
+ * ends. "価格は10万円" → "価格は12万円" leaves "12".
+ */
+function changedWording(original: string, corrected: string): string {
+  let head = 0;
+  while (
+    head < original.length &&
+    head < corrected.length &&
+    original[head] === corrected[head]
+  ) {
+    head++;
+  }
+
+  let tail = 0;
+  while (
+    tail < original.length - head &&
+    tail < corrected.length - head &&
+    original[original.length - 1 - tail] === corrected[corrected.length - 1 - tail]
+  ) {
+    tail++;
+  }
+
+  return expandToToken(corrected, head, corrected.length - tail);
+}
+
+const ALPHANUMERIC = /[0-9A-Za-z\uFF10-\uFF19\uFF21-\uFF3A\uFF41-\uFF5A]/;
+
+/**
+ * A single changed digit is not a word. Grow the span out over the figure or
+ * word it sits inside, so "1[2]日" marks "12" rather than the "2" alone.
+ */
+function expandToToken(text: string, start: number, end: number): string {
+  let from = start;
+  let to = end;
+
+  while (from > 0 && ALPHANUMERIC.test(text[from - 1]) && ALPHANUMERIC.test(text[from])) {
+    from--;
+  }
+  while (to < text.length && ALPHANUMERIC.test(text[to]) && ALPHANUMERIC.test(text[to - 1])) {
+    to++;
+  }
+
+  return text.slice(from, to);
+}
+
+const ANCHOR_LENGTH = 8;
+
+/**
+ * Where a correction's changed wording sits in the sentence as it now reads.
+ * The words just before the change anchor the search, so a figure that also
+ * appears elsewhere in the sentence is not marked by mistake.
+ */
+function locateChange(sentence: string, finding: Finding): [number, number] | null {
+  const changed = changedWording(finding.originalText, finding.revisedText);
+
+  if (changed.length > 0) {
+    const anchor = anchorFor(finding, changed);
+    const anchored = sentence.indexOf(anchor + changed);
+    if (anchored >= 0) {
+      const start = anchored + anchor.length;
+      return [start, start + changed.length];
+    }
+
+    const alone = sentence.indexOf(changed);
+    if (alone >= 0 && sentence.indexOf(changed, alone + 1) < 0) {
+      return [alone, alone + changed.length];
+    }
+  }
+
+  const whole = finding.revisedText ? sentence.indexOf(finding.revisedText) : -1;
+  return whole >= 0 ? [whole, whole + finding.revisedText.length] : null;
+}
+
+function anchorFor(finding: Finding, changed: string): string {
+  const head = finding.revisedText.indexOf(changed);
+  if (head <= 0) return "";
+  return finding.revisedText.slice(Math.max(0, head - ANCHOR_LENGTH), head);
+}
 
 /**
  * A corrected fact marks the words that changed; an AI-tell repair and an
@@ -327,34 +451,45 @@ function markSentence(
   );
 
   const spans: Span[] = [];
-  const wholeSentence: Mark[] = [];
+  const wholeSentence: Finding[] = [];
 
   for (const finding of onThisSentence) {
-    const mark: Mark = { findingId: finding.id, kind: finding.markKind! };
-    const start =
-      finding.markKind === "fact" ? text.indexOf(finding.revisedText) : -1;
+    const located = finding.markKind === "fact" ? locateChange(text, finding) : null;
 
-    if (start >= 0 && finding.revisedText.length > 0) {
-      spans.push({ start, end: start + finding.revisedText.length, mark });
+    if (located) {
+      spans.push({
+        start: located[0],
+        end: located[1],
+        findingIds: [finding.id],
+        kind: finding.markKind!,
+      });
     } else {
-      wholeSentence.push(mark);
+      wholeSentence.push(finding);
     }
   }
 
   spans.sort((a, b) => a.start - b.start);
-  const background = wholeSentence[0];
+  const merged = mergeOverlaps(spans);
+  const background: Mark | undefined = wholeSentence.length
+    ? {
+        findingIds: wholeSentence.map((finding) => finding.id),
+        kind: strongest(wholeSentence.map((finding) => finding.markKind!)),
+      }
+    : undefined;
 
-  if (spans.length === 0) {
+  if (merged.length === 0) {
     return background ? [{ text, mark: background }] : [{ text }];
   }
 
   const segments: Segment[] = [];
   let at = 0;
 
-  for (const span of spans) {
-    if (span.start < at) continue; // overlapping spans: the first one wins
+  for (const span of merged) {
     if (span.start > at) segments.push(gap(text.slice(at, span.start), background));
-    segments.push({ text: text.slice(span.start, span.end), mark: span.mark });
+    segments.push({
+      text: text.slice(span.start, span.end),
+      mark: { findingIds: span.findingIds, kind: span.kind },
+    });
     at = span.end;
   }
 
@@ -363,8 +498,33 @@ function markSentence(
   return segments;
 }
 
+/** Spans that overlap become one mark carrying both Findings, never one dropped. */
+function mergeOverlaps(spans: Span[]): Span[] {
+  const merged: Span[] = [];
+
+  for (const span of spans) {
+    const last = merged[merged.length - 1];
+    if (last && span.start < last.end) {
+      last.end = Math.max(last.end, span.end);
+      last.findingIds.push(...span.findingIds);
+      last.kind = strongest([last.kind, span.kind]);
+      continue;
+    }
+    merged.push({ ...span, findingIds: [...span.findingIds] });
+  }
+
+  return merged;
+}
+
 function gap(text: string, background?: Mark): Segment {
   return background ? { text, mark: background } : { text };
+}
+
+const TITLE_LENGTH = 36;
+
+function documentTitle(sentences: string[]): string {
+  const opening = sentences[0]?.trim() ?? "";
+  return opening.slice(0, TITLE_LENGTH) || "文章の品質検証レポート";
 }
 
 function paragraphText(paragraph: Paragraph): string {
