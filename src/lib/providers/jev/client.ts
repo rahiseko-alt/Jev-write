@@ -130,6 +130,12 @@ export class HTTPJEVClient implements JEVClient {
       if (fallbackResult.choice === "contradicts") {
         return fallbackResult;
       }
+      // If external model returned 'supports', but deterministic check found 'says_nothing'
+      // (meaning the evidence lacks the specific numbers, dates, or specs asserted by the claim),
+      // do NOT allow a false-positive 'supports' - enforce deterministic 'says_nothing'.
+      if ((value === "supports" || value === "true") && fallbackResult.choice === "says_nothing") {
+        return fallbackResult;
+      }
 
       return {
         choice: typeof value === "string" ? value : undefined,
