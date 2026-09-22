@@ -8,6 +8,28 @@
 
 ---
 
+## 2026-09-22 結果画面の作り替えを作業指示書として発行（GitHub issue #2）
+
+**決めたこと**
+
+- 合意した方針を仕様として GitHub issue #2「Result screen: Revised Document first, Revision Diff on demand」に発行し、`ready-for-agent` ラベルを付けた（このラベルはこの発行時に新規作成された）。
+- テストの置き場所を1か所に決めた。原文・AnalysisResult・採用状態を受け取り、「段落ごとの印付き Revised Document」「コピー用の本文」「Finding ごとの表示内容」を返す純粋な部品を新設し、そこだけをテストする。画面側はその出力を並べるだけにする。
+- 自動テストの対象外と明記したもの: 各画面幅での見た目、引き出しの動き、クリップボードそのもの。これらは実物を見て確認する。
+- 既存のテスト環境（vitest、node 環境）を変えない。DOM テスト用の道具は追加しない。
+
+**次にやること**
+
+- PR #1（左サイドバー削除・入力画面の整理・方針の記録）を本体へ取り込むか、同じ枝に実装を重ねるかを決める。推奨は先に取り込むこと。
+- `/to-tickets` を実行し、issue #2 を作業単位に分割する。
+- その後 `/implement` → `/code-review`。
+
+**未解決の問題**
+
+- providers.test.ts の HTTPFetchProvider 判定が失敗したまま（本件以前から存在）。
+- 事実修正の該当語句を文の中から特定する方法が未確定。パイプラインは文字位置ではなく修正後の主張を返すため、原文と修正後の文言を突き合わせて探す必要がある。特定できない場合は文全体に印を付けて劣化させる方針。
+
+---
+
 ## 2026-09-22 結果画面を「修正済み全文が先、差分は任意」に作り替える方針を決定（commit 812c5aa）
 
 **決めたこと**
@@ -102,28 +124,6 @@
 **未解決の問題**
 
 - なし（ファクトチェック・校正パイプラインの動作証明要件は100%達成）
-
----
-
-## 2026-09-22 レビュー指摘・設計欠陥の全件修正完了（commit 9efcd2b）
-
-**決めたこと**
-
-- ユーザー設計指摘①〜⑤（Entity Gate、一次情報×対象一致必須、Evidence必須、固定訂正文削除、specPairs限定）をすべて実装した
-- コードレビュー①②の指摘（P0×1、P1×10、P2×4）に対応した。主な修正: Entity Gate（passesEntityGate関数新設）、JEV API契約修正（model/instructions/criteria/answers/Noul型）、Delta Check数値破壊修正、非数値意味変更棄却、本番Mock禁止（NODE_ENV=production）、スタックトレース削除、overallScore計算式修正、Apple NewsroomデフォルトURL削除
-- 全41テストパス・GitHub main (9efcd2b) にプッシュ済み
-- 重要記録をアーティファクト bug_registry.md に保管済み
-
-**次にやること**
-
-- Vercel本番環境（https://wonderful-galileo-peach.vercel.app）でNintendo Switch 2記事の24箇所の誤りを実際に検証し、修正Recallを測定する
-- JEV本番エンドポイント（TypeSafe AI System One）のAPIキーを投入して実機動作確認する
-- 残P2バグ（認証・レート制限なし）の対応可否をユーザーと確認する
-
-**未解決の問題**
-
-- 認証・レート制限（R1-P2c/R2-P1i）はまだ未着手
-- テストがMock中心でTypeSafe API契約の実機検証はしていない
 
 ---
 
