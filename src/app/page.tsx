@@ -29,6 +29,7 @@ import {
   FactLedgerItem,
   StyleIssue,
 } from "@/types";
+import { buildResultView } from "@/lib/result-view";
 
 interface UnifiedIssue {
   id: string;
@@ -42,7 +43,6 @@ interface UnifiedIssue {
   sourceTitle?: string;
   sourceUrl?: string;
   explanation: string;
-  timeAgo: string;
   lineIndex: number;
   adopted: boolean;
 }
@@ -55,7 +55,7 @@ export default function HomePage() {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   // Result View Controls
-  const [viewTab, setViewTab] = useState<"original" | "revised" | "side-by-side" | "inline">("side-by-side");
+  const [viewTab, setViewTab] = useState<"original" | "revised" | "side-by-side" | "inline">("revised");
   const [onlyDiff, setOnlyDiff] = useState(false);
   const [inlineDiffMode, setInlineDiffMode] = useState(true);
   const [selectedIssueIndex, setSelectedIssueIndex] = useState(0);
@@ -82,15 +82,25 @@ export default function HomePage() {
 
   // Track user adoption state for each issue
   const [adoptedOverrides, setAdoptedOverrides] = useState<Record<string, boolean>>({});
+  const [justCopied, setJustCopied] = useState(false);
 
-  // Parse lines of input and revised text
-  const originalLines = useMemo(() => {
-    if (!inputText) return [];
-    return inputText
-      .split(/(?<=[。！？\n])/)
-      .map((l) => l.trim())
-      .filter(Boolean);
-  }, [inputText]);
+  // Everything the result screen renders comes from this one place.
+  const resultView = useMemo(
+    () =>
+      analysisResult
+        ? buildResultView({
+            originalText: inputText,
+            analysis: analysisResult,
+            adoption: adoptedOverrides,
+          })
+        : null,
+    [analysisResult, inputText, adoptedOverrides]
+  );
+
+  const originalLines = useMemo(
+    () => resultView?.comparison.map((pair) => pair.original) ?? [],
+    [resultView]
+  );
 
   // Unified Issues List derived from FactLedger & StyleIssues
   const issues: UnifiedIssue[] = useMemo(() => {
@@ -146,7 +156,6 @@ export default function HomePage() {
             : isInsufficient
             ? "十分な一次証拠が確認できませんでした。専門情報源による再確認を推奨します。"
             : "公式ソースの記述と整合しており、事実の正しさが確認されています。"),
-        timeAgo: `${idx * 3 + 2}分前`,
         lineIndex: lineIdx >= 0 ? lineIdx : idx,
         adopted: adoptedOverrides[`fact-${idx}`] !== undefined ? adoptedOverrides[`fact-${idx}`] : true,
       });
@@ -170,7 +179,6 @@ export default function HomePage() {
         sourceTitle: "文章品質ガイドライン",
         sourceUrl: "#",
         explanation: style.repairInstruction || "AI特有の紋切り型表現または重複が検出されました。",
-        timeAgo: `${idx * 4 + 5}分前`,
         lineIndex: lineIdx >= 0 ? lineIdx : 0,
         adopted: adoptedOverrides[`style-${idx}`] !== undefined ? adoptedOverrides[`style-${idx}`] : true,
       });
@@ -192,24 +200,27 @@ export default function HomePage() {
   // Active Issue
   const currentIssue = filteredIssues[selectedIssueIndex] || filteredIssues[0] || null;
 
-  // Revised lines based on analysisResult.revisedText and adopted status
-  const revisedLines = useMemo(() => {
-    if (!analysisResult || !analysisResult.revisedText) return originalLines;
+  const revisedLines = useMemo(
+    () => resultView?.comparison.map((pair) => pair.revised) ?? [],
+    [resultView]
+  );
 
-    const pipelineRevised = analysisResult.revisedText
-      .split(/(?<=[。！？\n])/)
-      .map((l) => l.trim())
-      .filter(Boolean);
+  // Copy confirms on the button itself rather than behind a dialog.
+  const handleCopyRevised = async () => {
+    if (!resultView) return;
+    try {
+      await navigator.clipboard.writeText(resultView.clipboardText);
+      setJustCopied(true);
+    } catch {
+      setErrorMessage("クリップボードにコピーできませんでした。");
+    }
+  };
 
-    // If any issue was explicitly un-adopted by the user, revert that line
-    return pipelineRevised.map((revLine, idx) => {
-      const matchedIssue = issues.find((issue) => issue.lineIndex === idx);
-      if (matchedIssue && matchedIssue.adopted === false && originalLines[idx]) {
-        return originalLines[idx];
-      }
-      return revLine;
-    });
-  }, [originalLines, issues, analysisResult]);
+  useEffect(() => {
+    if (!justCopied) return;
+    const timer = setTimeout(() => setJustCopied(false), 2500);
+    return () => clearTimeout(timer);
+  }, [justCopied]);
 
   // Handle Form Submission
   const handleSubmit = async (e?: React.FormEvent) => {
@@ -468,17 +479,6 @@ export default function HomePage() {
                     <div className="absolute right-0 top-9 w-48 bg-white border border-slate-200 rounded-xl shadow-lg p-1.5 z-40 text-xs">
                       <button
                         onClick={() => {
-                          navigator.clipboard.writeText(revisedLines.join("\n"));
-                          alert("修正版の全文をクリップボードにコピーしました。");
-                          setShowMoreMenu(false);
-                        }}
-                        className="w-full text-left px-3 py-2 rounded-lg hover:bg-slate-50 text-slate-700 flex items-center gap-2 transition"
-                      >
-                        <FileText className="w-3.5 h-3.5 text-slate-400" />
-                        <span>修正文を全コピー</span>
-                      </button>
-                      <button
-                        onClick={() => {
                           handleSubmit();
                           setShowMoreMenu(false);
                         }}
@@ -579,19 +579,50 @@ export default function HomePage() {
                     </div>
                   </div>
                 ) : viewTab === "revised" ? (
-                  /* Revised Only */
-                  <div className="max-w-3xl mx-auto space-y-3">
-                    <div className="text-xs font-bold text-slate-600 mb-2">
-                      修正版 <span className="font-normal text-slate-400">(文字数: {revisedLines.join("").length})</span>
+                  /* Revised Document */
+                  <div className="max-w-3xl mx-auto space-y-4">
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="text-xs font-bold text-slate-600">
+                        修正版{" "}
+                        <span className="font-normal text-slate-400">
+                          (文字数: {resultView?.clipboardText.length ?? 0})
+                        </span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={handleCopyRevised}
+                        className="flex items-center gap-1.5 px-3.5 py-2 rounded-lg border border-slate-300 bg-white hover:bg-slate-50 text-xs font-medium text-slate-700 transition shadow-sm shrink-0"
+                      >
+                        {justCopied ? (
+                          <>
+                            <Check className="w-3.5 h-3.5 text-emerald-600" />
+                            <span>コピーしました</span>
+                          </>
+                        ) : (
+                          <>
+                            <FileText className="w-3.5 h-3.5 text-slate-500" />
+                            <span>全文をコピー</span>
+                          </>
+                        )}
+                      </button>
                     </div>
-                    <div className="space-y-2">
-                      {revisedLines.map((line, idx) => (
-                        <div key={idx} className="flex items-start gap-3 p-3 rounded-lg border border-slate-100 bg-white text-xs leading-relaxed">
-                          <span className="text-slate-400 font-mono text-[11px] w-4 shrink-0 select-none">{idx + 1}</span>
-                          <span className="flex-1">{line}</span>
-                        </div>
+
+                    {resultView && !resultView.hasFindings && (
+                      <div className="flex items-center gap-2 px-4 py-3 rounded-xl border border-emerald-200 bg-emerald-50 text-xs text-emerald-800">
+                        <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-600" />
+                        <span>修正箇所はありませんでした。</span>
+                      </div>
+                    )}
+
+                    <article className="space-y-4 rounded-xl border border-slate-100 bg-white p-5 text-sm leading-loose text-slate-800">
+                      {resultView?.paragraphs.map((paragraph, idx) => (
+                        <p key={idx}>
+                          {paragraph.segments.map((segment, segIdx) => (
+                            <span key={segIdx}>{segment.text}</span>
+                          ))}
+                        </p>
                       ))}
-                    </div>
+                    </article>
                   </div>
                 ) : viewTab === "inline" ? (
                   /* Inline Git-diff style */
