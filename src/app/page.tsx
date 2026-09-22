@@ -29,23 +29,7 @@ import {
   FactLedgerItem,
   StyleIssue,
 } from "@/types";
-import { buildResultView } from "@/lib/result-view";
-
-interface UnifiedIssue {
-  id: string;
-  type: "fact" | "style";
-  title: string;
-  categoryLabel: string;
-  verdict: "error" | "warning" | "style" | "verified";
-  confidence: number;
-  originalText: string;
-  revisedText: string;
-  sourceTitle?: string;
-  sourceUrl?: string;
-  explanation: string;
-  lineIndex: number;
-  adopted: boolean;
-}
+import { buildRevisedDocument, type Finding } from "@/lib/revised-document";
 
 export default function HomePage() {
   // Navigation & View Mode
@@ -82,13 +66,13 @@ export default function HomePage() {
 
   // Track user adoption state for each issue
   const [adoptedOverrides, setAdoptedOverrides] = useState<Record<string, boolean>>({});
-  const [justCopied, setJustCopied] = useState(false);
+  const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle");
 
   // Everything the result screen renders comes from this one place.
-  const resultView = useMemo(
+  const revisedDocument = useMemo(
     () =>
       analysisResult
-        ? buildResultView({
+        ? buildRevisedDocument({
             originalText: inputText,
             analysis: analysisResult,
             adoption: adoptedOverrides,
@@ -98,94 +82,14 @@ export default function HomePage() {
   );
 
   const originalLines = useMemo(
-    () => resultView?.comparison.map((pair) => pair.original) ?? [],
-    [resultView]
+    () => revisedDocument?.comparison.map((pair) => pair.original) ?? [],
+    [revisedDocument]
   );
 
-  // Unified Issues List derived from FactLedger & StyleIssues
-  const issues: UnifiedIssue[] = useMemo(() => {
-    if (!analysisResult) return [];
-    const list: UnifiedIssue[] = [];
-
-    // 1. Fact Check Issues from claims
-    analysisResult.claims.forEach((item, idx) => {
-      const claimText = item.claim.normalizedText || item.claim.originalText;
-      const isContradicted = item.verdict === "CONTRADICTED";
-      const isInsufficient = item.verdict === "INSUFFICIENT";
-      const isSupported = item.verdict === "SUPPORTED";
-
-      // Find matching line index
-      const lineIdx = originalLines.findIndex(
-        (l) => l.includes(claimText) || claimText.includes(l)
-      );
-
-      const firstEv = item.evidence?.[0];
-
-      let title = "事実に関する確認";
-      if (claimText.includes("発表") || claimText.includes("9月")) {
-        title = "発売日・発表日に関する誤り";
-      } else if (claimText.includes("20MP") || claimText.includes("解像度")) {
-        title = "デフォルト解像度の数値誤認";
-      } else if (claimText.includes("望遠") || claimText.includes("6倍")) {
-        title = "光学望遠倍率のスペック相違";
-      } else if (claimText.includes("USB") || claimText.includes("20Gbps")) {
-        title = "USB 3データ転送速度の誤認";
-      } else if (claimText.includes("通信範囲") || claimText.includes("2倍")) {
-        title = "超広帯域通信チップの範囲倍率";
-      } else if (claimText.includes("Wi-Fi")) {
-        title = "Wi-Fi規格（6E / 7）の誤認";
-      } else if (isContradicted) {
-        title = "事実関係の誤り";
-      }
-
-      list.push({
-        id: `fact-${idx}`,
-        type: "fact",
-        title,
-        categoryLabel: isContradicted ? "事実の修正" : isInsufficient ? "要確認" : "確認済み",
-        verdict: isContradicted ? "error" : isInsufficient ? "warning" : "verified",
-        confidence: Math.round((item.confidence !== undefined ? item.confidence : isContradicted ? 0.94 : isInsufficient ? 0.68 : 0.97) <= 1 ? (item.confidence !== undefined ? item.confidence : isContradicted ? 0.94 : isInsufficient ? 0.68 : 0.97) * 100 : (item.confidence || (isContradicted ? 94 : isInsufficient ? 68 : 97))),
-        originalText: claimText,
-        revisedText: item.correctedClaim || claimText,
-        sourceTitle: firstEv?.sourceTitle || "",
-        sourceUrl: firstEv?.sourceUrl || "",
-        explanation:
-          item.reason ||
-          (isContradicted
-            ? "公的発表・一次ソースと照合した結果、数値または日付の記述に明確な食い違いが確認されました。"
-            : isInsufficient
-            ? "十分な一次証拠が確認できませんでした。専門情報源による再確認を推奨します。"
-            : "公式ソースの記述と整合しており、事実の正しさが確認されています。"),
-        lineIndex: lineIdx >= 0 ? lineIdx : idx,
-        adopted: adoptedOverrides[`fact-${idx}`] !== undefined ? adoptedOverrides[`fact-${idx}`] : true,
-      });
-    });
-
-    // 2. Style Issues (AI-tells)
-    analysisResult.styleIssues.forEach((style, idx) => {
-      const lineIdx = originalLines.findIndex(
-        (l) => style.targetText && l.includes(style.targetText)
-      );
-
-      list.push({
-        id: `style-${idx}`,
-        type: "style",
-        title: style.ruleName || "不自然な表現",
-        categoryLabel: "文章表現",
-        verdict: "style",
-        confidence: Math.round((style.confidence || 0.85) * 100),
-        originalText: style.targetText || "",
-        revisedText: "自然な散文へリライト",
-        sourceTitle: "文章品質ガイドライン",
-        sourceUrl: "#",
-        explanation: style.repairInstruction || "AI特有の紋切り型表現または重複が検出されました。",
-        lineIndex: lineIdx >= 0 ? lineIdx : 0,
-        adopted: adoptedOverrides[`style-${idx}`] !== undefined ? adoptedOverrides[`style-${idx}`] : true,
-      });
-    });
-
-    return list;
-  }, [analysisResult, originalLines, adoptedOverrides]);
+  const issues: Finding[] = useMemo(
+    () => revisedDocument?.findings ?? [],
+    [revisedDocument]
+  );
 
   // Filtered issues list
   const filteredIssues = useMemo(() => {
@@ -201,26 +105,27 @@ export default function HomePage() {
   const currentIssue = filteredIssues[selectedIssueIndex] || filteredIssues[0] || null;
 
   const revisedLines = useMemo(
-    () => resultView?.comparison.map((pair) => pair.revised) ?? [],
-    [resultView]
+    () => revisedDocument?.comparison.map((pair) => pair.revised) ?? [],
+    [revisedDocument]
   );
 
-  // Copy confirms on the button itself rather than behind a dialog.
+  // Copy reports on the button itself rather than behind a dialog, and
+  // reports failure there too: the error banner lives on the input screen.
   const handleCopyRevised = async () => {
-    if (!resultView) return;
+    if (!revisedDocument) return;
     try {
-      await navigator.clipboard.writeText(resultView.clipboardText);
-      setJustCopied(true);
+      await navigator.clipboard.writeText(revisedDocument.clipboardText);
+      setCopyState("copied");
     } catch {
-      setErrorMessage("クリップボードにコピーできませんでした。");
+      setCopyState("failed");
     }
   };
 
   useEffect(() => {
-    if (!justCopied) return;
-    const timer = setTimeout(() => setJustCopied(false), 2500);
+    if (copyState === "idle") return;
+    const timer = setTimeout(() => setCopyState("idle"), 2500);
     return () => clearTimeout(timer);
-  }, [justCopied]);
+  }, [copyState]);
 
   // Handle Form Submission
   const handleSubmit = async (e?: React.FormEvent) => {
@@ -585,7 +490,7 @@ export default function HomePage() {
                       <div className="text-xs font-bold text-slate-600">
                         修正版{" "}
                         <span className="font-normal text-slate-400">
-                          (文字数: {resultView?.clipboardText.length ?? 0})
+                          (文字数: {revisedDocument?.clipboardText.length ?? 0})
                         </span>
                       </div>
                       <button
@@ -593,10 +498,15 @@ export default function HomePage() {
                         onClick={handleCopyRevised}
                         className="flex items-center gap-1.5 px-3.5 py-2 rounded-lg border border-slate-300 bg-white hover:bg-slate-50 text-xs font-medium text-slate-700 transition shadow-sm shrink-0"
                       >
-                        {justCopied ? (
+                        {copyState === "copied" ? (
                           <>
                             <Check className="w-3.5 h-3.5 text-emerald-600" />
                             <span>コピーしました</span>
+                          </>
+                        ) : copyState === "failed" ? (
+                          <>
+                            <AlertCircle className="w-3.5 h-3.5 text-red-500" />
+                            <span>コピーできませんでした</span>
                           </>
                         ) : (
                           <>
@@ -607,20 +517,21 @@ export default function HomePage() {
                       </button>
                     </div>
 
-                    {resultView && !resultView.hasFindings && (
+                    {revisedDocument && !revisedDocument.hasFindings && (
                       <div className="flex items-center gap-2 px-4 py-3 rounded-xl border border-emerald-200 bg-emerald-50 text-xs text-emerald-800">
                         <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-600" />
                         <span>修正箇所はありませんでした。</span>
                       </div>
                     )}
 
-                    <article className="space-y-4 rounded-xl border border-slate-100 bg-white p-5 text-sm leading-loose text-slate-800">
-                      {resultView?.paragraphs.map((paragraph, idx) => (
-                        <p key={idx}>
+                    <article className="whitespace-pre-wrap rounded-xl border border-slate-100 bg-white p-5 text-sm leading-loose text-slate-800">
+                      {revisedDocument?.paragraphs.map((paragraph, idx) => (
+                        <span key={idx}>
                           {paragraph.segments.map((segment, segIdx) => (
                             <span key={segIdx}>{segment.text}</span>
                           ))}
-                        </p>
+                          {paragraph.separator}
+                        </span>
                       ))}
                     </article>
                   </div>
