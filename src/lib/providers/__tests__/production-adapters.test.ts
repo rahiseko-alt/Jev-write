@@ -115,3 +115,77 @@ describe("HTTPFetchProvider", () => {
     expect(page.title).toBe("");
   });
 });
+
+describe("OpenAILLMProvider rate limiting", () => {
+  afterEach(() => {
+    globalThis.fetch = realFetch;
+    vi.restoreAllMocks();
+  });
+
+  it("retries a rate-limited call and then succeeds", async () => {
+    const { OpenAILLMProvider } = await import("@/lib/providers/llm/openai");
+    let calls = 0;
+    globalThis.fetch = vi.fn(async () => {
+      calls++;
+      if (calls === 1) {
+        return {
+          ok: false,
+          status: 429,
+          statusText: "Too Many Requests",
+          headers: { get: () => "0" },
+          text: async (): Promise<string> => "rate limited",
+          json: async () => ({}),
+        };
+      }
+      return {
+        ok: true,
+        status: 200,
+        statusText: "OK",
+        headers: { get: () => null },
+        text: async (): Promise<string> => "",
+        json: async () => ({ choices: [{ message: { content: '{"claims":[]}' } }] }),
+      };
+    }) as unknown as typeof fetch;
+
+    const provider = new OpenAILLMProvider({ apiKey: "test-key" });
+    await provider.extractClaims("本文。");
+
+    expect(calls).toBe(2);
+    expect(provider.servedByFallback).toBe(false);
+  });
+
+  it("does not retire the real provider for the next call", async () => {
+    const { OpenAILLMProvider } = await import("@/lib/providers/llm/openai");
+    globalThis.fetch = vi.fn(async () => ({
+      ok: false,
+      status: 429,
+      statusText: "Too Many Requests",
+      headers: { get: () => "0" },
+      text: async (): Promise<string> => "rate limited",
+      json: async () => ({}),
+    })) as unknown as typeof fetch;
+
+    const exhausted = new OpenAILLMProvider({ apiKey: "test-key" });
+    await exhausted.extractClaims("本文。");
+    expect(exhausted.servedByFallback).toBe(true);
+
+    let reached = 0;
+    globalThis.fetch = vi.fn(async () => {
+      reached++;
+      return {
+        ok: true,
+        status: 200,
+        statusText: "OK",
+        headers: { get: () => null },
+        text: async (): Promise<string> => "",
+        json: async () => ({ choices: [{ message: { content: '{"claims":[]}' } }] }),
+      };
+    }) as unknown as typeof fetch;
+
+    const next = new OpenAILLMProvider({ apiKey: "test-key" });
+    await next.extractClaims("本文。");
+
+    expect(reached).toBeGreaterThan(0);
+    expect(next.servedByFallback).toBe(false);
+  });
+});

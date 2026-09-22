@@ -5,6 +5,7 @@ import {
   StageTiming,
 } from "@/types";
 import { JobStore, jobStore as defaultJobStore } from "@/lib/jobs/job-store";
+import { getLLMProvider } from "../providers";
 import { runFactPipeline } from "./fact-pipeline";
 import { runStylePipeline } from "./style-pipeline";
 import { runRewritePipeline } from "./rewrite-pipeline";
@@ -42,6 +43,7 @@ export async function runOrchestrator(
   const onProgress = options?.onProgress;
 
   const timings: StageTiming[] = [];
+  const llm = options?.llm ?? getLLMProvider();
 
   const emit = (
     status: JobStatus,
@@ -75,7 +77,7 @@ export async function runOrchestrator(
       (async () => {
         const factStart = Date.now();
         const res = await runFactPipeline(text, {
-          llm: options?.llm,
+          llm,
           factCheck: options?.factCheck,
           jev: options?.jev,
           search: options?.search,
@@ -145,7 +147,7 @@ export async function runOrchestrator(
       factResult.factLedger,
       styleResult,
       {
-        llm: options?.llm,
+        llm,
         onProgress: (p) => {
           emit("REWRITING", p.percent, p.message);
         },
@@ -165,7 +167,7 @@ export async function runOrchestrator(
       rewriteOutput.plan,
       {
         jev: options?.jev,
-        llm: options?.llm,
+        llm,
         onProgress: (p) => {
           emit("VERIFYING", p.percent, p.message);
         },
@@ -214,6 +216,7 @@ export async function runOrchestrator(
       styleIssues: styleResult,
       sources: factResult.evidences,
       timings,
+      servedByFallback: (llm as { servedByFallback?: boolean }).servedByFallback === true,
     };
 
     store.updateJob(jobId, {

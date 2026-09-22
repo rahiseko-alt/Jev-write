@@ -111,6 +111,12 @@ export type AnalysisResult = {
   styleIssues: StyleIssue[];
   sources: Evidence[];
   timings: StageTiming[];
+  /**
+   * True when some part of this run was answered by a stub rather than the
+   * configured provider. The reader is told, rather than shown a result that
+   * looks like a full check.
+   */
+  servedByFallback?: boolean;
 };
 
 export type JobStatus =

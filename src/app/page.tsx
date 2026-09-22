@@ -858,6 +858,15 @@ export default function HomePage() {
                       </button>
                     </div>
 
+                    {analysisResult?.servedByFallback && (
+                      <div className="flex items-start gap-2 px-4 py-3 rounded-xl border border-amber-200 bg-amber-50 text-xs text-amber-900">
+                        <AlertTriangle className="w-4 h-4 shrink-0 text-amber-600 mt-0.5" />
+                        <span>
+                          この結果の一部は、検証に使う外部サービスへ接続できなかったため簡易処理で作成されています。事実確認としては信頼できません。
+                        </span>
+                      </div>
+                    )}
+
                     {revisedDocument && !revisedDocument.hasFindings && (
                       <div className="flex items-center gap-2 px-4 py-3 rounded-xl border border-emerald-200 bg-emerald-50 text-xs text-emerald-800">
                         <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-600" />
