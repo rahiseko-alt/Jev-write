@@ -143,8 +143,8 @@ export default function HomePage() {
         confidence: Math.round((item.confidence !== undefined ? item.confidence : isContradicted ? 0.94 : isInsufficient ? 0.68 : 0.97) <= 1 ? (item.confidence !== undefined ? item.confidence : isContradicted ? 0.94 : isInsufficient ? 0.68 : 0.97) * 100 : (item.confidence || (isContradicted ? 94 : isInsufficient ? 68 : 97))),
         originalText: claimText,
         revisedText: item.correctedClaim || claimText,
-        sourceTitle: firstEv?.sourceTitle || "一次ソース・公式発表",
-        sourceUrl: firstEv?.sourceUrl || "https://www.apple.com/jp/newsroom/",
+        sourceTitle: firstEv?.sourceTitle || "",
+        sourceUrl: firstEv?.sourceUrl || "",
         explanation:
           item.reason ||
           (isContradicted
@@ -198,16 +198,21 @@ export default function HomePage() {
   // Active Issue
   const currentIssue = filteredIssues[selectedIssueIndex] || filteredIssues[0] || null;
 
-  // Overall Document Score based on verification results
-  const overallScore = useMemo(() => {
-    if (!analysisResult) return 85;
+  const { score: overallScore, contradicted: contradictedCount, insufficient: insufficientCount } = useMemo(() => {
+    if (!analysisResult) return { score: 85, contradicted: 0, insufficient: 0 };
     const claims = analysisResult.claims || [];
-    if (claims.length === 0) return 90;
-    const contradictedCount = claims.filter((c) => c.verdict === "CONTRADICTED").length;
-    const insufficientCount = claims.filter((c) => c.verdict === "INSUFFICIENT").length;
-    const styleCount = (analysisResult.styleIssues || []).length;
-    const base = 100 - contradictedCount * 12 - insufficientCount * 5 - styleCount * 3;
-    return Math.max(30, Math.min(99, base));
+    const total = claims.length;
+    if (total === 0) return { score: 100, contradicted: 0, insufficient: 0 };
+    const confirmed = claims.filter(c => c.verdict === 'SUPPORTED').length;
+    const contradicted = claims.filter(c => c.verdict === 'CONTRADICTED').length;
+    const insufficient = claims.filter(c => c.verdict === 'INSUFFICIENT').length;
+    // CONFIRMEDは+、CONTRADICTEDは大きく-、INSUFFICIENTは中-
+    const score = Math.round(100 * (confirmed - contradicted * 2) / (total + insufficient));
+    return {
+      score: Math.max(0, Math.min(100, score)),
+      contradicted,
+      insufficient
+    };
   }, [analysisResult]);
 
   // Counts for sidebar badges
@@ -591,11 +596,11 @@ export default function HomePage() {
                     <span className="absolute text-xs font-bold text-slate-800">{overallScore}%</span>
                   </div>
                   <p className="text-[10px] text-slate-500 leading-tight">
-                    {overallScore >= 85
-                      ? "信頼性の極めて高い文章です。公的根拠と整合しています。"
-                      : overallScore >= 70
-                      ? "全体的に良好です。いくつかの修正で、より信頼性の高い文章になります。"
-                      : "事実関係の誤りや確認が必要な項目が複数含まれています。修正の適用を推奨します。"}
+                    {overallScore >= 85 && contradictedCount === 0
+                      ? "高信頼"
+                      : overallScore >= 50
+                      ? "要確認の箇所があります"
+                      : "複数の誤りが検出されました"}
                   </p>
                 </div>
               </div>
@@ -1213,15 +1218,19 @@ export default function HomePage() {
                     {/* 根拠 */}
                     <div className="flex items-center justify-between py-1 border-b border-slate-50">
                       <span className="text-slate-400 font-medium">根拠</span>
-                      <a
-                        href={currentIssue.sourceUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-blue-600 hover:underline flex items-center gap-1 font-medium"
-                      >
-                        <span>{currentIssue.sourceTitle}</span>
-                        <ExternalLink className="w-3 h-3" />
-                      </a>
+                      {currentIssue.sourceUrl ? (
+                        <a
+                          href={currentIssue.sourceUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-blue-600 hover:underline flex items-center gap-1 font-medium"
+                        >
+                          <span>{currentIssue.sourceTitle || currentIssue.sourceUrl}</span>
+                          <ExternalLink className="w-3 h-3" />
+                        </a>
+                      ) : (
+                        <span className="text-slate-500 font-medium">{currentIssue.sourceTitle || "根拠なし"}</span>
+                      )}
                     </div>
 
                     {/* 種別 */}

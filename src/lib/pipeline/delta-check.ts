@@ -50,23 +50,34 @@ export async function runDeltaCheck(
   }
 
   // Also extract differences in numbers, dates, or entities
-  const origNumbers: string[] = originalText.match(/\d+[\d,]*(?:万|億|兆|%|円|ドル|人|個|GB|MB)?/g) || [];
-  const revNumbers: string[] = revisedText.match(/\d+[\d,]*(?:万|億|兆|%|円|ドル|人|個|GB|MB)?/g) || [];
+  const numRegex = /\d+[\d,]*(?:万|億|兆|%|円|ドル|人|個|GB|MB)?/g;
+  const origNumberMatches = Array.from(originalText.matchAll(numRegex));
+  const revNumberMatches = Array.from(revisedText.matchAll(numRegex));
 
   const candidateUnauthorizedSegments: Array<{
     segment: string;
     reason: string;
     expectedFact?: string;
+    index?: number;
   }> = [];
 
-  for (const num of revNumbers) {
-    if (origNumbers.indexOf(num) === -1) {
+  for (let i = 0; i < revNumberMatches.length; i++) {
+    const revMatch = revNumberMatches[i];
+    const num = revMatch[0];
+    const origMatch = origNumberMatches[i];
+
+    if (!origMatch) {
+      continue;
+    }
+
+    if (num !== origMatch[0]) {
       const isAuthorized = authorizedChanges.some((c) => c.includes(num));
       if (!isAuthorized) {
         candidateUnauthorizedSegments.push({
           segment: num,
           reason: `新しく追加された数値「${num}」は、ファクト台帳の訂正として承認されていません。`,
-          expectedFact: origNumbers[0],
+          expectedFact: origMatch[0],
+          index: revMatch.index,
         });
       }
     }
@@ -75,15 +86,20 @@ export async function runDeltaCheck(
   let hasUnauthorizedChange = candidateUnauthorizedSegments.length > 0;
   let explanation: string | undefined;
 
+  let jevEvaluated = false;
+  let jevHasUnauthorizedChange = false;
+
   try {
     const deltaRes = await jev.evaluateDeltaMeaningChange(
       originalText,
       revisedText,
       authorizedChanges
     );
-
+    
+    jevEvaluated = true;
     if (deltaRes.hasUnauthorizedChange) {
       hasUnauthorizedChange = true;
+      jevHasUnauthorizedChange = true;
       explanation = deltaRes.explanation;
     }
   } catch (err) {
@@ -93,8 +109,12 @@ export async function runDeltaCheck(
   let verifiedText = revisedText;
   let surgicalFixApplied = false;
 
+  if (jevEvaluated && jevHasUnauthorizedChange) {
+    verifiedText = originalText;
+  }
+
   // If unauthorized modifications are detected, perform targeted surgical correction
-  if (hasUnauthorizedChange && candidateUnauthorizedSegments.length > 0) {
+  if (hasUnauthorizedChange && candidateUnauthorizedSegments.length > 0 && verifiedText !== originalText) {
     onProgress?.({
       percent: 92,
       message: `未承認の変更 (${candidateUnauthorizedSegments.length}件) に対する局所外科的修正中...`,
@@ -115,11 +135,23 @@ export async function runDeltaCheck(
         }
       } else if (unauthorized.expectedFact && verifiedText.includes(unauthorized.segment)) {
         // Fallback targeted replacement: restore expected fact
-        verifiedText = verifiedText.replace(
-          unauthorized.segment,
-          unauthorized.expectedFact
-        );
-        surgicalFixApplied = true;
+        let targetIndex = -1;
+        if (unauthorized.index !== undefined) {
+          const searchStart = Math.max(0, unauthorized.index - 10);
+          targetIndex = verifiedText.indexOf(unauthorized.segment, searchStart);
+        }
+        
+        if (targetIndex === -1) {
+          targetIndex = verifiedText.indexOf(unauthorized.segment);
+        }
+
+        if (targetIndex !== -1) {
+          verifiedText =
+            verifiedText.slice(0, targetIndex) +
+            unauthorized.expectedFact +
+            verifiedText.slice(targetIndex + unauthorized.segment.length);
+          surgicalFixApplied = true;
+        }
       }
     }
   }

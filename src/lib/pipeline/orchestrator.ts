@@ -232,9 +232,8 @@ export async function runOrchestrator(
 
     return finalResult;
   } catch (err: unknown) {
-    const stack = err instanceof Error ? ` [Stack: ${err.stack}]` : "";
     const errorMessage =
-      err instanceof Error ? `${err.message}${stack}` : "予期しないエラーが発生しました";
+      err instanceof Error ? err.message : "予期しないエラーが発生しました";
 
     console.error("Orchestrator encountered a fatal error:", err);
 

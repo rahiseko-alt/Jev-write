@@ -47,5 +47,8 @@ export function getLLMProvider(options: LLMOptions = {}): LLMProvider {
     return new OpenAILLMProvider({ apiKey: openAiKey, ...options });
   }
 
+  if (process.env.NODE_ENV === 'production') {
+    throw new Error('LLM API key is required in production.');
+  }
   return new MockLLMProvider();
 }

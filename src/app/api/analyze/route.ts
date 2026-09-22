@@ -66,7 +66,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json(
       {
         error: "解析ジョブの実行に失敗しました。",
-        details: `${err?.message || String(err)} [RouteStack: ${err?.stack}]`,
+        details: `${err?.message || String(err)}`,
       },
       { status: 500 }
     );

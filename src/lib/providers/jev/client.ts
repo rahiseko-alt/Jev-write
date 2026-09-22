@@ -71,6 +71,7 @@ export class HTTPJEVClient implements JEVClient {
         method: "POST",
         headers,
         body: JSON.stringify({
+          model: 'jev-latest',
           state: statePayload,
           questions,
         }),
@@ -104,8 +105,8 @@ export class HTTPJEVClient implements JEVClient {
       const questionsPayload: Record<string, any> = {
         q1: {
           type: qType,
-          question: req.question,
-          ...(qType === "choice" ? { choices: req.choices || ["supports", "contradicts", "says_nothing", "ambiguous"] } : {}),
+          instructions: req.instructions,
+          ...(qType === "choice" ? { criteria: req.criteria || ["supports", "contradicts", "says_nothing", "ambiguous"] } : {}),
         },
       };
 
@@ -113,7 +114,14 @@ export class HTTPJEVClient implements JEVClient {
       const resultItem = data?.answers?.q1 || data?.results?.q1 || data?.q1 || data;
 
       const value = resultItem?.value || resultItem?.choice || resultItem?.selected;
-      const noulVal = typeof resultItem?.noul === "boolean" ? resultItem.noul : typeof value === "boolean" ? value : undefined;
+      let noulVal: number | undefined;
+      if (typeof resultItem?.noul === "number") {
+        noulVal = resultItem.noul;
+      } else if (typeof resultItem?.noul === "boolean") {
+        noulVal = resultItem.noul ? 1 : 0;
+      } else if (typeof value === "boolean") {
+        noulVal = value ? 1 : 0;
+      }
       const confidence = typeof resultItem?.confidence === "number" ? resultItem.confidence : 0.95;
 
       return {
@@ -126,6 +134,9 @@ export class HTTPJEVClient implements JEVClient {
         explanation: resultItem?.explanation,
       };
     } catch (err) {
+      if (process.env.NODE_ENV === 'production') {
+        throw err;
+      }
       console.warn("HTTPJEVClient evaluateAtomicJudgment failed, using fallback:", err);
       return await this.fallback.evaluateAtomicJudgment(req);
     }
@@ -159,18 +170,19 @@ export class HTTPJEVClient implements JEVClient {
     for (const r of rulesList) {
       questionsPayload[r.id] = {
         type: "noul",
-        question: `${r.question} (文章中にこの表現や特徴が明確に存在するか？)`,
+        instructions: `${r.question} (文章中にこの表現や特徴が明確に存在するか？)`,
       };
     }
 
     try {
       const data = await this.callSystemOne(text, questionsPayload);
-      const resultsMap = data?.results || data || {};
+      const resultsMap = data?.answers || data?.results || data || {};
 
       const formattedResults: Record<string, any> = {};
       for (const r of rulesList) {
         const item = resultsMap[r.id] || {};
-        const detected = item.value === true || item.noul === true || item.detected === true;
+        const noulValue = typeof item.noul === "number" ? item.noul : item.noul === true ? 1 : 0;
+        const detected = item.value === true || noulValue > 0.5 || item.detected === true;
         const confidence = typeof item.confidence === "number" ? item.confidence : 0.9;
         formattedResults[r.id] = {
           detected,
@@ -197,6 +209,9 @@ export class HTTPJEVClient implements JEVClient {
 
       return { results: formattedResults };
     } catch (err) {
+      if (process.env.NODE_ENV === 'production') {
+        throw err;
+      }
       console.warn("HTTPJEVClient evaluateBatchRules failed, using fallback:", err);
       return await this.fallback.evaluateBatchRules(reqOrText, maybeRules);
     }
@@ -232,11 +247,11 @@ export class HTTPJEVClient implements JEVClient {
 
     const atomicResult = await this.evaluateAtomicJudgment({
       state,
-      question: "修正後の文章は、許可された変更（permittedChanges）以外に意味上の新しい事実変更や数値の改変を行っているか？",
+      instructions: "修正後の文章は、許可された変更（permittedChanges）以外に意味上の新しい事実変更や数値の改変を行っているか？",
       mode: "noul",
     });
 
-    const hasUnauthorized = Boolean(atomicResult.noul);
+    const hasUnauthorized = (atomicResult.noul ?? 0) > 0.5;
     return {
       hasUnauthorizedChange: hasUnauthorized,
       unauthorizedChangeDetected: hasUnauthorized,
@@ -244,6 +259,8 @@ export class HTTPJEVClient implements JEVClient {
         ? [{ segment: rev, reason: atomicResult.explanation || "未許可の事実変更を検出しました" }]
         : [],
       explanation: atomicResult.explanation,
+      authorized: !hasUnauthorized,
+      reason: hasUnauthorized ? (atomicResult.explanation || "未許可の事実変更を検出しました") : undefined,
     };
   }
 }

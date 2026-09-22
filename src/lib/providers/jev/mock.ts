@@ -14,7 +14,7 @@ import { RatingVerdict } from "../google-factcheck/types";
 
 export class MockJEVClient implements JEVClient {
   async evaluateAtomicJudgment(req: JEVAtomicJudgmentRequest): Promise<JEVAtomicJudgmentResult> {
-    const { type, candidateText, evidenceText, state, question, choices, mode } = req;
+    const { type, candidateText, evidenceText, state, instructions, criteria, mode } = req;
 
     // 1. Pipeline-specific: claim_match
     if (type === "claim_match") {
@@ -163,7 +163,7 @@ export class MockJEVClient implements JEVClient {
               choice: "contradicts",
               relation: "contradicts",
               verdict: "contradicts" as RatingVerdict,
-              noul: false,
+              noul: 0,
               confidence: 0.96,
               explanation: "Evidence explicitly states iPhone 17 is unreleased or scheduled later.",
             };
@@ -188,7 +188,7 @@ export class MockJEVClient implements JEVClient {
             choice: "contradicts",
             relation: "contradicts",
             verdict: "contradicts" as RatingVerdict,
-            noul: false,
+            noul: 0,
             confidence: 0.98,
             explanation: hasDateConflict
               ? "日付の記述が一次ソース（公式発表日）と食い違っています。"
@@ -202,7 +202,7 @@ export class MockJEVClient implements JEVClient {
             choice: "supports",
             relation: "supports",
             verdict: "supports" as RatingVerdict,
-            noul: true,
+            noul: 1,
             confidence: 0.88,
             explanation: "Evidence supports the asserted claim.",
           };
@@ -212,7 +212,7 @@ export class MockJEVClient implements JEVClient {
           choice: "says_nothing",
           relation: "says_nothing",
           verdict: "insufficient" as RatingVerdict,
-          noul: false,
+          noul: 0,
           confidence: 0.85,
           explanation: "Evidence does not mention the facts in question.",
         };
@@ -227,7 +227,7 @@ export class MockJEVClient implements JEVClient {
           return {
             choice: "same",
             match: "same",
-            noul: true,
+            noul: 1,
             confidence: 1.0,
             explanation: "Both claims are identical.",
           };
@@ -238,7 +238,7 @@ export class MockJEVClient implements JEVClient {
           return {
             choice: "close_but_different",
             match: "close_but_different",
-            noul: false,
+            noul: 0,
             confidence: 0.85,
             explanation: "Claims share subject and entities but differ in specifics.",
           };
@@ -247,7 +247,7 @@ export class MockJEVClient implements JEVClient {
         return {
           choice: "different",
           match: "different",
-          noul: false,
+          noul: 0,
           confidence: 0.92,
           explanation: "Claims describe different facts.",
         };
@@ -256,13 +256,13 @@ export class MockJEVClient implements JEVClient {
 
     if (mode === "noul") {
       return {
-        noul: false,
+        noul: 0,
         confidence: 0.8,
         explanation: "Default atomic noul evaluation.",
       };
     }
 
-    const defaultChoice: JEVChoice = choices && choices.length > 0 ? (choices[0] as JEVChoice) : "same";
+    const defaultChoice: JEVChoice = criteria && criteria.length > 0 ? (criteria[0] as JEVChoice) : "same";
     return {
       choice: defaultChoice,
       confidence: 0.8,
@@ -360,6 +360,8 @@ export class MockJEVClient implements JEVClient {
           unauthorizedChangeDetected: true,
           unauthorizedChanges,
           explanation: "Unauthorized numerical modification detected.",
+          authorized: false,
+          reason: "Unauthorized numerical modification detected.",
         };
       }
       return {
@@ -367,6 +369,7 @@ export class MockJEVClient implements JEVClient {
         unauthorizedChangeDetected: false,
         unauthorizedChanges: [],
         explanation: "Original text is preserved verbatim.",
+        authorized: true,
       };
     }
 
@@ -382,6 +385,7 @@ export class MockJEVClient implements JEVClient {
         unauthorizedChangeDetected: false,
         unauthorizedChanges: [],
         explanation: "Modifications correspond to authorized corrections in Fact Ledger.",
+        authorized: true,
       };
     }
 
@@ -402,6 +406,8 @@ export class MockJEVClient implements JEVClient {
         unauthorizedChangeDetected: true,
         unauthorizedChanges,
         explanation: `Unauthorized modification detected for "${original}".`,
+        authorized: false,
+        reason: `Unauthorized modification detected for "${original}".`,
       };
     }
 
@@ -410,6 +416,7 @@ export class MockJEVClient implements JEVClient {
       unauthorizedChangeDetected: false,
       unauthorizedChanges: [],
       explanation: "No unauthorized semantic changes detected.",
+      authorized: true,
     };
   }
 

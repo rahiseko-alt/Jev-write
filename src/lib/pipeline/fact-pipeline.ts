@@ -196,8 +196,8 @@ async function verifyClaim(params: {
       // JEV Atomic Judgment: claim matching
       const matchResult = await jev.evaluateAtomicJudgment({
         state: { claimA: claim.normalizedText || claim.originalText, claimB: hitClaimText },
-        question: "主張Aと主張Bは同じ対象・事象についての事実主張ですか？",
-        choices: ["same", "close_but_different", "different"],
+        instructions: "主張Aと主張Bは同じ対象・事象についての事実主張ですか？",
+        criteria: ["same", "close_but_different", "different"],
       });
 
       const isMatch =
@@ -214,8 +214,8 @@ async function verifyClaim(params: {
           const ratingText = review.textualRating || "";
 
           // Rating normalization via JEV or textual rating keywords
-          const isFalse = /false|誤り|虚偽|incorrect|fake/i.test(ratingText);
-          const isTrue = /true|正しい|事実|verified|correct/i.test(ratingText);
+          const isFalse = /not true|false|不正確|誤り|unverified|incorrect|misleading|誤|嘘/i.test(ratingText);
+          const isTrue = /^true$|正しい|事実|^verified$|^correct$/i.test(ratingText);
 
           if (isFalse) {
             verdict = "CONTRADICTED";
@@ -228,8 +228,8 @@ async function verifyClaim(params: {
           } else {
             const normResult = await jev.evaluateAtomicJudgment({
               state: { rating: ratingText },
-              question: "この検証判定は主張を肯定していますか、否定していますか？",
-              choices: ["supports", "contradicts", "mixed", "insufficient"],
+              instructions: "この検証判定は主張を肯定していますか、否定していますか？",
+              criteria: ["supports", "contradicts", "mixed", "insufficient"],
             });
             verdict = mapChoiceToClaimVerdict(normResult.choice);
             confidence = normResult.confidence || 0.85;
@@ -264,7 +264,9 @@ async function verifyClaim(params: {
     const searchResults = searchResponse.results || [];
 
     // Sort by source priority
-    const sortedResults = [...searchResults].sort(
+    const sortedResults = [...searchResults]
+      .filter((res) => passesEntityGate(res.url, claim.entities || []))
+      .sort(
       (a, b) => {
         const typeA = mapDomainToSourceType(a.url);
         const typeB = mapDomainToSourceType(b.url);
@@ -311,8 +313,8 @@ async function verifyClaim(params: {
             claim: claim.normalizedText || claim.originalText,
             evidence: relevantEvidence,
           },
-          question: "この証拠テキストは主張を肯定（supports）していますか、否定（contradicts）していますか？",
-          choices: ["supports", "contradicts", "says_nothing", "ambiguous"],
+          instructions: "この証拠テキストは主張を肯定（supports）していますか、否定（contradicts）していますか？",
+          criteria: ["supports", "contradicts", "says_nothing", "ambiguous"],
         });
 
         const relation = (evalResult.choice as keyof typeof relationCounts) || "says_nothing";
@@ -347,7 +349,11 @@ async function verifyClaim(params: {
     }
 
     // Synthesize final ClaimVerdict
-    if (relationCounts.contradicts > 0 && relationCounts.supports === 0) {
+    if (claimEvidences.length === 0) {
+      verdict = "INSUFFICIENT";
+      confidence = 0.6;
+      reason = "検証に足る明確な裏付け情報が確認できませんでした（証拠0件）。";
+    } else if (relationCounts.contradicts > 0 && relationCounts.supports === 0) {
       verdict = "CONTRADICTED";
       confidence = 0.9;
       reason = bestExplanation || "外部ソースの情報と矛盾する内容が確認されました。";
@@ -454,12 +460,6 @@ function mapChoiceToClaimVerdict(choice?: string): ClaimVerdict {
 }
 
 function deriveCorrectedClaim(claim: Claim, reference: string): string {
-  if (claim.originalText.includes("iPhone 17") && (claim.originalText.includes("2024年") || claim.originalText.includes("2025年"))) {
-    return "iPhone 17は未発売であり、2026年秋の発売が見込まれています（2024年秋に発売されたのはiPhone 16）。";
-  }
-  if (claim.originalText.includes("GPT-5") && claim.originalText.includes("2025年8月")) {
-    return "OpenAIは2025年8月時点でGPT-5を公式発表していません。";
-  }
   return reference;
 }
 
@@ -494,21 +494,21 @@ async function deriveCorrectionFromText(
   ];
 
   let replacedAny = false;
-  for (const pair of specPairs) {
-    pair.wrong.lastIndex = 0;
-    if (pair.wrong.test(corrected) && pair.evCheck.test(text)) {
+  const isApple = claim.entities?.some(e => e.toLowerCase().includes("apple") || e.toLowerCase().includes("iphone"));
+  
+  if (isApple) {
+    for (const pair of specPairs) {
       pair.wrong.lastIndex = 0;
-      corrected = corrected.replace(pair.wrong, pair.right);
-      replacedAny = true;
+      if (pair.wrong.test(corrected) && pair.evCheck.test(text)) {
+        pair.wrong.lastIndex = 0;
+        corrected = corrected.replace(pair.wrong, pair.right);
+        replacedAny = true;
+      }
     }
   }
 
   if (replacedAny) {
     return corrected;
-  }
-
-  if (text.includes("iPhone 16") && claim.originalText.includes("iPhone 17")) {
-    return "2024年9月に発売されたのはiPhone 16であり、iPhone 17ではありません。";
   }
 
   return claim.normalizedText;
@@ -564,4 +564,59 @@ function mapDomainToSourceType(url: string): SourceType {
     }
   } catch {}
   return "unknown";
+}
+
+export function passesEntityGate(url: string, entities: string[]): boolean {
+  if (!entities || entities.length === 0) return true;
+  try {
+    const hostname = new URL(url).hostname.toLowerCase();
+    
+    // Always allow government, wikipedia, major news, and factcheck/test domains
+    if (
+      hostname.endsWith(".go.jp") ||
+      hostname.endsWith(".gov") ||
+      hostname.includes("wikipedia.org") ||
+      hostname.includes("nhk.or.jp") ||
+      hostname.includes("nytimes.com") ||
+      hostname.includes("reuters.com") ||
+      hostname.includes("itmedia.co.jp") ||
+      hostname.includes("macrumors.com") ||
+      hostname.includes("factcheck")
+    ) {
+      return true;
+    }
+
+    const domainMap: Record<string, string[]> = {
+      nintendo: ["nintendo.co.jp", "nintendo.com"],
+      apple: ["apple.com"],
+      iphone: ["apple.com"],
+      sony: ["sony.com", "sony.co.jp", "playstation.com"],
+      google: ["google.com", "abc.xyz"],
+      microsoft: ["microsoft.com"],
+      openai: ["openai.com"],
+    };
+
+    let needsSpecificDomain = false;
+    let domainMatched = false;
+
+    for (const entity of entities) {
+      const e = entity.toLowerCase();
+      for (const [key, domains] of Object.entries(domainMap)) {
+        if (e.includes(key)) {
+          needsSpecificDomain = true;
+          if (domains.some(d => hostname.includes(d))) {
+            domainMatched = true;
+          }
+        }
+      }
+    }
+
+    if (needsSpecificDomain && !domainMatched) {
+      return false; // has target entity but domain does not match
+    }
+
+    return true;
+  } catch {
+    return false; // invalid url
+  }
 }

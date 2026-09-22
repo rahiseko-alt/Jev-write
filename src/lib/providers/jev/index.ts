@@ -27,5 +27,8 @@ export function getJEVClient(options: JEVClientOptions = {}): JEVClient {
     return new HTTPJEVClient(options);
   }
 
+  if (process.env.NODE_ENV === 'production') {
+    throw new Error('JEV_API_KEY is required in production.');
+  }
   return new MockJEVClient();
 }

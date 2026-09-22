@@ -11,8 +11,8 @@ export type JEVChoice =
 
 export interface JEVAtomicJudgmentRequest {
   state?: Record<string, any>;
-  question?: string;
-  choices?: string[];
+  instructions?: string;
+  criteria?: string[];
   mode?: "choice" | "noul";
   type?: string;
   claim?: any;
@@ -27,7 +27,7 @@ export interface JEVAtomicJudgmentResult {
   relation?: string;
   verdict?: RatingVerdict;
   ratingMeaning?: string;
-  noul?: boolean;
+  noul?: number;
   confidence: number;
   explanation?: string;
 }
@@ -69,6 +69,8 @@ export interface JEVDeltaMeaningResult {
   unauthorizedChangeDetected: boolean;
   unauthorizedChanges: JEVUnauthorizedChange[];
   explanation?: string;
+  authorized: boolean;
+  reason?: string;
 }
 
 export interface JEVClient {

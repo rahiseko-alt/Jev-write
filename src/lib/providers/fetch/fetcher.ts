@@ -41,8 +41,14 @@ export class HTTPFetchProvider implements FetchProvider {
 
       const statusCode = response.status;
       if (!response.ok) {
-        console.warn(`HTTPFetchProvider fallback to Mock due to ${statusCode} for ${url}`);
-        return new MockFetchProvider().fetchUrl(url, options);
+        console.warn(`HTTPFetchProvider fetch failed with ${statusCode} for ${url}`);
+        return {
+          url,
+          title: "",
+          content: "",
+          text: "",
+          statusCode,
+        };
       }
 
       const html = await response.text();
@@ -60,8 +66,14 @@ export class HTTPFetchProvider implements FetchProvider {
         statusCode,
       };
     } catch (err) {
-      console.warn(`HTTPFetchProvider fallback to Mock due to error for ${url}:`, err);
-      return new MockFetchProvider().fetchUrl(url, options);
+      console.warn(`HTTPFetchProvider fetch failed with error for ${url}:`, err);
+      return {
+        url,
+        title: "",
+        content: "",
+        text: "",
+        statusCode: 500,
+      };
     } finally {
       clearTimeout(timer);
     }

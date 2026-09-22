@@ -131,8 +131,8 @@ describe("JEV Provider", () => {
           excerpt: "iPhone 17は未発売であり、2025年9月時点では発表されていない。",
         },
       },
-      question: "Does the evidence support or contradict the claim?",
-      choices: ["supports", "contradicts", "says_nothing"],
+      instructions: "Does the evidence support or contradict the claim?",
+      criteria: ["supports", "contradicts", "says_nothing"],
     });
 
     expect(result.choice).toBe("contradicts");
@@ -145,8 +145,8 @@ describe("JEV Provider", () => {
         claimA: "iPhone 17の発売日は2026年9月である",
         claimB: "iPhone 17の発売日は2026年9月である",
       },
-      question: "Are claim A and claim B the same fact?",
-      choices: ["same", "close_but_different", "different"],
+      instructions: "Are claim A and claim B the same fact?",
+      criteria: ["same", "close_but_different", "different"],
     });
 
     expect(result.choice).toBe("same");
