@@ -1159,3 +1159,64 @@ describe("refusing one correction among several", () => {
     expect(view.findings[0].revisedText).toBe(after);
   });
 });
+
+describe("what the panel shows beside the document", () => {
+  it("shows the reader's own sentence, not the claim's paraphrase", () => {
+    const original = "これによってゲームのレンダリング速度は最大約50%向上するとされています。";
+
+    const view = buildRevisedDocument({
+      originalText: original,
+      analysis: analysis(original, original, [
+        {
+          claim: {
+            id: "c1",
+            originalText: original,
+            // the pipeline synthesises this; it is not a quote from the article
+            normalizedText: "レンダリング速度は最大約50%向上",
+            importance: "normal",
+            factCheckRequired: true,
+          },
+          verdict: "INSUFFICIENT",
+          reason: "裏付けが見つかりませんでした。",
+          evidence: [],
+        },
+      ]),
+      adoption: {},
+    });
+
+    expect(view.findings[0].sentenceBefore).toBe(original);
+    expect(view.findings[0].sentenceAfter).toBe(original);
+  });
+
+  it("shows the sentence as the document now reads it", () => {
+    const original = "価格は10万円である。";
+    const revised = "価格は12万円である。";
+
+    const view = buildRevisedDocument({
+      originalText: original,
+      analysis: analysis(original, revised, [
+        claim("価格は10万円", "CONTRADICTED", "価格は12万円"),
+      ]),
+      adoption: {},
+    });
+
+    expect(view.findings[0].sentenceBefore).toBe(original);
+    expect(view.findings[0].sentenceAfter).toBe(revised);
+  });
+
+  it("follows a refusal, so the panel never contradicts the document", () => {
+    const original = "価格は10万円である。";
+    const revised = "価格は12万円である。";
+
+    const view = buildRevisedDocument({
+      originalText: original,
+      analysis: analysis(original, revised, [
+        claim("価格は10万円", "CONTRADICTED", "価格は12万円"),
+      ]),
+      adoption: { "fact-0": false },
+    });
+
+    expect(view.findings[0].sentenceAfter).toBe(original);
+    expect(view.clipboardText).toBe(original);
+  });
+});

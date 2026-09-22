@@ -438,7 +438,7 @@ export default function HomePage() {
                     <div className="space-y-1">
                       <span className="text-slate-400 font-medium">原文</span>
                       <div className="bg-red-50 text-red-900 border border-red-200 rounded-lg p-2 leading-relaxed">
-                        {currentFinding.originalText}
+                        {currentFinding.sentenceBefore || currentFinding.originalText}
                       </div>
                     </div>
 
@@ -446,7 +446,7 @@ export default function HomePage() {
                     <div className="space-y-1">
                       <span className="text-slate-400 font-medium">修正版</span>
                       <div className="bg-emerald-50 text-emerald-900 border border-emerald-200 rounded-lg p-2 leading-relaxed">
-                        {currentFinding.revisedText}
+                        {currentFinding.sentenceAfter || currentFinding.revisedText}
                       </div>
                     </div>
 

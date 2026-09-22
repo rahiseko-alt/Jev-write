@@ -62,6 +62,14 @@ export type Finding = {
   markKind: MarkKind | null;
   /** Whether there is a correction to accept or refuse at all. */
   adoptable: boolean;
+  /**
+   * The sentence this Finding sits in, as the reader wrote it and as the
+   * document now shows it. The claim's own text is a machine paraphrase and
+   * can read nothing like the article, so what is shown beside the document
+   * is the document's own wording.
+   */
+  sentenceBefore: string;
+  sentenceAfter: string;
 };
 
 /** Everything that follows from a Finding's kind, in one place. */
@@ -248,6 +256,8 @@ function factFinding(
     adopted: isAdopted(adoption, id),
     markKind: shape.markKind,
     adoptable: kind === "corrected" && at >= 0 && corrected !== text,
+    sentenceBefore: "",
+    sentenceAfter: "",
   };
 }
 
@@ -280,6 +290,8 @@ function styleFinding(
     adopted: isAdopted(adoption, id),
     markKind: isRaised(styleIssue) ? shape.markKind : null,
     adoptable: isRaised(styleIssue) && at >= 0 && after !== before,
+    sentenceBefore: "",
+    sentenceAfter: "",
   };
 }
 
@@ -357,6 +369,12 @@ export function buildRevisedDocument(
       index
     ),
   }));
+
+  for (const finding of findings) {
+    const pair = comparison[finding.lineIndex];
+    finding.sentenceBefore = pair?.original ?? finding.originalText;
+    finding.sentenceAfter = pair?.revised ?? finding.revisedText;
+  }
 
   let cursor = 0;
   const paragraphs: Paragraph[] = sourceParagraphs.map((paragraph) => ({
