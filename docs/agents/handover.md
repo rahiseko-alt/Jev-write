@@ -8,6 +8,24 @@
 
 ---
 
+## 2026-09-22 文章品質保証アプリ（Jev-write）MVP実装完了
+
+**決めたこと**
+
+- 仕様書v0.1に基づき、Next.js App Router + TypeScript + Tailwind CSSによる文章品質保証アプリMVPを全実装した
+- LLM生成とJEV原子判定の完全分離（ADR 0001）、交換可能プロバイダ設計（ADR 0002）、フォールバック・インメモリ管理（ADR 0003）を採択
+- Fact Pipeline、Style Pipeline（AI-tell 12ルール）、Rewrite Pipeline、Delta Check、SSE進捗配信、4タブ結果画面UIを構築した
+
+**次にやること**
+
+- `npm run dev` によるローカル起動とブラウザでの実際の文章投入・体験確認
+- 必要に応じた外部APIキー（OPENAI_API_KEY, JEV_API_KEY, TAVILY_API_KEY, GOOGLE_FACTCHECK_API_KEY）の実キー環境変数設定
+- 評価データセット（100文章）の拡充と精度検証
+
+**未解決の問題**
+
+- 特になし。単体・結合テスト40件パスおよびNext.jsビルド成功を確認済み
+
 ## 2026-09-21 サブエージェントの洗い直しで3件追加修正
 
 **決めたこと**
