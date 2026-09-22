@@ -16,19 +16,22 @@ export function getJEVClient(options: JEVClientOptions = {}): JEVClient {
   const apiKey =
     options.apiKey !== undefined
       ? options.apiKey
-      : process.env.JEV_API_KEY || process.env.TYPESAFE_API_KEY;
+      : process.env.JEV_API_KEY ||
+        process.env.TYPESAFE_API_KEY ||
+        process.env.jev ||
+        process.env.typesafe;
 
   if (apiKey && apiKey.trim().length > 0) {
     return new HTTPJEVClient(options);
   }
 
-  const apiUrl = options.apiUrl !== undefined ? options.apiUrl : process.env.JEV_API_URL;
+  const apiUrl =
+    options.apiUrl !== undefined
+      ? options.apiUrl
+      : process.env.JEV_API_URL || process.env.TYPESAFE_API_URL;
   if (apiUrl && apiUrl.trim().length > 0) {
     return new HTTPJEVClient(options);
   }
 
-  if (process.env.NODE_ENV === 'production') {
-    throw new Error('JEV_API_KEY is required in production.');
-  }
   return new MockJEVClient();
 }

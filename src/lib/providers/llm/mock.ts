@@ -340,8 +340,8 @@ export class MockLLMProvider implements LLMProvider {
       }
     }
 
-    // Generic spec unit matching for single-value specs: mm, g, インチ, Hz, GB, fps, 倍, MP, Gbps
-    const specUnits = ["mm", "g", "インチ", "Hz", "GB", "fps", "倍", "MP", "Gbps"];
+    // Generic spec unit matching for single-value specs: mm, g, インチ, Hz, GB, fps, Gbps
+    const specUnits = ["mm", "g", "インチ", "Hz", "GB", "fps", "Gbps"];
     for (const unit of specUnits) {
       const unitRegex = new RegExp(`(\\d+[\\d,.]*)\\s*${unit}`, "gi");
       let match: RegExpExecArray | null;

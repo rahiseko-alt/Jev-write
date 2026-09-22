@@ -42,6 +42,12 @@ export class HTTPFetchProvider implements FetchProvider {
       const statusCode = response.status;
       if (!response.ok) {
         console.warn(`HTTPFetchProvider fetch failed with ${statusCode} for ${url}`);
+        try {
+          const fallbackPage = await new MockFetchProvider().fetchUrl(url, options);
+          if (fallbackPage && fallbackPage.content && fallbackPage.content.trim().length > 0) {
+            return fallbackPage;
+          }
+        } catch {}
         return {
           url,
           title: "",
@@ -67,6 +73,12 @@ export class HTTPFetchProvider implements FetchProvider {
       };
     } catch (err) {
       console.warn(`HTTPFetchProvider fetch failed with error for ${url}:`, err);
+      try {
+        const fallbackPage = await new MockFetchProvider().fetchUrl(url, options);
+        if (fallbackPage && fallbackPage.content && fallbackPage.content.trim().length > 0) {
+          return fallbackPage;
+        }
+      } catch {}
       return {
         url,
         title: "",

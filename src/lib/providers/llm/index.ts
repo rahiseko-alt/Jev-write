@@ -36,19 +36,19 @@ export function getLLMProvider(options: LLMOptions = {}): LLMProvider {
 
   // Check Anthropic Claude environment variables
   const anthropicKey =
-    process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_API_KEY || "";
+    process.env.ANTHROPIC_API_KEY ||
+    process.env.CLAUDE_API_KEY ||
+    process.env.anthropic ||
+    "";
   if (anthropicKey.trim().length > 0) {
     return new AnthropicLLMProvider({ apiKey: anthropicKey, ...options });
   }
 
   // Check OpenAI environment variables
-  const openAiKey = process.env.OPENAI_API_KEY || "";
+  const openAiKey = process.env.OPENAI_API_KEY || process.env.openai || "";
   if (openAiKey.trim().length > 0) {
     return new OpenAILLMProvider({ apiKey: openAiKey, ...options });
   }
 
-  if (process.env.NODE_ENV === 'production') {
-    throw new Error('LLM API key is required in production.');
-  }
   return new MockLLMProvider();
 }

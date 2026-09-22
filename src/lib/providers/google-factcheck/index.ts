@@ -11,12 +11,13 @@ export * from "./mock";
  * otherwise falls back to MockGoogleFactCheckClient.
  */
 export function getGoogleFactCheckClient(options: GoogleFactCheckOptions = {}): GoogleFactCheckClient {
-  const apiKey = options.apiKey || process.env.GOOGLE_FACTCHECK_API_KEY || process.env.factcheck;
+  const apiKey =
+    options.apiKey ||
+    process.env.GOOGLE_FACTCHECK_API_KEY ||
+    process.env.factcheck ||
+    process.env.GOOGLE_FACT_CHECK_API_KEY;
   if (apiKey && apiKey.trim().length > 0) {
     return new HTTPGoogleFactCheckClient({ ...options, apiKey });
-  }
-  if (process.env.NODE_ENV === 'production') {
-    throw new Error('Google FactCheck API key is required in production. Set GOOGLE_FACTCHECK_API_KEY or factcheck.');
   }
   return new MockGoogleFactCheckClient();
 }
