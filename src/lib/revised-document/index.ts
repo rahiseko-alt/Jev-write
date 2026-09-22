@@ -15,6 +15,8 @@ export type Mark = {
   findingIds: string[];
   /** The most pressing kind among them. */
   kind: MarkKind;
+  /** The reader refused this correction, so the text is as they wrote it. */
+  rejected: boolean;
 };
 
 export type Segment = {
@@ -58,6 +60,8 @@ export type Finding = {
   adopted: boolean;
   /** How this Finding marks the document, or null when it leaves no mark. */
   markKind: MarkKind | null;
+  /** Whether there is a correction to accept or refuse at all. */
+  adoptable: boolean;
 };
 
 /** Everything that follows from a Finding's kind, in one place. */
@@ -241,6 +245,7 @@ function factFinding(
     lineIndex: sentenceIndexOf(sentences, text),
     adopted: isAdopted(adoption, id),
     markKind: shape.markKind,
+    adoptable: kind === "corrected",
   };
 }
 
@@ -268,6 +273,7 @@ function styleFinding(
     lineIndex: sentenceIndexOf(sentences, styleIssue.targetText ?? ""),
     adopted: isAdopted(adoption, id),
     markKind: isRaised(styleIssue) ? shape.markKind : null,
+    adoptable: isRaised(styleIssue),
   };
 }
 
@@ -345,6 +351,7 @@ type Span = {
   end: number;
   findingIds: string[];
   kind: MarkKind;
+  rejected: boolean;
 };
 
 /** Which mark wins where two cover the same text. */
@@ -408,11 +415,11 @@ const ANCHOR_LENGTH = 8;
  * The words just before the change anchor the search, so a figure that also
  * appears elsewhere in the sentence is not marked by mistake.
  */
-function locateChange(sentence: string, finding: Finding): [number, number] | null {
-  const changed = changedWording(finding.originalText, finding.revisedText);
+function locateChange(sentence: string, from: string, to: string): [number, number] | null {
+  const changed = changedWording(from, to);
 
   if (changed.length > 0) {
-    const anchor = anchorFor(finding, changed);
+    const anchor = anchorFor(to, changed);
     const anchored = sentence.indexOf(anchor + changed);
     if (anchored >= 0) {
       const start = anchored + anchor.length;
@@ -425,14 +432,14 @@ function locateChange(sentence: string, finding: Finding): [number, number] | nu
     }
   }
 
-  const whole = finding.revisedText ? sentence.indexOf(finding.revisedText) : -1;
-  return whole >= 0 ? [whole, whole + finding.revisedText.length] : null;
+  const whole = to ? sentence.indexOf(to) : -1;
+  return whole >= 0 ? [whole, whole + to.length] : null;
 }
 
-function anchorFor(finding: Finding, changed: string): string {
-  const head = finding.revisedText.indexOf(changed);
+function anchorFor(wording: string, changed: string): string {
+  const head = wording.indexOf(changed);
   if (head <= 0) return "";
-  return finding.revisedText.slice(Math.max(0, head - ANCHOR_LENGTH), head);
+  return wording.slice(Math.max(0, head - ANCHOR_LENGTH), head);
 }
 
 /**
@@ -455,7 +462,14 @@ function markSentence(
   const wholeSentence: Finding[] = [];
 
   for (const finding of onThisSentence) {
-    const located = finding.markKind === "fact" ? locateChange(text, finding) : null;
+    // A refused correction leaves the sentence as it was written, so the mark
+    // follows the reader's own wording rather than the one they turned down.
+    const located =
+      finding.markKind === "fact"
+        ? finding.adopted
+          ? locateChange(text, finding.originalText, finding.revisedText)
+          : locateChange(text, finding.revisedText, finding.originalText)
+        : null;
 
     if (located) {
       spans.push({
@@ -463,6 +477,7 @@ function markSentence(
         end: located[1],
         findingIds: [finding.id],
         kind: finding.markKind!,
+        rejected: !finding.adopted,
       });
     } else {
       wholeSentence.push(finding);
@@ -475,6 +490,7 @@ function markSentence(
     ? {
         findingIds: wholeSentence.map((finding) => finding.id),
         kind: strongest(wholeSentence.map((finding) => finding.markKind!)),
+        rejected: wholeSentence.every((finding) => !finding.adopted),
       }
     : undefined;
 
@@ -489,7 +505,7 @@ function markSentence(
     if (span.start > at) segments.push(gap(text.slice(at, span.start), background));
     segments.push({
       text: text.slice(span.start, span.end),
-      mark: { findingIds: span.findingIds, kind: span.kind },
+      mark: { findingIds: span.findingIds, kind: span.kind, rejected: span.rejected },
     });
     at = span.end;
   }
@@ -509,6 +525,7 @@ function mergeOverlaps(spans: Span[]): Span[] {
       last.end = Math.max(last.end, span.end);
       last.findingIds.push(...span.findingIds);
       last.kind = strongest([last.kind, span.kind]);
+      last.rejected = last.rejected && span.rejected;
       continue;
     }
     merged.push({ ...span, findingIds: [...span.findingIds] });

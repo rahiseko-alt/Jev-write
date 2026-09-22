@@ -995,3 +995,77 @@ describe("Evidence and heading edges", () => {
     expect(view.findings[0].title.length).toBeLessThan(long.length);
   });
 });
+
+describe("a refused correction", () => {
+  function marked(view: { paragraphs: { segments: { text: string; mark?: { findingIds: string[]; kind: string; rejected: boolean } }[] }[] }) {
+    return view.paragraphs
+      .flatMap((p) => p.segments)
+      .filter((s) => s.mark)
+      .map((s) => ({ text: s.text, kind: s.mark!.kind, rejected: s.mark!.rejected }));
+  }
+
+  const original = "価格は10万円である。";
+  const revised = "価格は12万円である。";
+  const claims = [claim("価格は10万円", "CONTRADICTED", "価格は12万円")];
+
+  it("keeps its mark, on the reader's own wording", () => {
+    const view = buildRevisedDocument({
+      originalText: original,
+      analysis: analysis(original, revised, claims),
+      adoption: { "fact-0": false },
+    });
+
+    expect(marked(view)).toEqual([{ text: "10", kind: "fact", rejected: true }]);
+  });
+
+  it("is told apart from one that was accepted", () => {
+    const accepted = buildRevisedDocument({
+      originalText: original,
+      analysis: analysis(original, revised, claims),
+      adoption: {},
+    });
+
+    expect(marked(accepted)).toEqual([{ text: "12", kind: "fact", rejected: false }]);
+  });
+
+  it("goes back to the correction when it is accepted again", () => {
+    const view = buildRevisedDocument({
+      originalText: original,
+      analysis: analysis(original, revised, claims),
+      adoption: { "fact-0": true },
+    });
+
+    expect(marked(view)).toEqual([{ text: "12", kind: "fact", rejected: false }]);
+    expect(view.clipboardText).toBe(revised);
+  });
+
+  it("is not something an unverified claim can be", () => {
+    const view = buildRevisedDocument({
+      originalText: original,
+      analysis: analysis(original, original, [claim("価格は10万円である。", "INSUFFICIENT")]),
+      adoption: {},
+    });
+
+    expect(view.findings[0].adoptable).toBe(false);
+  });
+
+  it("is something a correction can be", () => {
+    const view = buildRevisedDocument({
+      originalText: original,
+      analysis: analysis(original, revised, claims),
+      adoption: {},
+    });
+
+    expect(view.findings[0].adoptable).toBe(true);
+  });
+
+  it("is not something a confirmed claim can be", () => {
+    const view = buildRevisedDocument({
+      originalText: original,
+      analysis: analysis(original, original, [claim("価格は10万円である。", "SUPPORTED")]),
+      adoption: {},
+    });
+
+    expect(view.findings[0].adoptable).toBe(false);
+  });
+});

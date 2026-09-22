@@ -60,6 +60,9 @@ const MARK_STYLES: Record<MarkKind, { className: string; glyph: string; label: s
   },
 };
 
+const REJECTED_STYLE =
+  "bg-slate-100 text-slate-600 underline decoration-slate-400 decoration-dashed underline-offset-4";
+
 function MarkedText({
   segment,
   onSelect,
@@ -71,18 +74,23 @@ function MarkedText({
 
   const mark = segment.mark;
   const style = MARK_STYLES[mark.kind];
+  const rejected = mark.rejected;
 
   return (
     <button
       type="button"
       onClick={() => onSelect(mark.findingIds)}
       aria-haspopup="dialog"
-      className={`inline rounded px-0.5 text-left ${style.className} hover:brightness-95 transition`}
+      className={`inline rounded px-0.5 text-left ${
+        rejected ? REJECTED_STYLE : style.className
+      } hover:brightness-95 transition`}
     >
       <span aria-hidden className="mr-0.5 text-[0.7em] align-super font-bold select-none">
-        {style.glyph}
+        {rejected ? "↩" : style.glyph}
       </span>
-      <span className="sr-only">{style.label}: </span>
+      <span className="sr-only">
+        {rejected ? `${style.label}（元に戻しました）` : style.label}:{" "}
+      </span>
       {segment.text}
     </button>
   );
@@ -190,6 +198,21 @@ export default function HomePage() {
       setCopyState("failed");
     }
   };
+
+  // A narrow window offers 修正版 and 原文 only, so a reader carrying one of
+  // the comparison views across the breakpoint lands on the document.
+  useEffect(() => {
+    const narrow = window.matchMedia("(max-width: 1023px)");
+    const settle = () => {
+      if (narrow.matches && (viewTab === "side-by-side" || viewTab === "inline")) {
+        setViewTab("revised");
+      }
+    };
+
+    settle();
+    narrow.addEventListener("change", settle);
+    return () => narrow.removeEventListener("change", settle);
+  }, [viewTab]);
 
   // The sheet is how a narrow screen opens a Finding. It has no business
   // surviving a change of view, or a window grown past the breakpoint.
@@ -444,7 +467,15 @@ export default function HomePage() {
                     </div>
                   </div>
 
-                  {/* 採用 / 元に戻す Buttons (Image 2 - Component 5) */}
+                  {/* 採用 / 元に戻す, where there is a correction to weigh */}
+                  {!currentFinding.adoptable ? (
+                    <div className="flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-900">
+                      <AlertTriangle className="w-4 h-4 shrink-0 text-amber-600 mt-0.5" />
+                      <span>
+                        この箇所は書き換えていません。裏付けが取れなかったため、ご自身で一次情報をお確かめください。
+                      </span>
+                    </div>
+                  ) : (
                   <div className="grid grid-cols-2 gap-3 pt-2">
                     <button
                       onClick={() => handleAdoptToggle(currentFinding.id, true)}
@@ -470,6 +501,7 @@ export default function HomePage() {
                       <span>元に戻す</span>
                     </button>
                   </div>
+                  )}
 
                 </div>
               ) : (
@@ -724,7 +756,7 @@ export default function HomePage() {
                   </button>
                   <button
                     onClick={() => setViewTab("side-by-side")}
-                    className={`py-3 transition border-b-2 ${
+                    className={`hidden lg:block py-3 transition border-b-2 ${
                       viewTab === "side-by-side"
                         ? "border-blue-600 text-blue-600 font-bold"
                         : "border-transparent text-slate-500 hover:text-slate-800"
@@ -734,7 +766,7 @@ export default function HomePage() {
                   </button>
                   <button
                     onClick={() => setViewTab("inline")}
-                    className={`py-3 transition border-b-2 ${
+                    className={`hidden lg:block py-3 transition border-b-2 ${
                       viewTab === "inline"
                         ? "border-blue-600 text-blue-600 font-bold"
                         : "border-transparent text-slate-500 hover:text-slate-800"
