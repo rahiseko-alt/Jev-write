@@ -262,19 +262,34 @@ export class MockJEVClient implements JEVClient {
 
         const overlap = this.calculateKeywordOverlap(claimText, evText);
 
-        // If the claim asserts specific numbers/specs, do NOT claim 'supports' unless evidence contains numbers
-        const hasClaimNumbers = /\d+/.test(claimText);
-        if (hasClaimNumbers) {
-          const claimNumMatches = claimText.match(/(\d+[.,\d]*)/g) || [];
-          const hasMatchingNum = claimNumMatches.some((n) => evText.includes(n.replace(/,/g, "")));
-          if (!hasMatchingNum) {
+        // If the claim asserts specific numbers/specs with units, evidence MUST contain matching spec units
+        for (const unit of specUnits) {
+          const claimUnitRegex = new RegExp(`(\\d+[\\d,.]*)\\s*${unit}`, "gi");
+          if (claimUnitRegex.test(claimText)) {
+            const evUnitRegex = new RegExp(`(\\d+[\\d,.]*)\\s*${unit}`, "gi");
+            if (!evUnitRegex.test(evText)) {
+              return {
+                choice: "says_nothing",
+                relation: "says_nothing",
+                verdict: "insufficient" as RatingVerdict,
+                noul: 0,
+                confidence: 0.85,
+                explanation: `証拠テキストに対象スペック単位（${unit}）の記述がありません。`,
+              };
+            }
+          }
+        }
+
+        // If the claim asserts a specific date (月 日), evidence MUST contain a date
+        if (/(\d{1,2})\s*月\s*(\d{1,2})\s*日/.test(claimText)) {
+          if (!/(\d{1,2})\s*月\s*(\d{1,2})\s*日/.test(evText)) {
             return {
               choice: "says_nothing",
               relation: "says_nothing",
               verdict: "insufficient" as RatingVerdict,
               noul: 0,
               confidence: 0.85,
-              explanation: "Evidence mentions related entities but does not verify the specific numbers or specifications in the claim.",
+              explanation: "証拠テキストに該当する日付の記述がありません。",
             };
           }
         }
