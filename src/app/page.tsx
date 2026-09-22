@@ -76,7 +76,8 @@ function MarkedText({
     <button
       type="button"
       onClick={() => onSelect(mark.findingIds)}
-      className={`rounded px-0.5 text-left ${style.className} hover:brightness-95 transition`}
+      aria-haspopup="dialog"
+      className={`inline rounded px-0.5 text-left ${style.className} hover:brightness-95 transition`}
     >
       <span aria-hidden className="mr-0.5 text-[0.7em] align-super font-bold select-none">
         {style.glyph}
@@ -98,7 +99,7 @@ export default function HomePage() {
   const [viewTab, setViewTab] = useState<"original" | "revised" | "side-by-side" | "inline">("revised");
   const [onlyDiff, setOnlyDiff] = useState(false);
   const [inlineDiffMode, setInlineDiffMode] = useState(true);
-  const [selectedFindingIndex, setSelectedFindingIndex] = useState(0);
+  const [selectedFindingId, setSelectedFindingId] = useState<string | null>(null);
   const [categoryFilter, setCategoryFilter] = useState<"all" | "fact" | "warning" | "style" | "verified">("all");
 
   // Modals & Popovers
@@ -124,6 +125,7 @@ export default function HomePage() {
   const [adoptedOverrides, setAdoptedOverrides] = useState<Record<string, boolean>>({});
   const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle");
   const [sheetOpen, setSheetOpen] = useState(false);
+  const sheetRef = useRef<HTMLDivElement>(null);
 
   // Everything the result screen renders comes from this one place.
   const revisedDocument = useMemo(
@@ -158,8 +160,19 @@ export default function HomePage() {
     return findings;
   }, [findings, categoryFilter]);
 
-  // Active Issue
-  const currentFinding = filteredFindings[selectedFindingIndex] || filteredFindings[0] || null;
+  // The Finding on show, and where it sits in the list the reader is paging.
+  const currentFinding =
+    filteredFindings.find((finding) => finding.id === selectedFindingId) ??
+    filteredFindings[0] ??
+    null;
+  const selectedFindingIndex = currentFinding
+    ? filteredFindings.findIndex((finding) => finding.id === currentFinding.id)
+    : -1;
+
+  const selectFindingAt = (at: number) => {
+    const finding = filteredFindings[at];
+    if (finding) setSelectedFindingId(finding.id);
+  };
 
   const revisedLines = useMemo(
     () => revisedDocument?.comparison.map((pair) => pair.revised) ?? [],
@@ -177,6 +190,33 @@ export default function HomePage() {
       setCopyState("failed");
     }
   };
+
+  // The sheet is how a narrow screen opens a Finding. It has no business
+  // surviving a change of view, or a window grown past the breakpoint.
+  useEffect(() => {
+    setSheetOpen(false);
+  }, [viewTab, categoryFilter]);
+
+  useEffect(() => {
+    if (!sheetOpen) return;
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setSheetOpen(false);
+    };
+    const wide = window.matchMedia("(min-width: 1024px)");
+    const onWidthChange = () => {
+      if (wide.matches) setSheetOpen(false);
+    };
+
+    document.addEventListener("keydown", onKeyDown);
+    wide.addEventListener("change", onWidthChange);
+    sheetRef.current?.focus();
+
+    return () => {
+      document.removeEventListener("keydown", onKeyDown);
+      wide.removeEventListener("change", onWidthChange);
+    };
+  }, [sheetOpen]);
 
   useEffect(() => {
     if (copyState === "idle") return;
@@ -215,7 +255,8 @@ export default function HomePage() {
 
       if (finalResult) {
         setAnalysisResult(finalResult);
-        setSelectedFindingIndex(0);
+        setSelectedFindingId(null);
+        setSheetOpen(false);
 
         // Update last saved time
         const now = new Date();
@@ -243,11 +284,21 @@ export default function HomePage() {
   // Selecting a mark opens its Finding: a sheet on a phone, the panel on a
   // wide screen. The document is never scrolled on the reader's behalf.
   const handleSelectMark = (findingIds: string[]) => {
-    const at = filteredFindings.findIndex((finding) => findingIds.includes(finding.id));
-    if (at < 0) return;
-    setSelectedFindingIndex(at);
-    setSheetOpen(true);
+    const finding = findings.find((candidate) => findingIds.includes(candidate.id));
+    if (!finding) return;
+
+    // The mark is drawn for every Finding, so a filter that hides this one
+    // must give way rather than leave the mark inert.
+    if (!filteredFindings.some((visible) => visible.id === finding.id)) {
+      setCategoryFilter("all");
+    }
+
+    setSelectedFindingId(finding.id);
+    if (!isWideScreen()) setSheetOpen(true);
   };
+
+  const isWideScreen = () =>
+    typeof window !== "undefined" && window.matchMedia("(min-width: 1024px)").matches;
 
   // Adoption toggles
   const handleAdoptToggle = (findingId: string, adopt: boolean) => {
@@ -264,7 +315,7 @@ export default function HomePage() {
                     <div className="flex items-center gap-1">
                       <button
                         disabled={selectedFindingIndex === 0}
-                        onClick={() => setSelectedFindingIndex((prev) => Math.max(0, prev - 1))}
+                        onClick={() => selectFindingAt(selectedFindingIndex - 1)}
                         className="p-1 text-slate-500 hover:text-slate-800 disabled:opacity-30 rounded hover:bg-slate-100"
                       >
                         <ChevronLeft className="w-4 h-4" />
@@ -272,7 +323,7 @@ export default function HomePage() {
                       <button
                         disabled={selectedFindingIndex === filteredFindings.length - 1}
                         onClick={() =>
-                          setSelectedFindingIndex((prev) => Math.min(filteredFindings.length - 1, prev + 1))
+                          selectFindingAt(selectedFindingIndex + 1)
                         }
                         className="p-1 text-slate-500 hover:text-slate-800 disabled:opacity-30 rounded hover:bg-slate-100"
                       >
@@ -363,10 +414,9 @@ export default function HomePage() {
                       </div>
                     </div>
 
-                    {/* 根拠 */}
-                    <div className="flex items-center justify-between py-1 border-b border-slate-50">
-                      <span className="text-slate-400 font-medium">根拠</span>
-                      {currentFinding.sourceUrl ? (
+                    {currentFinding.sourceUrl && (
+                      <div className="flex items-center justify-between py-1 border-b border-slate-50">
+                        <span className="text-slate-400 font-medium">根拠</span>
                         <a
                           href={currentFinding.sourceUrl}
                           target="_blank"
@@ -376,10 +426,8 @@ export default function HomePage() {
                           <span>{currentFinding.sourceTitle || currentFinding.sourceUrl}</span>
                           <ExternalLink className="w-3 h-3" />
                         </a>
-                      ) : (
-                        <span className="text-slate-500 font-medium">{currentFinding.sourceTitle || "根拠なし"}</span>
-                      )}
-                    </div>
+                      </div>
+                    )}
 
                     {/* 種別 */}
                     <div className="flex items-center justify-between py-1 border-b border-slate-50">
@@ -437,6 +485,7 @@ export default function HomePage() {
         <div
           onClick={() => {
             setAnalysisResult(null);
+            setSheetOpen(false);
           }}
           className="flex items-center gap-3 cursor-pointer select-none hover:opacity-80 transition"
         >
@@ -852,8 +901,7 @@ export default function HomePage() {
                               key={idx}
                               onClick={() => {
                                 if (matchedFinding) {
-                                  const at = filteredFindings.findIndex((f) => f.id === matchedFinding.id);
-                                  if (at >= 0) setSelectedFindingIndex(at);
+                                  setSelectedFindingId(matchedFinding.id);
                                 }
                               }}
                               className={`flex items-start gap-3 p-3 rounded-lg border text-xs leading-relaxed transition cursor-pointer ${rowStyle}`}
@@ -902,8 +950,7 @@ export default function HomePage() {
                               key={idx}
                               onClick={() => {
                                 if (matchedFinding) {
-                                  const at = filteredFindings.findIndex((f) => f.id === matchedFinding.id);
-                                  if (at >= 0) setSelectedFindingIndex(at);
+                                  setSelectedFindingId(matchedFinding.id);
                                 }
                               }}
                               className={`flex items-start gap-3 p-3 rounded-lg border text-xs leading-relaxed transition cursor-pointer ${rowStyle}`}
@@ -992,14 +1039,23 @@ export default function HomePage() {
 
       {/* Finding sheet — phones only; wide screens use the panel beside the document */}
       {sheetOpen && currentFinding && (
-        <div className="lg:hidden fixed inset-0 z-40 flex flex-col justify-end">
-          <div
-            className="absolute inset-0 bg-slate-900/30"
+        <div className="lg:hidden fixed inset-0 z-[60] flex flex-col justify-end">
+          <button
+            type="button"
+            aria-label="閉じる"
+            className="absolute inset-0 bg-slate-900/30 cursor-default"
             onClick={() => setSheetOpen(false)}
           />
-          <div className="relative bg-white rounded-t-2xl shadow-2xl max-h-[75vh] overflow-y-auto">
+          <div
+            ref={sheetRef}
+            role="dialog"
+            aria-modal="true"
+            aria-label={currentFinding.title}
+            tabIndex={-1}
+            className="relative bg-white rounded-t-2xl shadow-2xl max-h-[75vh] overflow-y-auto outline-none"
+          >
             <div className="sticky top-0 bg-white flex items-center justify-between px-4 py-3 border-b border-slate-100">
-              <span className="text-xs font-bold text-slate-800">この箇所について</span>
+              <span className="text-xs font-bold text-slate-800">{currentFinding.title}</span>
               <button
                 type="button"
                 onClick={() => setSheetOpen(false)}

@@ -228,7 +228,7 @@ function factFinding(
     type: "fact",
     title: compose(
       shape.heading,
-      kind === "corrected" ? changedWording(text, result.correctedClaim || text) || text : text
+      kind === "corrected" ? changedWording(result.correctedClaim || text, text) || text : text
     ),
     categoryLabel: shape.label,
     kind,
@@ -262,8 +262,8 @@ function styleFinding(
     confidence: toPercent(styleIssue.confidence || shape.confidence),
     originalText: styleIssue.targetText || "",
     revisedText: "自然な散文へリライト",
-    sourceTitle: "文章品質ガイドライン",
-    sourceUrl: "#",
+    sourceTitle: "",
+    sourceUrl: "",
     explanation: styleIssue.repairInstruction || shape.explanation,
     lineIndex: sentenceIndexOf(sentences, styleIssue.targetText ?? ""),
     adopted: isAdopted(adoption, id),
@@ -525,8 +525,11 @@ const SPAN_LENGTH = 20;
 
 /** "事実の誤り: 12万円" — the kind, then what it points at. */
 function compose(heading: string, span: string): string {
-  const target = span.trim().slice(0, SPAN_LENGTH);
-  return target ? `${heading}: ${target}` : heading;
+  const target = span.trim();
+  if (!target) return heading;
+  const shown =
+    target.length > SPAN_LENGTH ? `${target.slice(0, SPAN_LENGTH)}…` : target;
+  return `${heading}: ${shown}`;
 }
 
 const TITLE_LENGTH = 36;

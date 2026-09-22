@@ -912,7 +912,7 @@ describe("Finding headings", () => {
       adoption: {},
     });
 
-    expect(view.findings[0].title).toBe("事実の誤り: 12");
+    expect(view.findings[0].title).toBe("事実の誤り: 10");
   });
 
   it("names the kind and the claim for an unverified one", () => {
@@ -938,7 +938,7 @@ describe("Finding headings", () => {
       adoption: {},
     });
 
-    expect(view.findings[0].title).toBe("事実の誤り: 140");
+    expect(view.findings[0].title).toBe("事実の誤り: 120");
   });
 
   it("names the rule and its target for an AI-tell", () => {
@@ -951,5 +951,47 @@ describe("Finding headings", () => {
     });
 
     expect(view.findings[0].title).toBe("無意味な反復: まとめると、こうなる。");
+  });
+});
+
+describe("Evidence and heading edges", () => {
+  it("claims no Evidence for an AI-tell, because none was supplied", () => {
+    const original = "まとめると、こうなる。";
+
+    const view = buildRevisedDocument({
+      originalText: original,
+      analysis: analysis(original, "こうなる。", [], [styleIssue("まとめると、こうなる。")]),
+      adoption: {},
+    });
+
+    expect(view.findings[0].sourceTitle).toBe("");
+    expect(view.findings[0].sourceUrl).toBe("");
+  });
+
+  it("names the wording that was wrong, not the wording that replaced it", () => {
+    const original = "メインカメラは20MPである。";
+
+    const view = buildRevisedDocument({
+      originalText: original,
+      analysis: analysis(original, "メインカメラは48MPである。", [
+        claim("メインカメラは20MP", "CONTRADICTED", "メインカメラは48MP"),
+      ]),
+      adoption: {},
+    });
+
+    expect(view.findings[0].title).toBe("事実の誤り: 20MP");
+  });
+
+  it("says a long target was cut rather than ending mid-word", () => {
+    const long = "売上は前年比120%で、これは全社の見通しを大きく上回る結果でした。";
+
+    const view = buildRevisedDocument({
+      originalText: long,
+      analysis: analysis(long, long, [claim(long, "INSUFFICIENT")]),
+      adoption: {},
+    });
+
+    expect(view.findings[0].title).toContain("…");
+    expect(view.findings[0].title.length).toBeLessThan(long.length);
   });
 });
