@@ -15,6 +15,8 @@ export function getSearchProvider(options: TavilySearchOptions = {}): SearchProv
   if (apiKey && apiKey.trim().length > 0) {
     return new TavilySearchProvider(options);
   }
-  // Tavily is supplementary - degrade gracefully if key is absent
+  if (process.env.NODE_ENV === 'production') {
+    throw new Error('TAVILY_API_KEY is required in production.');
+  }
   return new MockSearchProvider();
 }
