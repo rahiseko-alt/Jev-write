@@ -45,6 +45,11 @@ export type RevisedDocumentView = {
   paragraphs: Paragraph[];
   /** The article body alone, with the original paragraph breaks and nothing else. */
   clipboardText: string;
+  /**
+   * The same document before any correction, assembled the same way, so the
+   * two can be counted and compared against each other.
+   */
+  originalText: string;
   /** Original and revised sentences side by side, for the wide-screen comparison views. */
   comparison: SentencePair[];
   /** Every Finding, ready to display. */
@@ -268,9 +273,14 @@ export function buildRevisedDocument(
     .map((paragraph) => paragraphText(paragraph) + paragraph.separator)
     .join("");
 
+  const assembledOriginal = sourceParagraphs
+    .map((paragraph) => paragraph.sentences.join("") + paragraph.separator)
+    .join("");
+
   return {
     paragraphs,
     clipboardText,
+    originalText: assembledOriginal,
     comparison,
     findings,
     hasFindings:

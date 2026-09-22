@@ -367,7 +367,7 @@ export default function HomePage() {
                     {originalLines[0]?.slice(0, 36) || "文章の品質検証レポート"}
                   </h2>
                   <div className="flex items-center gap-3 text-[11px] text-slate-400 mt-0.5">
-                    <span>文字数: {inputText.length}</span>
+                    <span>文字数: {revisedDocument?.originalText.length ?? inputText.length}</span>
                     <span>最終保存: {lastSavedTime || "2025/4/24 14:32"}</span>
                   </div>
                 </div>
@@ -472,7 +472,7 @@ export default function HomePage() {
                   /* Original Only */
                   <div className="max-w-3xl mx-auto space-y-3">
                     <div className="text-xs font-bold text-slate-600 mb-2">
-                      原文 <span className="font-normal text-slate-400">(文字数: {inputText.length})</span>
+                      原文 <span className="font-normal text-slate-400">(文字数: {revisedDocument?.originalText.length ?? 0})</span>
                     </div>
                     <div className="space-y-2">
                       {originalLines.map((line, idx) => (
@@ -575,7 +575,7 @@ export default function HomePage() {
                     {/* Left Column: 原文 */}
                     <div className="space-y-3">
                       <div className="text-xs font-bold text-slate-600 mb-2">
-                        原文 <span className="font-normal text-slate-400">(文字数: {inputText.length})</span>
+                        原文 <span className="font-normal text-slate-400">(文字数: {revisedDocument?.originalText.length ?? 0})</span>
                       </div>
 
                       <div className="space-y-2">
@@ -625,7 +625,7 @@ export default function HomePage() {
                     {/* Right Column: 修正版 */}
                     <div className="space-y-3">
                       <div className="text-xs font-bold text-slate-600 mb-2">
-                        修正版 <span className="font-normal text-slate-400">(文字数: {revisedLines.join("").length})</span>
+                        修正版 <span className="font-normal text-slate-400">(文字数: {revisedDocument?.clipboardText.length ?? 0})</span>
                       </div>
 
                       <div className="space-y-2">

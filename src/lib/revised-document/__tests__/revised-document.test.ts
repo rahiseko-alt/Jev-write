@@ -223,6 +223,49 @@ describe("buildRevisedDocument", () => {
     });
   });
 
+  describe("character counts", () => {
+    it("counts the original and the revision on the same basis", () => {
+      const original = "　一文目。二文目。\n\n　三文目。";
+
+      const view = buildRevisedDocument({
+        originalText: original,
+        analysis: analysis(original, original),
+        adoption: {},
+      });
+
+      expect(view.originalText).toBe(original);
+      expect(view.clipboardText.length).toBe(view.originalText.length);
+    });
+
+    it("reports the original assembled the same way as the revision", () => {
+      const original = "価格は10万円。\n\n発売日は3月1日。";
+      const revised = "価格は12万円。\n\n発売日は4月1日。";
+
+      const view = buildRevisedDocument({
+        originalText: original,
+        analysis: analysis(original, revised),
+        adoption: {},
+      });
+
+      expect(view.originalText).toBe(original);
+      expect(view.clipboardText).toBe(revised);
+    });
+
+    it("counts the paragraph breaks in both, not just in one", () => {
+      const original = "一文目。\n二文目。\n\n三文目。";
+
+      const view = buildRevisedDocument({
+        originalText: original,
+        analysis: analysis(original, original),
+        adoption: {},
+      });
+
+      // Three breaks' worth of characters are part of both documents.
+      expect(view.originalText).toContain("\n\n");
+      expect(view.clipboardText).toContain("\n\n");
+    });
+  });
+
   describe("comparison pairs", () => {
     it("pairs each original sentence with its revision", () => {
       const original = "価格は10万円。\n\n発売日は3月1日。";
