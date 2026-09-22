@@ -1,5 +1,4 @@
 import { FetchedPage, FetchOptions, FetchProvider } from "./types";
-import { MockFetchProvider } from "./mock";
 
 export interface HTTPFetchProviderOptions {
   defaultTimeoutMs?: number;
@@ -42,12 +41,7 @@ export class HTTPFetchProvider implements FetchProvider {
       const statusCode = response.status;
       if (!response.ok) {
         console.warn(`HTTPFetchProvider fetch failed with ${statusCode} for ${url}`);
-        try {
-          const fallbackPage = await new MockFetchProvider().fetchUrl(url, options);
-          if (fallbackPage && fallbackPage.content && fallbackPage.content.trim().length > 0) {
-            return fallbackPage;
-          }
-        } catch {}
+        // An empty page, never someone else's prose under this URL.
         return {
           url,
           title: "",
@@ -73,12 +67,6 @@ export class HTTPFetchProvider implements FetchProvider {
       };
     } catch (err) {
       console.warn(`HTTPFetchProvider fetch failed with error for ${url}:`, err);
-      try {
-        const fallbackPage = await new MockFetchProvider().fetchUrl(url, options);
-        if (fallbackPage && fallbackPage.content && fallbackPage.content.trim().length > 0) {
-          return fallbackPage;
-        }
-      } catch {}
       return {
         url,
         title: "",

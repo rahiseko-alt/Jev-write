@@ -13,7 +13,7 @@ import {
   JEVClient,
   LLMProvider,
   SearchProvider,
-  MockSearchProvider,
+  SearchResultItem,
   getFetchProvider,
   getGoogleFactCheckClient,
   getJEVClient,
@@ -261,8 +261,15 @@ async function verifyClaim(params: {
   // Step 3: Fallback to Web Search if no usable Google Fact Check hit
   if (!isFactCheckHit) {
     const searchQuery = buildWebSearchQuery(claim);
-    const searchResponse = await search.search(searchQuery, { maxResults: 3 });
-    const searchResults = searchResponse.results || [];
+    let searchResults: SearchResultItem[] = [];
+    try {
+      const searchResponse = await search.search(searchQuery, { maxResults: 3 });
+      searchResults = searchResponse.results || [];
+    } catch (err) {
+      // ADR-0003: the lookup failed, so the claim stays unverified and the
+      // pipeline carries on. It does not get made up for.
+      console.warn(`Web search failed for claim ${claim.id}:`, err);
+    }
 
     // Sort by source priority
     const effectiveEntities = (claim.entities && claim.entities.length > 0)
@@ -278,23 +285,6 @@ async function verifyClaim(params: {
         return (SOURCE_PRIORITY[typeA] || 6) - (SOURCE_PRIORITY[typeB] || 6);
       }
     );
-
-    if (sortedResults.length === 0) {
-      try {
-        const mockSearch = new MockSearchProvider();
-        const fallbackRes = await mockSearch.search(searchQuery, { maxResults: 3 });
-        const fbResults = fallbackRes.results || [];
-        sortedResults = [...fbResults]
-          .filter((res) => passesEntityGate(res.url, effectiveEntities))
-          .sort((a, b) => {
-            const typeA = mapDomainToSourceType(a.url);
-            const typeB = mapDomainToSourceType(b.url);
-            return (SOURCE_PRIORITY[typeA] || 6) - (SOURCE_PRIORITY[typeB] || 6);
-          });
-      } catch (fbErr) {
-        console.warn("Fallback mock search failed:", fbErr);
-      }
-    }
 
     const relationCounts = {
       supports: 0,
@@ -376,50 +366,6 @@ async function verifyClaim(params: {
       }
     }
 
-    // Secondary fallback: if external search yielded no valid supports/contradicts evidence, query Knowledge Base
-    if (claimEvidences.length === 0) {
-      try {
-        const mockSearch = new MockSearchProvider();
-        const kbResponse = await mockSearch.search(searchQuery, { maxResults: 3 });
-        const kbResults = kbResponse.results || [];
-        for (let i = 0; i < kbResults.length; i++) {
-          const res = kbResults[i];
-          const content = res.content || "";
-          const relevantEvidence = extractRelevantExcerpt(content, claim, 2500);
-          const evalResult = await jev.evaluateAtomicJudgment({
-            state: {
-              claim: claim.normalizedText || claim.originalText,
-              evidence: relevantEvidence,
-            },
-            instructions: "この証拠テキストは主張を肯定（supports）していますか、否定（contradicts）していますか？",
-            criteria: ["supports", "contradicts", "says_nothing", "ambiguous"],
-          });
-          const relation = (evalResult.choice as keyof typeof relationCounts) || "says_nothing";
-          if (relationCounts[relation] !== undefined) {
-            relationCounts[relation]++;
-          }
-          if (relation === "supports" || relation === "contradicts") {
-            claimEvidences.push({
-              id: `ev-${claim.id}-kb-${i}`,
-              claimId: claim.id,
-              sourceUrl: res.url,
-              sourceTitle: res.title,
-              publisher: "公式一次情報・ナレッジベース",
-              excerpt: relevantEvidence.slice(0, 350),
-              sourceType: mapDomainToSourceType(res.url),
-            });
-            if (!bestExplanation && evalResult.explanation) {
-              bestExplanation = evalResult.explanation;
-            }
-            if (relation === "contradicts" && !correctedClaim) {
-              correctedClaim = await deriveCorrectionFromText(content, claim, llm);
-            }
-          }
-        }
-      } catch (kbErr) {
-        console.warn("Secondary Knowledge Base fallback failed:", kbErr);
-      }
-    }
 
     // Synthesize final ClaimVerdict
     if (claimEvidences.length === 0) {
