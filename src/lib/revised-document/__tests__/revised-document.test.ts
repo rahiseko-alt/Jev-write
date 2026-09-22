@@ -1069,3 +1069,93 @@ describe("a refused correction", () => {
     expect(view.findings[0].adoptable).toBe(false);
   });
 });
+
+describe("refusing one correction among several", () => {
+  const original = "価格は10万円で、重さは500gである。";
+  const revised = "価格は12万円で、重さは600gである。";
+  const claims = [
+    claim("価格は10万円", "CONTRADICTED", "価格は12万円"),
+    claim("重さは500g", "CONTRADICTED", "重さは600g"),
+  ];
+
+  it("puts back only the words that correction replaced", () => {
+    const view = buildRevisedDocument({
+      originalText: original,
+      analysis: analysis(original, revised, claims),
+      adoption: { "fact-0": false },
+    });
+
+    expect(view.clipboardText).toBe("価格は10万円で、重さは600gである。");
+  });
+
+  it("leaves the correction accepted alongside it in place", () => {
+    const view = buildRevisedDocument({
+      originalText: original,
+      analysis: analysis(original, revised, claims),
+      adoption: { "fact-1": false },
+    });
+
+    expect(view.clipboardText).toBe("価格は12万円で、重さは500gである。");
+  });
+
+  it("restores the sentence when both are refused", () => {
+    const view = buildRevisedDocument({
+      originalText: original,
+      analysis: analysis(original, revised, claims),
+      adoption: { "fact-0": false, "fact-1": false },
+    });
+
+    expect(view.clipboardText).toBe(original);
+  });
+
+  it("restores the whole sentence when the AI-tell repair is refused", () => {
+    const before = "まとめると、価格は10万円である。";
+    const after = "価格は12万円である。";
+
+    const view = buildRevisedDocument({
+      originalText: before,
+      analysis: analysis(before, after, [claim("価格は10万円", "CONTRADICTED", "価格は12万円")], [
+        styleIssue("まとめると、価格は10万円である。"),
+      ]),
+      adoption: { "style-0": false },
+    });
+
+    expect(view.clipboardText).toBe(before);
+  });
+
+  it("offers nothing to adopt on a claim it could not place", () => {
+    const view = buildRevisedDocument({
+      originalText: original,
+      analysis: analysis(original, revised, [
+        claim("この文章に存在しない主張", "CONTRADICTED", "訂正後の文言"),
+      ]),
+      adoption: {},
+    });
+
+    expect(view.findings[0].adoptable).toBe(false);
+  });
+
+  it("offers nothing to adopt when the correction reads the same as the original", () => {
+    const view = buildRevisedDocument({
+      originalText: original,
+      analysis: analysis(original, original, [claim("価格は10万円", "CONTRADICTED")]),
+      adoption: {},
+    });
+
+    expect(view.findings[0].adoptable).toBe(false);
+  });
+
+  it("shows an AI-tell's own rewrite rather than a stock phrase", () => {
+    const before = "まとめると、まとめると、こうなる。";
+    const after = "こうなる。";
+
+    const view = buildRevisedDocument({
+      originalText: before,
+      analysis: analysis(before, after, [], [styleIssue(before)]),
+      adoption: {},
+    });
+
+    expect(view.findings[0].originalText).toBe(before);
+    expect(view.findings[0].revisedText).toBe(after);
+  });
+});

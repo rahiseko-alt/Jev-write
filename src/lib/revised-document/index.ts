@@ -226,26 +226,28 @@ function factFinding(
   const shape = FINDING_KINDS[kind];
   const id = factFindingId(index);
   const firstEvidence = result.evidence?.[0];
+  const corrected = result.correctedClaim || text;
+  const at = sentenceIndexOf(sentences, text);
 
   return {
     id,
     type: "fact",
     title: compose(
       shape.heading,
-      kind === "corrected" ? changedWording(result.correctedClaim || text, text) || text : text
+      kind === "corrected" ? changedWording(corrected, text) || text : text
     ),
     categoryLabel: shape.label,
     kind,
     confidence: toPercent(result.confidence ?? shape.confidence),
     originalText: text,
-    revisedText: result.correctedClaim || text,
+    revisedText: corrected,
     sourceTitle: firstEvidence?.sourceTitle || "",
     sourceUrl: firstEvidence?.sourceUrl || "",
     explanation: result.reason || shape.explanation,
-    lineIndex: sentenceIndexOf(sentences, text),
+    lineIndex: at,
     adopted: isAdopted(adoption, id),
     markKind: shape.markKind,
-    adoptable: kind === "corrected",
+    adoptable: kind === "corrected" && at >= 0 && corrected !== text,
   };
 }
 
@@ -253,10 +255,14 @@ function styleFinding(
   styleIssue: StyleIssue,
   index: number,
   sentences: string[],
+  revised: string[],
   adoption: Record<string, boolean>
 ): Finding {
   const id = styleFindingId(index);
   const shape = FINDING_KINDS["ai-tell"];
+  const at = sentenceIndexOf(sentences, styleIssue.targetText ?? "");
+  const before = at >= 0 ? sentences[at] : styleIssue.targetText || "";
+  const after = at >= 0 ? revised[at] ?? before : before;
 
   return {
     id,
@@ -265,21 +271,22 @@ function styleFinding(
     categoryLabel: shape.label,
     kind: "ai-tell",
     confidence: toPercent(styleIssue.confidence || shape.confidence),
-    originalText: styleIssue.targetText || "",
-    revisedText: "自然な散文へリライト",
+    originalText: before,
+    revisedText: after,
     sourceTitle: "",
     sourceUrl: "",
     explanation: styleIssue.repairInstruction || shape.explanation,
-    lineIndex: sentenceIndexOf(sentences, styleIssue.targetText ?? ""),
+    lineIndex: at,
     adopted: isAdopted(adoption, id),
     markKind: isRaised(styleIssue) ? shape.markKind : null,
-    adoptable: isRaised(styleIssue),
+    adoptable: isRaised(styleIssue) && at >= 0 && after !== before,
   };
 }
 
 function buildFindings(
   analysis: AnalysisResult,
   sentences: string[],
+  revised: string[],
   adoption: Record<string, boolean>
 ): Finding[] {
   return [
@@ -287,9 +294,39 @@ function buildFindings(
       factFinding(result, index, sentences, adoption)
     ),
     ...analysis.styleIssues.map((styleIssue, index) =>
-      styleFinding(styleIssue, index, sentences, adoption)
+      styleFinding(styleIssue, index, sentences, revised, adoption)
     ),
   ];
+}
+
+/**
+ * The sentence as it stands once the reader has had their say. Refusing one
+ * correction puts back the words it replaced — and only those, so another
+ * correction accepted in the same sentence survives it. An AI-tell covers the
+ * whole sentence, so refusing that one restores all of it.
+ */
+function resolveSentence(
+  original: string,
+  revised: string,
+  findings: Finding[],
+  sentenceIndex: number
+): string {
+  const refused = findings.filter(
+    (finding) => finding.lineIndex === sentenceIndex && !finding.adopted
+  );
+
+  if (refused.length === 0) return revised;
+  if (refused.some((finding) => finding.type === "style")) return original;
+
+  let text = revised;
+  for (const finding of refused) {
+    const located = locateChange(text, finding.originalText, finding.revisedText);
+    if (!located) return original; // cannot put back only part of it
+    const restored = changedWording(finding.revisedText, finding.originalText);
+    text = text.slice(0, located[0]) + restored + text.slice(located[1]);
+  }
+
+  return text;
 }
 
 export function buildRevisedDocument(
@@ -300,13 +337,11 @@ export function buildRevisedDocument(
   const sourceParagraphs = splitParagraphs(originalText);
   const originalSentences = sourceParagraphs.flatMap((p) => p.sentences);
   const revisedSentences = splitRevised(analysis.revisedText ?? "");
-  const findings = buildFindings(analysis, originalSentences, adoption);
-
-  // A Finding the reader refused leaves its sentence as it was written.
-  const rejected = new Set(
-    findings
-      .filter((finding) => !finding.adopted && finding.lineIndex >= 0)
-      .map((finding) => finding.lineIndex)
+  const findings = buildFindings(
+    analysis,
+    originalSentences,
+    revisedSentences,
+    adoption
   );
 
   // The pipeline rewrites sentence for sentence, so position carries the
@@ -315,7 +350,12 @@ export function buildRevisedDocument(
   // is expected not to, and nothing here can detect it.
   const comparison: SentencePair[] = originalSentences.map((original, index) => ({
     original,
-    revised: rejected.has(index) ? original : revisedSentences[index] ?? original,
+    revised: resolveSentence(
+      original,
+      revisedSentences[index] ?? original,
+      findings,
+      index
+    ),
   }));
 
   let cursor = 0;
