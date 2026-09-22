@@ -45,14 +45,18 @@ export async function POST(request: NextRequest) {
         jobId: job.id,
         status: updatedJob?.status,
         result: updatedJob?.result,
+        error: updatedJob?.error,
         job: updatedJob,
       },
       { status: 201 }
     );
-  } catch (err) {
+  } catch (err: any) {
     console.error("Failed to process /api/analyze:", err);
     return NextResponse.json(
-      { error: "解析ジョブの実行に失敗しました。" },
+      {
+        error: "解析ジョブの実行に失敗しました。",
+        details: err?.message || String(err),
+      },
       { status: 500 }
     );
   }
