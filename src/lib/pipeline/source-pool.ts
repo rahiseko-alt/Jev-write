@@ -18,6 +18,12 @@ export interface SourcePool {
   addQuery(query: string): Promise<void>;
   /** The pages that mention this claim's subject, most on-point first. */
   candidatesFor(claim: Claim, limit: number): PooledSource[];
+  /**
+   * Every page in the pool, closest to the claim's own wording first. For a
+   * claim no page names by its subject: JEV decides what a page says about
+   * it, so it is never left with nothing to read (ADR-0007).
+   */
+  closestFor(claim: Claim, limit: number): PooledSource[];
   /** The queries that built this pool, in the order they were made. */
   queries(): string[];
   /** True when a search could not be made at all (ADR-0003, ADR-0006 layer 3). */
@@ -121,7 +127,34 @@ export function createSourcePool(deps: {
         .slice(0, limit)
         .map((scored) => scored.page);
     },
+    closestFor(claim, limit) {
+      const wanted = pairsOf(`${claim.originalText}${claim.normalizedText}`);
+      return [...pages.values()]
+        .map((page, order) => ({ page, order, score: sharedPairs(wanted, page) }))
+        .sort((a, b) => b.score - a.score || a.order - b.order)
+        .slice(0, limit)
+        .map((scored) => scored.page);
+    },
   };
+}
+
+/**
+ * Two-character runs of a text. Japanese has no spaces to split on, and the
+ * subject a claim is filed under can come back in another language, so the
+ * claim's own wording is compared a pair of characters at a time.
+ */
+function pairsOf(text: string): Set<string> {
+  const compact = text.replace(/\s+/g, "");
+  const pairs = new Set<string>();
+  for (let i = 0; i < compact.length - 1; i++) pairs.add(compact.slice(i, i + 2));
+  return pairs;
+}
+
+function sharedPairs(wanted: Set<string>, page: PooledSource): number {
+  const found = pairsOf(`${page.title}${page.text}`);
+  let shared = 0;
+  for (const pair of wanted) if (found.has(pair)) shared++;
+  return shared;
 }
 
 /**

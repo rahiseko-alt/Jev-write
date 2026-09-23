@@ -124,6 +124,7 @@ export class AnthropicLLMProvider implements LLMProvider {
       const systemPrompt = `You are an expert fact-checking claim extractor.
 Break down the provided text into atomic, objectively verifiable factual claims.
 Avoid opinions, impressions, rhetoric, and broad paragraphs. Focus strictly on atomic factual assertions.
+Write every field in the same language as the text. Never translate.
 
 Return ONLY a valid JSON object with this exact structure, nothing else:
 {
