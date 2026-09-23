@@ -413,7 +413,7 @@ async function verifyClaim(params: {
       readable.forEach((candidate, index) => {
         questions[`subject${index}`] = {
           type: "noul",
-          instructions: `sources[${index}] は、claim.text が述べている対象（組織・製品・出来事）について書かれた情報か。呼び方が短くても長くても、同じ対象を指していれば真。まったく別の組織や製品であれば偽。`,
+          instructions: `sources[${index}] は、claim.text の真偽を確かめる材料になりうるか。claim.text が述べている対象そのもの、その運営者、またはその下位のサービスや制度について書かれていれば真。略称・正式名称・下位の名称の違いは問わない。まったく別の組織・製品・出来事についての記述であれば偽。`,
         };
         questions[`relation${index}`] = {
           type: "choice",
@@ -449,8 +449,9 @@ async function verifyClaim(params: {
         const sameSubject =
           subjectAnswer && subjectAnswer.type === "noul" ? subjectAnswer.noul : 0;
 
-        // JEV decides whether the page is about the same thing. Below an even
-        // chance it is another subject, and its figures say nothing here.
+        // JEV decides whether the page can answer for this claim at all.
+        // Below an even chance it is about something else, and its figures
+        // say nothing here.
         if (sameSubject < SAME_SUBJECT_THRESHOLD) {
           trace.offSubject++;
           continue;

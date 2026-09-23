@@ -520,7 +520,7 @@ export default function HomePage() {
                             検索語: 「{currentFinding.evidenceTrace.query || "（なし）"}」
                           </p>
                           <p>
-                            候補 {currentFinding.evidenceTrace.found} 件 ／ 別の話題として除外{" "}
+                            候補 {currentFinding.evidenceTrace.found} 件 ／ 判断材料にならないと判定{" "}
                             {currentFinding.evidenceTrace.offSubject} 件 ／ 本文を読めず{" "}
                             {currentFinding.evidenceTrace.unreadable} 件 ／ 主張に触れていないと判定{" "}
                             {currentFinding.evidenceTrace.saidNothing} 件 ／ 根拠に採用{" "}
