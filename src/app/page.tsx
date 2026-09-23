@@ -513,6 +513,7 @@ export default function HomePage() {
                                   <li key={s.service} className="break-all">
                                     <span className="font-bold">{s.service}</span>
                                     ：{s.failureCount}件失敗
+                                    {!!s.retryCount && `（混雑による再試行 ${s.retryCount}回）`}
                                     {s.lastError && (
                                       <span className="block text-[11px] text-amber-800">{s.lastError}</span>
                                     )}

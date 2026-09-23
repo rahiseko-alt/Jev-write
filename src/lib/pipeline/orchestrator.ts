@@ -121,6 +121,7 @@ export async function runOrchestrator(
       service,
       failureCount: provider.failureCount ?? 0,
       lastError: provider.lastError,
+      retryCount: (provider as { retryCount?: number }).retryCount ?? 0,
     }));
 
     // Synthesize final result summary

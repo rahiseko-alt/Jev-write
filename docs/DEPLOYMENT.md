@@ -24,7 +24,7 @@ gcloud run deploy jev-write \
 
 1. GitHub リポジトリを Vercel にインポート
 2. Settings > Environment Variables で必要な環境変数（`OPENAI_API_KEY` 等）を設定
-3. `Deploy` をクリック（`vercel.json` により API 実行時間は最大 60 秒に自動設定されます）
+3. `Deploy` をクリック（`vercel.json` により API 実行時間は最大 300 秒に自動設定されます。300 秒には Vercel Pro 以上の契約が必要です）
 
 または CLI から：
 ```bash

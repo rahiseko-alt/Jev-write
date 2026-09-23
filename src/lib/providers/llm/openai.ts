@@ -1,21 +1,13 @@
 import { Claim, Importance } from "@/types";
 import { LLMProvider } from "./types";
-import { recordFailure } from "../diagnostics";
+import { recordFailure, recordRetry } from "../diagnostics";
+import { sendWithRetry } from "../retry";
 import {
   DOCUMENT_QUERY_SYSTEM_PROMPT,
   SEARCH_QUERY_SYSTEM_PROMPT,
   buildDocumentQueryUserPrompt,
   buildSearchQueryUserPrompt,
 } from "./search-queries";
-
-const DEFAULT_RETRY_MS = 1000;
-const MAX_RETRY_MS = 20000;
-
-function retryAfterMs(header?: string | null): number {
-  const seconds = Number(header);
-  if (!Number.isFinite(seconds) || seconds <= 0) return DEFAULT_RETRY_MS;
-  return Math.min(seconds * 1000, MAX_RETRY_MS);
-}
 
 export interface OpenAILLMOptions {
   apiKey?: string;
@@ -44,6 +36,8 @@ export class OpenAILLMProvider implements LLMProvider {
   /** What went wrong with the real service during this run, for the reader. */
   failureCount = 0;
   lastError?: string;
+  /** How many times a rate-limited OpenAI (429) was asked the same thing again. */
+  retryCount = 0;
 
   constructor(options: OpenAILLMOptions = {}) {
     this.apiKey = options.apiKey || process.env.OPENAI_API_KEY || "";
@@ -52,12 +46,9 @@ export class OpenAILLMProvider implements LLMProvider {
     this.baseUrl = (options.baseUrl || process.env.OPENAI_BASE_URL || "https://api.openai.com/v1").replace(/\/$/, "");
   }
 
-  /** Whether any call in this run was answered by the mock instead. */
-
   private async callChatCompletion(
     messages: Array<{ role: string; content: string }>,
-    jsonMode = false,
-    retryOn429 = true
+    jsonMode = false
   ): Promise<string> {
     if (!this.apiKey) {
       throw new Error("OpenAI API key is missing. Set OPENAI_API_KEY in environment or constructor.");
@@ -74,26 +65,24 @@ export class OpenAILLMProvider implements LLMProvider {
       body.response_format = { type: "json_object" };
     }
 
-    const response = await fetch(`${this.baseUrl}/chat/completions`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${this.apiKey}`,
-      },
-      body: JSON.stringify(body),
-    });
+    // A rate limit slows this request down: the same request goes to OpenAI
+    // again. It says nothing about the next one, and nothing about anyone
+    // else's. Still limited after the last try, the error below reports it.
+    const response = await sendWithRetry(
+      () =>
+        fetch(`${this.baseUrl}/chat/completions`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${this.apiKey}`,
+          },
+          body: JSON.stringify(body),
+        }),
+      { retryStatuses: [429], onRetry: () => recordRetry(this) }
+    );
 
     if (!response.ok) {
       const errorText = await response.text().catch(() => "");
-
-      // A rate limit slows this request down. It says nothing about the next
-      // one, and nothing about anyone else's.
-      if (response.status === 429 && retryOn429) {
-        const wait = retryAfterMs(response.headers?.get?.("retry-after"));
-        await new Promise((resolve) => setTimeout(resolve, wait));
-        return this.callChatCompletion(messages, jsonMode, false);
-      }
-
       throw new Error(`OpenAI API error (${response.status} ${response.statusText}): ${errorText}`);
     }
 

@@ -45,6 +45,7 @@ function mergeStatuses(results: AnalysisResult[]): ProviderStatus[] {
         continue;
       }
       seen.failureCount += status.failureCount;
+      seen.retryCount = (seen.retryCount ?? 0) + (status.retryCount ?? 0);
       seen.lastError = seen.lastError || status.lastError;
     }
   }

@@ -11,6 +11,8 @@ export type ProviderDiagnostics = {
   failureCount?: number;
   /** The first failure's message, with anything credential-shaped removed. */
   lastError?: string;
+  /** How many times a busy service (429/529) was asked the same thing again. */
+  retryCount?: number;
 };
 
 const MAX_ERROR_LENGTH = 200;
@@ -31,4 +33,9 @@ export function recordFailure(target: ProviderDiagnostics, err: unknown): void {
   if (!target.lastError) {
     target.lastError = describeFailure(err);
   }
+}
+
+/** Record that the same request was sent again to a busy service. */
+export function recordRetry(target: ProviderDiagnostics): void {
+  target.retryCount = (target.retryCount ?? 0) + 1;
 }
