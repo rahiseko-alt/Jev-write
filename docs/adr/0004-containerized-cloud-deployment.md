@@ -7,7 +7,7 @@ The user requested full cloud execution ("完全クラウド稼働"). The system
 We configured multi-target cloud deployment readiness:
 1. **Next.js Standalone Build**: Configured `output: 'standalone'` in `next.config.mjs` for minimal production image footprint (<150MB).
 2. **Multi-Stage Dockerfile**: Node 20 Alpine with unprivileged nextjs user, production optimization, and `/api/health` monitoring.
-3. **Platform Flexibility**: Supported Google Cloud Run / AWS / Railway / Render via Docker container, and Vercel via `vercel.json` (with `maxDuration: 60` for pipeline processing).
+3. **Platform Flexibility**: Supported Google Cloud Run / AWS / Railway / Render via Docker container, and Vercel via `vercel.json` (with `maxDuration: 300` for pipeline processing; requires Vercel Pro).
 
 ## Consequences
 - The application can be deployed to any major cloud provider with a single command (`gcloud run deploy`, `railway up`, or `vercel`).

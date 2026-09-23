@@ -12,4 +12,6 @@ export interface LLMProvider {
   failureCount?: number;
   /** The first failure's message, with anything credential-shaped removed. */
   lastError?: string;
+  /** How many times a busy service (429/529) was asked the same thing again. */
+  retryCount?: number;
 }

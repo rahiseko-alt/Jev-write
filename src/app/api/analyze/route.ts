@@ -2,8 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { jobStore } from "@/lib/job-store";
 import { runAnalysis } from "@/lib/orchestrator";
 
-// Allow serverless execution up to 60 seconds
-export const maxDuration = 60;
+// Allow serverless execution up to 300 seconds (Vercel Pro)
+export const maxDuration = 300;
 export const dynamic = "force-dynamic";
 
 export async function POST(request: NextRequest) {

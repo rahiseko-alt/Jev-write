@@ -1,6 +1,7 @@
 import { Claim, Importance } from "@/types";
 import { LLMProvider } from "./types";
-import { recordFailure } from "../diagnostics";
+import { recordFailure, recordRetry } from "../diagnostics";
+import { sendWithRetry } from "../retry";
 import {
   DOCUMENT_QUERY_SYSTEM_PROMPT,
   SEARCH_QUERY_SYSTEM_PROMPT,
@@ -23,8 +24,8 @@ export class AnthropicLLMProvider implements LLMProvider {
   /** What went wrong with the real service during this run, for the reader. */
   failureCount = 0;
   lastError?: string;
-
-  /** Whether any call in this run was answered by the mock instead. */
+  /** How many times a busy Anthropic (429/529) was asked the same thing again. */
+  retryCount = 0;
 
   constructor(options: AnthropicLLMOptions = {}) {
     this.apiKey =
@@ -62,15 +63,22 @@ export class AnthropicLLMProvider implements LLMProvider {
       messages: [{ role: "user", content: userPrompt }],
     };
 
-    const response = await fetch(`${this.baseUrl}/messages`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": this.apiKey,
-        "anthropic-version": "2023-06-01",
-      },
-      body: JSON.stringify(body),
-    });
+    // 429 (rate_limit_error) and 529 (overloaded_error) mean "busy", not
+    // "wrong": the same request goes to Anthropic again. Still busy after the
+    // last try, the error below reports it as before.
+    const response = await sendWithRetry(
+      () =>
+        fetch(`${this.baseUrl}/messages`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "x-api-key": this.apiKey,
+            "anthropic-version": "2023-06-01",
+          },
+          body: JSON.stringify(body),
+        }),
+      { retryStatuses: [429, 529], onRetry: () => recordRetry(this) }
+    );
 
     if (!response.ok) {
       const errorText = await response.text().catch(() => "");
