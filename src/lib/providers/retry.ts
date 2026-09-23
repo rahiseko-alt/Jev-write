@@ -1,3 +1,5 @@
+import { pause, stoppedError } from "./call-limit";
+
 /**
  * Asking the same service the same thing again, after it said "not now".
  *
@@ -7,6 +9,9 @@
  * after the wait it asked for. If it is still busy after the last try, the
  * final response is handed back untouched and the caller reports it as the
  * failure it is.
+ *
+ * The retries stay within the call's time (ADR-0021): a wait the time runs
+ * out in ends there, and nothing is sent after it.
  */
 
 /** Waits before each retry when the service names none: 2s, 4s, 8s. */
@@ -37,8 +42,13 @@ type RetryableResponse = {
 export interface RetryOptions {
   /** Statuses that mean "busy, ask again". */
   retryStatuses: number[];
-  /** Called before each wait, so the run can say it retried. */
+  /** Called as the same request is sent again, so the run can say it retried. */
   onRetry?: (status: number, waitMs: number, attempt: number) => void;
+  /**
+   * Aborted when the call's time has run out (ADR-0021). A wait ends there
+   * and nothing more is sent: the call throws what the signal was aborted with.
+   */
+  signal?: AbortSignal;
 }
 
 /**
@@ -58,8 +68,9 @@ export async function sendWithRetry<R extends RetryableResponse>(
     const wait =
       parseRetryAfter(response.headers?.get?.("retry-after")) ??
       RETRY_BACKOFF_MS[attempt - 1];
+    await pause(wait, options.signal);
+    if (options.signal?.aborted) throw stoppedError(options.signal);
     options.onRetry?.(response.status, wait, attempt);
-    await new Promise((resolve) => setTimeout(resolve, wait));
     response = await send();
   }
   return response;

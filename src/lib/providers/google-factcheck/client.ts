@@ -5,6 +5,7 @@ import {
   GoogleFactCheckOptions,
 } from "./types";
 import { recordFailure } from "../diagnostics";
+import { CallLimit, attemptSignal, stoppedByCaller } from "../call-limit";
 
 /**
  * The Google Fact Check Tools adapter.
@@ -31,7 +32,11 @@ export class HTTPGoogleFactCheckClient implements GoogleFactCheckClient {
     this.timeoutMs = options.timeoutMs || 10000;
   }
 
-  async searchClaims(query: string, languageCode?: string): Promise<FactCheckSearchResult> {
+  async searchClaims(
+    query: string,
+    languageCode?: string,
+    limit?: CallLimit
+  ): Promise<FactCheckSearchResult> {
     if (!this.apiKey) {
       const missing = new Error(
         "Google Fact Check API key is not configured (GOOGLE_FACTCHECK_API_KEY)."
@@ -51,8 +56,8 @@ export class HTTPGoogleFactCheckClient implements GoogleFactCheckClient {
     url.searchParams.set("languageCode", lang);
     url.searchParams.set("key", this.apiKey);
 
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), this.timeoutMs);
+    // Its own time limit, or the fact-check stage's cut-off, whichever comes first (ADR-0021).
+    const attempt = attemptSignal(this.timeoutMs, limit?.signal);
 
     try {
       const response = await fetch(url.toString(), {
@@ -60,7 +65,7 @@ export class HTTPGoogleFactCheckClient implements GoogleFactCheckClient {
         headers: {
           Accept: "application/json",
         },
-        signal: controller.signal,
+        signal: attempt.signal,
       });
 
       if (!response.ok) {
@@ -82,15 +87,20 @@ export class HTTPGoogleFactCheckClient implements GoogleFactCheckClient {
         nextPageToken: data.nextPageToken,
       };
     } catch (err) {
-      recordFailure(this, err);
+      // Stopped at the stage's cut-off, the lookup did not fail (ADR-0021).
+      if (!stoppedByCaller(limit)) recordFailure(this, err);
       throw err;
     } finally {
-      clearTimeout(timer);
+      attempt.release();
     }
   }
 
-  async search(query: string, languageCode?: string): Promise<GoogleFactCheckClaim[]> {
-    const res = await this.searchClaims(query, languageCode);
+  async search(
+    query: string,
+    languageCode?: string,
+    limit?: CallLimit
+  ): Promise<GoogleFactCheckClaim[]> {
+    const res = await this.searchClaims(query, languageCode, limit);
     return res.claims || [];
   }
 }

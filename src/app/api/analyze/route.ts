@@ -7,6 +7,9 @@ export const maxDuration = 300;
 export const dynamic = "force-dynamic";
 
 export async function POST(request: NextRequest) {
+  // The run's clock starts as the request comes in: its deadline, safely
+  // before the 300 s above, is counted from here (ADR-0021).
+  const startedAt = Date.now();
   try {
     const body = await request.json();
     const { text } = body;
@@ -36,7 +39,7 @@ export async function POST(request: NextRequest) {
     const job = jobStore.createJob(trimmedText);
 
     // Await analysis execution so Vercel Serverless doesn't freeze before completion!
-    await runAnalysis(job.id, trimmedText);
+    await runAnalysis(job.id, trimmedText, { startedAt });
 
     const updatedJob = jobStore.getJob(job.id);
 

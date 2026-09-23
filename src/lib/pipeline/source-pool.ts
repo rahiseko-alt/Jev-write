@@ -1,4 +1,10 @@
-import { FetchProvider, SearchProvider, SearchResultItem } from "@/lib/providers";
+import {
+  FetchProvider,
+  SearchProvider,
+  SearchResponse,
+  SearchResultItem,
+} from "@/lib/providers";
+import type { TimeBudget } from "./time-budget";
 
 /** A page found once and then used by every claim it can speak to. */
 export interface PooledSource {
@@ -44,13 +50,19 @@ export interface SourcePool {
  * the same questions over and over: one 630-character block spent 34 searches
  * and fetched the same pages a dozen times. The pool searches the article's
  * topics once, reads each page once, and hands the same pages to every claim.
+ *
+ * With a time budget (ADR-0021), searches and page fetches keep to their
+ * stages' cut-offs: a search not started by then is not made, and a page
+ * not fetched by then is read as a page that could not be fetched (the
+ * search's own excerpt). The budget counts both as 時間切れ.
  */
 export function createSourcePool(deps: {
   search: SearchProvider;
   fetchProvider: FetchProvider;
   resultsPerQuery: number;
+  budget?: TimeBudget;
 }): SourcePool {
-  const { search, fetchProvider, resultsPerQuery } = deps;
+  const { search, fetchProvider, resultsPerQuery, budget } = deps;
 
   const asked: string[] = [];
   const pages = new Map<string, PooledSource>();
@@ -76,10 +88,18 @@ export function createSourcePool(deps: {
 
     let fetched: any = { url: result.url, title: result.title };
     try {
-      fetched =
+      const fetchPage = (signal?: AbortSignal) =>
         typeof fetchProvider.fetchUrl === "function"
-          ? await fetchProvider.fetchUrl(result.url)
-          : await (fetchProvider as any).fetch(result.url);
+          ? fetchProvider.fetchUrl(result.url, { signal })
+          : (fetchProvider as any).fetch(result.url, { signal });
+      if (!budget) {
+        fetched = await fetchPage();
+      } else {
+        // Not fetched by the cut-off (時間切れ, counted by the budget): read
+        // like a page that could not be fetched.
+        const outcome = await budget.within("pageFetch", fetchPage);
+        if (outcome.status === "done") fetched = outcome.value;
+      }
     } catch (err) {
       console.warn(`Fetch failed for ${result.url}:`, err);
     }
@@ -108,7 +128,18 @@ export function createSourcePool(deps: {
     await Promise.all(
       fresh.map(async (query) => {
         try {
-          const response = await search.search(query, { maxResults: resultsPerQuery });
+          const searchFor = (signal?: AbortSignal) =>
+            search.search(query, { maxResults: resultsPerQuery, signal });
+          let response: SearchResponse;
+          if (!budget) {
+            response = await searchFor();
+          } else {
+            // Not searched by the cut-off (時間切れ, counted by the budget):
+            // the query finds nothing. That is not a search that failed.
+            const outcome = await budget.within("search", searchFor);
+            if (outcome.status !== "done") return;
+            response = outcome.value;
+          }
           // Kept per search, in the search's own order: which search came
           // back first must not decide where a page stands.
           resultsOf.set(

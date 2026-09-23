@@ -1,4 +1,5 @@
 import { RatingVerdict } from "../google-factcheck/types";
+import type { CallLimit } from "../call-limit";
 
 export type JEVChoice =
   | "same"
@@ -102,14 +103,21 @@ export interface JEVClient {
    * Questions are answered in parallel and named, so asking more of them
    * costs little beyond their tokens. Nothing here reduces the answers: the
    * caller receives the probabilities and confidence as they came.
+   *
+   * `limit` carries the signal of the stage's cut-off (ADR-0021): the
+   * request ends there at the latest, and is then not counted as JEV failing.
    */
   ask?(
     state: unknown,
-    questions: Record<string, JEVQuestion>
+    questions: Record<string, JEVQuestion>,
+    limit?: CallLimit
   ): Promise<Record<string, JEVAnswer>>;
   /** How many calls to the real service failed during this run. */
   failureCount?: number;
   /** The first failure's message, with anything credential-shaped removed. */
   lastError?: string;
-  evaluateAtomicJudgment(req: JEVAtomicJudgmentRequest): Promise<JEVAtomicJudgmentResult>;
+  evaluateAtomicJudgment(
+    req: JEVAtomicJudgmentRequest,
+    limit?: CallLimit
+  ): Promise<JEVAtomicJudgmentResult>;
 }

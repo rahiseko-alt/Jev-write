@@ -2,6 +2,7 @@ import { Claim, ExtractionTrace } from "@/types";
 import { LLMProvider } from "./types";
 import { recordFailure, recordRetry } from "../diagnostics";
 import { sendWithRetry } from "../retry";
+import { CallLimit, stoppedByCaller } from "../call-limit";
 import { extractClaimsFrom } from "./claim-extraction";
 import {
   CLAIM_QUERY_SYSTEM_PROMPT,
@@ -55,7 +56,8 @@ export class AnthropicLLMProvider implements LLMProvider {
 
   private async callMessages(
     systemPrompt: string,
-    userPrompt: string
+    userPrompt: string,
+    limit: CallLimit = {}
   ): Promise<string> {
     if (!this.apiKey) {
       throw new Error(
@@ -72,7 +74,9 @@ export class AnthropicLLMProvider implements LLMProvider {
 
     // 429 (rate_limit_error) and 529 (overloaded_error) mean "busy", not
     // "wrong": the same request goes to Anthropic again. Still busy after the
-    // last try, the error below reports it as before.
+    // last try, the error below reports it as before. The whole of it, the
+    // retries and their waits included, ends when the stage's time does
+    // (ADR-0021).
     const response = await sendWithRetry(
       () =>
         fetch(`${this.baseUrl}/messages`, {
@@ -83,8 +87,9 @@ export class AnthropicLLMProvider implements LLMProvider {
             "anthropic-version": "2023-06-01",
           },
           body: JSON.stringify(body),
+          signal: limit.signal,
         }),
-      { retryStatuses: [429, 529], onRetry: () => recordRetry(this) }
+      { retryStatuses: [429, 529], onRetry: () => recordRetry(this), signal: limit.signal }
     );
 
     if (!response.ok) {
@@ -133,43 +138,51 @@ export class AnthropicLLMProvider implements LLMProvider {
     return trimmed;
   }
 
-  async extractClaims(text: string): Promise<Claim[]> {
+  // A call stopped because its stage's time ran out is not Anthropic
+  // failing (ADR-0021): it is recorded as 時間切れ by the run, not here.
+
+  async extractClaims(text: string, limit?: CallLimit): Promise<Claim[]> {
     this.lastExtraction = undefined;
     try {
       const { claims, trace } = await extractClaimsFrom(text, async (system, user) =>
-        this.parseJson(await this.callMessages(system, user), "主張の抽出")
+        this.parseJson(await this.callMessages(system, user, limit), "主張の抽出")
       );
       this.lastExtraction = trace;
       return claims;
     } catch (err) {
-      recordFailure(this, err);
+      if (!stoppedByCaller(limit)) recordFailure(this, err);
       throw err;
     }
   }
 
-  async generateClaimQueries(claims: Claim[]): Promise<Map<string, ClaimQueryPlan>> {
+  async generateClaimQueries(
+    claims: Claim[],
+    limit?: CallLimit
+  ): Promise<Map<string, ClaimQueryPlan>> {
     if (claims.length === 0) return new Map();
     try {
       const rawContent = await this.callMessages(
         CLAIM_QUERY_SYSTEM_PROMPT,
-        buildClaimQueryUserPrompt(claims)
+        buildClaimQueryUserPrompt(claims),
+        limit
       );
       return readClaimQueries(this.parseJson(rawContent, "検索の問いの作成"), claims);
     } catch (err) {
-      recordFailure(this, err);
+      if (!stoppedByCaller(limit)) recordFailure(this, err);
       throw err;
     }
   }
 
-  async generateDocumentQueries(text: string): Promise<DocumentQueryPlan[]> {
+  async generateDocumentQueries(text: string, limit?: CallLimit): Promise<DocumentQueryPlan[]> {
     try {
       const rawContent = await this.callMessages(
         DOCUMENT_QUERY_SYSTEM_PROMPT,
-        buildDocumentQueryUserPrompt(text)
+        buildDocumentQueryUserPrompt(text),
+        limit
       );
       return readDocumentQueries(this.parseJson(rawContent, "資料を集める検索クエリの作成"));
     } catch (err) {
-      recordFailure(this, err);
+      if (!stoppedByCaller(limit)) recordFailure(this, err);
       throw err;
     }
   }

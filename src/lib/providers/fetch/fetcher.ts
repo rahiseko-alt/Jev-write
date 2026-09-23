@@ -1,5 +1,6 @@
 import { FetchedPage, FetchOptions, FetchProvider } from "./types";
 import { recordFailure } from "../diagnostics";
+import { attemptSignal, stoppedByCaller } from "../call-limit";
 
 export interface HTTPFetchProviderOptions {
   defaultTimeoutMs?: number;
@@ -27,8 +28,8 @@ export class HTTPFetchProvider implements FetchProvider {
     const timeout = options.timeoutMs || this.defaultTimeoutMs;
     const maxLen = options.maxContentLength || this.maxContentLength;
 
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeout);
+    // Its own time limit, or the page-fetch stage's cut-off, whichever comes first (ADR-0021).
+    const attempt = attemptSignal(timeout, options.signal);
 
     try {
       const response = await fetch(url, {
@@ -39,7 +40,7 @@ export class HTTPFetchProvider implements FetchProvider {
           "Accept-Language": "ja,en-US;q=0.9,en;q=0.8",
           ...options.headers,
         },
-        signal: controller.signal,
+        signal: attempt.signal,
       });
 
       const statusCode = response.status;
@@ -70,6 +71,8 @@ export class HTTPFetchProvider implements FetchProvider {
         statusCode,
       };
     } catch (err) {
+      // The caller's time ran out: not a page that failed (ADR-0021).
+      if (stoppedByCaller(options)) throw err;
       console.warn(`HTTPFetchProvider fetch failed with error for ${url}:`, err);
       recordFailure(this, err);
       return {
@@ -80,7 +83,7 @@ export class HTTPFetchProvider implements FetchProvider {
         statusCode: 500,
       };
     } finally {
-      clearTimeout(timer);
+      attempt.release();
     }
   }
 

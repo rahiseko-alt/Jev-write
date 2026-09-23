@@ -1,3 +1,5 @@
+import type { CallLimit } from "../call-limit";
+
 export interface ClaimReviewPublisher {
   name?: string;
   site?: string;
@@ -33,11 +35,19 @@ export interface GoogleFactCheckOptions {
   timeoutMs?: number;
 }
 
+/**
+ * `limit` carries the signal of the fact-check stage's cut-off (ADR-0021):
+ * the lookup ends there at the latest, and is then not counted as failing.
+ */
 export interface GoogleFactCheckClient {
   /** How many calls to the real service failed during this run. */
   failureCount?: number;
   /** The first failure's message, with anything credential-shaped removed. */
   lastError?: string;
-  searchClaims(query: string, languageCode?: string): Promise<FactCheckSearchResult>;
-  search(query: string, languageCode?: string): Promise<GoogleFactCheckClaim[]>;
+  searchClaims(
+    query: string,
+    languageCode?: string,
+    limit?: CallLimit
+  ): Promise<FactCheckSearchResult>;
+  search(query: string, languageCode?: string, limit?: CallLimit): Promise<GoogleFactCheckClaim[]>;
 }

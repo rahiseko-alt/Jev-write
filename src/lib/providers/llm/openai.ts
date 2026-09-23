@@ -2,6 +2,7 @@ import { Claim, ExtractionTrace } from "@/types";
 import { LLMProvider } from "./types";
 import { recordFailure, recordRetry } from "../diagnostics";
 import { sendWithRetry } from "../retry";
+import { CallLimit, stoppedByCaller } from "../call-limit";
 import { extractClaimsFrom } from "./claim-extraction";
 import {
   CLAIM_QUERY_SYSTEM_PROMPT,
@@ -55,7 +56,8 @@ export class OpenAILLMProvider implements LLMProvider {
 
   private async callChatCompletion(
     messages: Array<{ role: string; content: string }>,
-    jsonMode = false
+    jsonMode = false,
+    limit: CallLimit = {}
   ): Promise<string> {
     if (!this.apiKey) {
       throw new Error("OpenAI API key is missing. Set OPENAI_API_KEY in environment or constructor.");
@@ -75,6 +77,7 @@ export class OpenAILLMProvider implements LLMProvider {
     // A rate limit slows this request down: the same request goes to OpenAI
     // again. It says nothing about the next one, and nothing about anyone
     // else's. Still limited after the last try, the error below reports it.
+    // All of it ends when the stage's time does (ADR-0021).
     const response = await sendWithRetry(
       () =>
         fetch(`${this.baseUrl}/chat/completions`, {
@@ -84,8 +87,9 @@ export class OpenAILLMProvider implements LLMProvider {
             Authorization: `Bearer ${this.apiKey}`,
           },
           body: JSON.stringify(body),
+          signal: limit.signal,
         }),
-      { retryStatuses: [429], onRetry: () => recordRetry(this) }
+      { retryStatuses: [429], onRetry: () => recordRetry(this), signal: limit.signal }
     );
 
     if (!response.ok) {
@@ -105,7 +109,10 @@ export class OpenAILLMProvider implements LLMProvider {
     return data.choices?.[0]?.message?.content || "";
   }
 
-  async extractClaims(text: string): Promise<Claim[]> {
+  // A call stopped because its stage's time ran out is not OpenAI failing
+  // (ADR-0021): it is recorded as 時間切れ by the run, not here.
+
+  async extractClaims(text: string, limit?: CallLimit): Promise<Claim[]> {
     this.lastExtraction = undefined;
     try {
       const { claims, trace } = await extractClaimsFrom(text, async (system, user) =>
@@ -115,7 +122,8 @@ export class OpenAILLMProvider implements LLMProvider {
               { role: "system", content: system },
               { role: "user", content: user },
             ],
-            true
+            true,
+            limit
           ),
           "主張の抽出"
         )
@@ -123,12 +131,15 @@ export class OpenAILLMProvider implements LLMProvider {
       this.lastExtraction = trace;
       return claims;
     } catch (err) {
-      recordFailure(this, err);
+      if (!stoppedByCaller(limit)) recordFailure(this, err);
       throw err;
     }
   }
 
-  async generateClaimQueries(claims: Claim[]): Promise<Map<string, ClaimQueryPlan>> {
+  async generateClaimQueries(
+    claims: Claim[],
+    limit?: CallLimit
+  ): Promise<Map<string, ClaimQueryPlan>> {
     if (claims.length === 0) return new Map();
     try {
       const rawContent = await this.callChatCompletion(
@@ -136,27 +147,29 @@ export class OpenAILLMProvider implements LLMProvider {
           { role: "system", content: CLAIM_QUERY_SYSTEM_PROMPT },
           { role: "user", content: buildClaimQueryUserPrompt(claims) },
         ],
-        true
+        true,
+        limit
       );
       return readClaimQueries(parseJson(rawContent, "検索の問いの作成"), claims);
     } catch (err) {
-      recordFailure(this, err);
+      if (!stoppedByCaller(limit)) recordFailure(this, err);
       throw err;
     }
   }
 
-  async generateDocumentQueries(text: string): Promise<DocumentQueryPlan[]> {
+  async generateDocumentQueries(text: string, limit?: CallLimit): Promise<DocumentQueryPlan[]> {
     try {
       const rawContent = await this.callChatCompletion(
         [
           { role: "system", content: DOCUMENT_QUERY_SYSTEM_PROMPT },
           { role: "user", content: buildDocumentQueryUserPrompt(text) },
         ],
-        true
+        true,
+        limit
       );
       return readDocumentQueries(parseJson(rawContent, "資料を集める検索クエリの作成"));
     } catch (err) {
-      recordFailure(this, err);
+      if (!stoppedByCaller(limit)) recordFailure(this, err);
       throw err;
     }
   }
