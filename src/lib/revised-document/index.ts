@@ -102,6 +102,33 @@ export type Finding = {
   }>;
 };
 
+/**
+ * The number that decides where a reader should look first: how well the
+ * sentence is held up, on JEV's scale of 0 to 1.
+ *
+ * This tool does not rule on true and false. It shows how well each sentence
+ * is backed and lets the reader decide, so the list is ordered by that number
+ * and the weakest comes first. A Finding JEV gave no number for is weakest of
+ * all: nothing was measured, so nobody has looked at it yet.
+ */
+export function attentionOf(finding: Finding): number | null {
+  if (finding.consistency) return finding.consistency.probabilityTrue;
+  if (finding.confidence !== null) return finding.confidence / 100;
+  return null;
+}
+
+/** The Findings in the order a reader should work through them. */
+export function sortByAttention(findings: Finding[]): Finding[] {
+  return [...findings].sort((a, b) => {
+    const left = attentionOf(a);
+    const right = attentionOf(b);
+    if (left === null && right === null) return 0;
+    if (left === null) return -1;
+    if (right === null) return 1;
+    return left - right;
+  });
+}
+
 /** Everything that follows from a Finding's kind, in one place. */
 const FINDING_KINDS: Record<
   FindingKind,

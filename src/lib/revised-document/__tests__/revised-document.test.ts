@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildRevisedDocument } from "@/lib/revised-document";
+import { buildRevisedDocument, sortByAttention } from "@/lib/revised-document";
 import { BAND_LABEL } from "@/lib/jev/bands";
 import type { AnalysisResult, ClaimResult, StyleIssue } from "@/types";
 
@@ -1235,5 +1235,37 @@ describe("数字を作らない", () => {
     expect(finding?.confidence).toBeNull();
     expect(finding?.band).toBeUndefined();
     expect(finding?.bandLabel).toBeUndefined();
+  });
+});
+
+describe("弱い順に並べる", () => {
+  it("数値の無いものを先頭に、その後は辻褄の低い順に並べる", () => {
+    const weak = claim("辻褄13%の文。", "INSUFFICIENT");
+    weak.confidence = 0.87;
+    weak.consistency = { probabilityTrue: 0.13, confidence: 0.87 };
+
+    const strong = claim("辻褄95%の文。", "SUPPORTED");
+    strong.confidence = 1;
+    strong.consistency = { probabilityTrue: 0.95, confidence: 0.95 };
+
+    const noNumber = claim("数値の無い文。", "INSUFFICIENT");
+    noNumber.confidence = undefined;
+
+    const doc = buildRevisedDocument({
+      analysis: analysis(
+        "辻褄13%の文。辻褄95%の文。数値の無い文。",
+        "辻褄13%の文。辻褄95%の文。数値の無い文。",
+        [strong, weak, noNumber]
+      ),
+      adoption: {},
+    });
+
+    const order = sortByAttention(doc.findings.filter((f) => f.type === "fact")).map(
+      (f) => f.originalText
+    );
+
+    expect(order[0]).toContain("数値の無い文");
+    expect(order[1]).toContain("辻褄13%");
+    expect(order[2]).toContain("辻褄95%");
   });
 });
