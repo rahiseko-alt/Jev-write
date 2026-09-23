@@ -408,9 +408,6 @@ export default function HomePage() {
                           : "JEVの数値なし"}
                       </span>
                     </div>
-                    <p className="text-[11px] text-slate-500 leading-snug">
-                      この数値が低いほど、人が確かめる値打ちがあります。低い順に並べています。
-                    </p>
                     {currentFinding.lookupFailed && (
                       <p className="text-[11px] font-bold text-red-600 leading-snug">
                         ウェブ検索ができませんでした。この数値は記事の中だけを見たものです。
@@ -431,8 +428,8 @@ export default function HomePage() {
                     </div>
                   )}
 
-                  {/* Header Title & Category Badge */}
-                  <div className="flex items-start justify-between gap-2">
+                  {/* Header Title */}
+                  <div className="flex items-start gap-2">
                     <div className="flex items-center gap-2">
                       {currentFinding.kind === "corrected" ? (
                         <AlertCircle className="w-5 h-5 text-red-500 shrink-0" />
@@ -443,17 +440,6 @@ export default function HomePage() {
                       )}
                       <h3 className="font-bold text-slate-900 text-sm">{currentFinding.title}</h3>
                     </div>
-                    <span
-                      className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
-                        currentFinding.kind === "corrected"
-                          ? "bg-red-50 text-red-600"
-                          : currentFinding.kind === "ai-tell"
-                          ? "bg-purple-50 text-purple-600"
-                          : "bg-amber-50 text-amber-600"
-                      }`}
-                    >
-                      {currentFinding.categoryLabel}
-                    </span>
                   </div>
 
                   {/* Details Table */}
@@ -481,7 +467,7 @@ export default function HomePage() {
                     </div>
 
                     {/* JEV信頼度 */}
-                    <div className="py-1 border-b border-slate-50 space-y-1">
+                    <div className="py-1 border-b border-slate-50">
                       <div className="flex items-center justify-between">
                         <span className="text-slate-400 font-medium">信頼度</span>
                         <span className="flex items-center gap-2">
@@ -505,29 +491,6 @@ export default function HomePage() {
                           </span>
                         </span>
                       </div>
-                      <div className="w-full h-1.5 bg-slate-100 rounded-full overflow-hidden">
-                        <div
-                          className={`h-full ${
-                            currentFinding.kind === "corrected"
-                              ? "bg-red-500"
-                              : currentFinding.kind === "ai-tell"
-                              ? "bg-purple-500"
-                              : "bg-amber-500"
-                          }`}
-                          style={{ width: `${currentFinding.confidence ?? 0}%` }}
-                        />
-                      </div>
-                      {currentFinding.consistency && (
-                        <p className="text-[10px] text-slate-500 leading-tight pt-0.5">
-                          記事の中での筋の通り方（JEVの判定）: 成り立つ確率{" "}
-                          {Math.round(currentFinding.consistency.probabilityTrue * 100)}% ／ 確信度{" "}
-                          {Math.round(currentFinding.consistency.confidence * 100)}%
-                        </p>
-                      )}
-                      <p className="text-[10px] text-slate-400 leading-tight pt-0.5">
-                        数値はすべてJEVが返したものをそのまま表示しています。こちらで数字を作ることは
-                        しません。判定に数値が付かなかった場合は「数値なし」と出ます。
-                      </p>
                     </div>
 
                     {/* 原文 */}
@@ -535,7 +498,7 @@ export default function HomePage() {
                       <span className="text-slate-400 font-medium">
                         {isUnplaced(currentFinding) ? "主張の文面（本文の言葉とは異なります）" : "この文"}
                       </span>
-                      <div className="bg-red-50 text-red-900 border border-red-200 rounded-lg p-2 leading-relaxed">
+                      <div className="bg-slate-50 text-slate-800 border border-slate-200 rounded-lg p-2 leading-relaxed">
                         {currentFinding.sentenceBefore || currentFinding.originalText}
                       </div>
                     </div>
@@ -554,12 +517,6 @@ export default function HomePage() {
                         </a>
                       </div>
                     )}
-
-                    {/* 種別 */}
-                    <div className="flex items-center justify-between py-1 border-b border-slate-50">
-                      <span className="text-slate-400 font-medium">種別</span>
-                      <span className="text-slate-700 font-medium">{currentFinding.categoryLabel}</span>
-                    </div>
 
                     {/* 説明 */}
                     <div className="space-y-1">
@@ -608,21 +565,6 @@ export default function HomePage() {
                       </details>
                     )}
                   </div>
-
-                  {/* この道具は書き換えない。どう直すかは書き手が決める。 */}
-                  {currentFinding.kind === "unverified" ? (
-                    <div className="flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-900">
-                      <AlertTriangle className="w-4 h-4 shrink-0 text-amber-600 mt-0.5" />
-                      <span>
-                        裏付けが取れなかった箇所です。ご自身で一次情報をお確かめください。
-                      </span>
-                    </div>
-                  ) : currentFinding.kind === "confirmed" ? (
-                    <div className="flex items-start gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-xs text-emerald-900">
-                      <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-600 mt-0.5" />
-                      <span>集めた資料と一致していた箇所です。</span>
-                    </div>
-                  ) : null}
 
                 </div>
               ) : (
