@@ -99,6 +99,11 @@ export type Finding = {
    * that never searched reads like one that searched and found nothing.
    */
   lookupFailed?: boolean;
+  /**
+   * Search queries a person can run to check the claim themselves. Empty on a
+   * wording finding, which has nothing to look up.
+   */
+  checkQueries: string[];
   /** Every source JEV judged, with its answer and how sure it was. */
   evidence?: Array<{
     url: string;
@@ -332,6 +337,18 @@ function claimText(result: ClaimResult): string {
  * first: the normalised statement is a paraphrase and can share too few words
  * with the sentence to find it.
  */
+/**
+ * What the reader can search to check a claim. The queries written for a
+ * person come first; failing those, the query the check itself ran, which a
+ * result from before they existed still carries.
+ */
+function checkQueriesOf(result: ClaimResult): string[] {
+  const written = (result.claim.checkQueries ?? []).filter((query) => query.trim());
+  if (written.length > 0) return written;
+  const ran = result.evidenceTrace?.query?.trim();
+  return ran ? [ran] : [];
+}
+
 function placeOf(sentences: string[], result: ClaimResult): number {
   const quoted = sentenceIndexOf(sentences, result.claim.originalText);
   return quoted !== -1 ? quoted : sentenceIndexOf(sentences, claimText(result));
@@ -402,6 +419,7 @@ function factFinding(
     sentenceBefore: "",
     sentenceAfter: "",
     evidenceTrace: result.evidenceTrace,
+    checkQueries: checkQueriesOf(result),
     band,
     bandLabel: band === undefined ? undefined : BAND_LABEL[band],
     consistency: result.consistency,
@@ -447,6 +465,7 @@ function styleFinding(
     adoptable: isRaised(styleIssue) && at >= 0 && after !== before,
     sentenceBefore: "",
     sentenceAfter: "",
+    checkQueries: [],
   };
 }
 

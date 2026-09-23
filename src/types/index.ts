@@ -16,6 +16,12 @@ export type Claim = {
   entities?: string[];
   importance: Importance;
   factCheckRequired: boolean;
+  /**
+   * Search terms for a person to type into a search engine to check this
+   * claim against primary sources themselves. For people, not for the
+   * machine's own lookup.
+   */
+  checkQueries?: string[];
 };
 
 export type SourceType =

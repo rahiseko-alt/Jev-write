@@ -772,6 +772,34 @@ describe("書き換えない", () => {
   });
 });
 
+describe("ご自身で確かめるための検索語", () => {
+  it("人向けに書かれた検索語を出し、無ければ確認に使った検索語を出す", () => {
+    const original = "一文目。二文目。";
+    const written = claim("一文目。", "INSUFFICIENT");
+    written.claim.checkQueries = ['"景品表示法" 告示 site:caa.go.jp'];
+    const older = claim("二文目。", "INSUFFICIENT");
+    older.evidenceTrace = {
+      query: "二文目 公式",
+      found: 0,
+      offSubject: 0,
+      unreadable: 0,
+      saidNothing: 0,
+      weak: 0,
+      used: 0,
+    };
+
+    const view = buildRevisedDocument({
+      analysis: analysis(original, original, [written, older], [styleIssue("一文目")]),
+      adoption: {},
+    });
+
+    const byText = (text: string) => view.findings.find((f) => f.originalText === text);
+    expect(byText("一文目。")?.checkQueries).toEqual(['"景品表示法" 告示 site:caa.go.jp']);
+    expect(byText("二文目。")?.checkQueries).toEqual(["二文目 公式"]);
+    expect(view.findings.find((f) => f.type === "style")?.checkQueries).toEqual([]);
+  });
+});
+
 describe("本文のどこにも結びつかない指摘", () => {
   it("場所不明として、数値に関わらず一覧の先頭に出す", () => {
     const original = "名古屋駅から徒歩8分。";

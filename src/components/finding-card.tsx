@@ -1,5 +1,5 @@
-import { ExternalLink, HelpCircle } from "lucide-react";
-import { Finding, FindingKind, attentionOf, isUnplaced } from "@/lib/revised-document";
+import { ExternalLink, HelpCircle, Search } from "lucide-react";
+import { Finding, FindingKind, isUnplaced } from "@/lib/revised-document";
 
 const KIND_LABEL: Record<FindingKind, { text: string; className: string }> = {
   corrected: { text: "資料と食い違い", className: "bg-red-100 text-red-700" },
@@ -13,18 +13,16 @@ const RELATION_LABEL = {
   supports: "裏付け",
 } as const;
 
+function searchUrl(query: string): string {
+  return `https://www.google.com/search?q=${encodeURIComponent(query)}`;
+}
+
 /**
- * One Finding, sized for a small popover. Shows a single number (ADR-0008):
- * no band label or second confidence row beside it.
+ * One Finding, sized for a popover. Only what the reader acts on next: the
+ * sentence is already marked and the number already sits on the arrow, so
+ * neither is repeated here. What is left is where to go to check it.
  */
 export function FindingCard({ finding }: { finding: Finding }): JSX.Element {
-  const attention = attentionOf(finding);
-  const percent = attention === null ? null : Math.round(attention * 100);
-  const meaning = finding.consistency
-    ? "記事と資料に照らして辻褄が合う確率"
-    : finding.confidence !== null
-    ? "JEVの確信度"
-    : "JEVの数値なし";
   const unplaced = isUnplaced(finding);
   const kind = KIND_LABEL[finding.kind];
 
@@ -34,51 +32,35 @@ export function FindingCard({ finding }: { finding: Finding }): JSX.Element {
       : finding.sourceUrl
       ? [{ url: finding.sourceUrl, title: finding.sourceTitle }]
       : [];
-  const trace = finding.evidenceTrace;
 
   return (
     <div className="space-y-2.5 text-xs text-slate-700">
-      <div className="space-y-1">
-        <div className="flex items-end gap-2">
-          <span className="text-3xl font-bold tabular-nums text-slate-900 leading-none">
-            {percent ?? "—"}
-            {percent !== null && <span className="text-base font-bold">%</span>}
-          </span>
-          <span className="text-[11px] text-slate-500 leading-tight pb-0.5">{meaning}</span>
-        </div>
-        {finding.lookupFailed && (
-          <p className="text-[11px] font-bold text-red-600 leading-snug">
-            ウェブ検索ができませんでした。この数値は記事の中だけを見たものです。
-          </p>
-        )}
-      </div>
-
       <span className={`inline-block font-bold px-2 py-0.5 rounded ${kind.className}`}>
         {kind.text}
       </span>
 
+      {finding.lookupFailed && (
+        <p className="text-[11px] font-bold text-red-600 leading-snug">
+          ウェブ検索ができませんでした。数値は記事の中だけを見たものです。
+        </p>
+      )}
+
+      {/* With no mark in the document, the claim's own wording is all there is to go on. */}
       {unplaced && (
-        <div className="flex items-start gap-1.5 rounded-lg border border-slate-300 bg-slate-100 px-2.5 py-2 text-slate-800 leading-snug">
-          <HelpCircle className="w-3.5 h-3.5 shrink-0 text-slate-600 mt-0.5" />
-          <span>
-            <span className="font-bold">場所不明</span>
-            ：本文のどの文の話か特定できませんでした。下の主張の文面を手がかりに、本文の該当箇所をお探しください。
-          </span>
+        <div className="space-y-1">
+          <div className="flex items-start gap-1.5 text-slate-600 leading-snug">
+            <HelpCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+            <span>本文のどの文の話か特定できませんでした。主張の文面:</span>
+          </div>
+          <div className="bg-slate-50 text-slate-800 border border-slate-200 rounded-lg p-2 leading-relaxed">
+            {finding.originalText}
+          </div>
         </div>
       )}
 
-      <div className="space-y-1">
-        <span className="text-slate-400 font-medium">
-          {unplaced ? "主張の文面（本文の言葉とは異なります）" : "この文"}
-        </span>
-        <div className="bg-slate-50 text-slate-800 border border-slate-200 rounded-lg p-2 leading-relaxed">
-          {finding.sentenceBefore || finding.originalText}
-        </div>
-      </div>
-
       {sources.length > 0 && (
         <div className="space-y-1">
-          <span className="text-slate-400 font-medium">根拠</span>
+          <span className="text-slate-400 font-medium">根拠のページ</span>
           <ul className="space-y-1">
             {sources.map((item, i) => {
               const relation = "relation" in item ? item.relation : undefined;
@@ -105,24 +87,30 @@ export function FindingCard({ finding }: { finding: Finding }): JSX.Element {
         </div>
       )}
 
-      {finding.explanation && (
-        <p className="text-slate-600 leading-relaxed">{finding.explanation}</p>
+      {finding.checkQueries.length > 0 && (
+        <div className="space-y-1">
+          <span className="text-slate-400 font-medium">ご自身で確かめる</span>
+          <ul className="space-y-1">
+            {finding.checkQueries.map((query) => (
+              <li key={query}>
+                <a
+                  href={searchUrl(query)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-start gap-1.5 rounded-lg border border-blue-200 bg-blue-50 px-2 py-1.5 text-blue-800 hover:bg-blue-100 break-all leading-snug"
+                >
+                  <Search className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                  <span>{query}</span>
+                </a>
+              </li>
+            ))}
+          </ul>
+        </div>
       )}
 
-      {trace && (
-        <details>
-          <summary className="text-slate-400 font-medium cursor-pointer select-none">
-            根拠の探し方を見る
-          </summary>
-          <div className="mt-1 space-y-1 bg-slate-50 p-2 rounded-lg border border-slate-100 text-slate-600">
-            <p className="break-all">検索語: 「{trace.query || "（なし）"}」</p>
-            <p>
-              候補 {trace.found} 件 ／ 本文を読めず {trace.unreadable} 件 ／ 主張に触れていないと判定{" "}
-              {trace.saidNothing} 件 ／ 判定が弱く不採用 {trace.weak ?? 0} 件 ／ 根拠に採用{" "}
-              {trace.used} 件
-            </p>
-          </div>
-        </details>
+      {/* A wording finding has nothing to look up; its hint is what to change. */}
+      {finding.type === "style" && finding.explanation && (
+        <p className="text-slate-600 leading-relaxed">{finding.explanation}</p>
       )}
     </div>
   );
