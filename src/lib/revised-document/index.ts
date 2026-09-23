@@ -93,6 +93,12 @@ export type Finding = {
   bandLabel?: string;
   /** JEV's reading of whether the claim holds together, as percentages. */
   consistency?: { probabilityTrue: number; confidence: number };
+  /**
+   * True when the web lookup could not be made at all. The leading number then
+   * stands on the article alone, so the screen has to say so: otherwise a run
+   * that never searched reads like one that searched and found nothing.
+   */
+  lookupFailed?: boolean;
   /** Every source JEV judged, with its answer and how sure it was. */
   evidence?: Array<{
     url: string;
@@ -321,6 +327,7 @@ function factFinding(
     band,
     bandLabel: band === undefined ? undefined : BAND_LABEL[band],
     consistency: result.consistency,
+    lookupFailed: result.lookupFailed,
     evidence: (result.evidence ?? []).map((item) => ({
       url: item.sourceUrl,
       title: item.sourceTitle,

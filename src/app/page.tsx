@@ -432,6 +432,12 @@ export default function HomePage() {
                     <p className="text-[11px] text-slate-500 leading-snug">
                       この数値が低いほど、人が確かめる値打ちがあります。低い順に並べています。
                     </p>
+                    {currentFinding.lookupFailed && (
+                      <p className="text-[11px] font-bold text-red-600 leading-snug">
+                        ウェブ検索ができませんでした。この数値は記事の中だけを見たものです。
+                        外部の資料とは突き合わせていません。
+                      </p>
+                    )}
                   </div>
 
                   {/* Header Title & Category Badge */}
