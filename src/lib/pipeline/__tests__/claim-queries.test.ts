@@ -14,7 +14,6 @@ import {
   readDocumentQueries,
 } from "@/lib/providers/llm/search-queries";
 import type { Claim } from "@/types";
-import { ARTICLE, CLAIM, Page, fakes, sectionCalls } from "./pipeline-fakes";
 
 /**
  * ADR-0015 → ADR-0019 (north star ②): every claim gets the questions that
@@ -491,13 +490,20 @@ describe("生成の呼び出し（主張の問いは全主張で1回。提供元
   });
 });
 
+type Page = { url: string; title: string; body: string };
+
 function pipelineFakes(opts: {
   claims: Claim[];
   claimQueries?: (claims: Claim[]) => Promise<Map<string, unknown>>;
   documentQueries?: () => Promise<unknown[]>;
+  /** The pages each search finds. Without it, every search finds one page of its own. */
+  pages?: (query: string) => Page[];
 }) {
   const searched: string[] = [];
   const claimQueryCalls: Claim[][] = [];
+  /** Every request JEV was sent, in the order sent. */
+  const asked: { state: any; questions: Record<string, unknown> }[] = [];
+  const found = new Map<string, Page>();
   const llm = {
     async extractClaims() {
       return opts.claims;
@@ -515,6 +521,11 @@ function pipelineFakes(opts: {
   const search = {
     async search(query: string) {
       searched.push(query);
+      if (opts.pages) {
+        const pages = opts.pages(query);
+        for (const page of pages) found.set(page.url, page);
+        return { results: pages.map((page) => ({ url: page.url, title: page.title })) };
+      }
       // Every search finds a page that names the subject, so the article's
       // pages alone would already give every claim candidates.
       return { results: [{ url: `https://example.com/${encodeURIComponent(query)}`, title: "フリノバ" }] };
@@ -522,6 +533,8 @@ function pipelineFakes(opts: {
   } as any;
   const fetchProvider = {
     async fetchUrl(url: string) {
+      const page = found.get(url);
+      if (page) return { url, title: page.title, content: page.body };
       return { url, title: "フリノバ", content: "フリノバについての本文。" };
     },
   } as any;
@@ -534,13 +547,14 @@ function pipelineFakes(opts: {
     async evaluateAtomicJudgment() {
       throw new Error("not used");
     },
-    async ask(_state: unknown, questions: Record<string, unknown>) {
+    async ask(state: any, questions: Record<string, unknown>) {
+      asked.push({ state, questions });
       const answers: Record<string, any> = {};
       for (const name of Object.keys(questions)) answers[name] = { type: "noul", noul: 0.9 };
       return answers;
     },
   };
-  return { options: { llm, search, fetch: fetchProvider, factCheck, jev }, searched, claimQueryCalls };
+  return { options: { llm, search, fetch: fetchProvider, factCheck, jev }, searched, claimQueryCalls, asked };
 }
 
 describe("資料の探し方（パイプライン、ADR-0015・0019）", () => {
@@ -635,26 +649,38 @@ describe("資料の探し方（パイプライン、ADR-0015・0019）", () => {
     );
   });
 
-  it("点検で直した主張の問いも、③の上限の順（この主張の検索→記事全体の検索、各検索の順位）の先頭に来る（ADR-0018）", async () => {
+  it("点検で直した主張の問いも、③の上限の順（この主張の検索→記事全体の検索、各検索の順位）の先頭に来る（ADR-0016）", async () => {
     vi.spyOn(console, "info").mockImplementation(() => {});
     vi.spyOn(console, "warn").mockImplementation(() => {});
-    // About 45,000 estimated tokens each: five fit in the section stage's budget.
+    // About 45,000 estimated tokens each: two fit in the 120,000 budget, the rest do not.
     const long = (n: string) => `${n}。` + "い".repeat(30000);
-    const own: Page[] = [0, 1, 2].map((i) => ({ url: `https://z-own${i}.example/p`, title: `own${i}`, body: long(`own${i}`) }));
+    const own: Page = { url: "https://z-own.example/p", title: "own", body: long("own") };
     const article: Page[] = [0, 1, 2, 3, 4].map((i) => ({
       url: `https://a-doc${i}.example/p`,
       title: `doc${i}`,
       body: long(`doc${i}`),
     }));
-    // Only the query with the figure and the content taken out finds the claim's own pages.
-    const { options, calls } = fakes((query) => (query === "フリノバ 会員数" ? own : article), { support: 0.3 }, {
-      claims: [{ ...CLAIM, numbers: ["142人"] }],
-      documentQueries: ["記事の検索語"],
+    // Only the query with the figure and the content taken out finds the claim's own page.
+    const { options, asked } = pipelineFakes({
+      claims: [
+        claim("claim-1", {
+          originalText: "フリノバの会員は9月に142人に到達した。",
+          normalizedText: "フリノバの会員数は2025年9月時点で142人である。",
+          numbers: ["142人"],
+        }),
+      ],
+      documentQueries: async () => ["記事の検索語"],
+      claimQueries: async (claims) =>
+        new Map(
+          claims.map((c) => [
+            c.id,
+            { about: "フリノバ", content: ["到達した"], queries: ["フリノバ 会員数 142人 到達した"] },
+          ])
+        ),
+      pages: (query) => (query === "フリノバ 会員数" ? [own] : article),
     });
-    (options.llm as any).generateClaimQueries = async (asked: Claim[]) =>
-      new Map(asked.map((c) => [c.id, { about: "フリノバ", content: ["到達した"], queries: ["フリノバ 会員数 142人 到達した"] }]));
 
-    const { claims } = await runFactPipeline(ARTICLE, options as any);
+    const { claims } = await runFactPipeline("本文", options as any);
 
     const trace = claims[0].evidenceTrace!;
     expect(trace.query).toBe("フリノバ 会員数 / 記事の検索語");
@@ -666,10 +692,12 @@ describe("資料の探し方（パイプライン、ADR-0015・0019）", () => {
         searched: "フリノバ 会員数",
       },
     ]);
-    // Read section by section: the claim's own three first, then the article's first two.
-    const read = [...new Set(sectionCalls(calls).map((call) => call.state.section.url))].sort();
-    expect(read).toEqual([...own, article[0], article[1]].map((page) => page.url).sort());
-    expect(trace).toMatchObject({ found: 8, overCap: 3 });
+    // Asked about in the relevance question: the claim's own page first, then
+    // the article's first. In address order the article's pages would come first.
+    const relevance = asked.filter((call) => !("support" in call.questions));
+    const read = [...new Set(relevance.flatMap((call) => call.state.sources.map((s: any) => s.url)))].sort();
+    expect(read).toEqual([own.url, article[0].url].sort());
+    expect(trace).toMatchObject({ found: 6, overCap: 4 });
   });
 });
 

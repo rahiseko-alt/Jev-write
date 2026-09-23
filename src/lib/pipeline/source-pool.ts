@@ -27,12 +27,6 @@ export interface SourcePool {
    * page happened to come back first.
    */
   candidatesFor(queries: string[]): PooledSource[];
-  /**
-   * What the searches said about one page (by its address as pooled): each
-   * search result's excerpt, in the order the searches were made, without
-   * repeats. The first thing JEV is shown of a page (ADR-0018).
-   */
-  excerptsOf(url: string): string[];
   /** The queries that built this pool, in the order they were made. */
   queries(): string[];
   /** True when a search could not be made at all (ADR-0003, ADR-0006 layer 3). */
@@ -60,8 +54,8 @@ export function createSourcePool(deps: {
 
   const asked: string[] = [];
   const pages = new Map<string, PooledSource>();
-  /** Each search's results, as the addresses and excerpts it returned, in its order. */
-  const resultsOf = new Map<string, { url: string; excerpt: string }[]>();
+  /** Each search's results, as the addresses it returned, in its order. */
+  const resultsOf = new Map<string, string[]>();
   let failed = false;
   let failureMessage: string | undefined;
 
@@ -119,10 +113,7 @@ export function createSourcePool(deps: {
           // back first must not decide where a page stands.
           resultsOf.set(
             query,
-            (response.results || []).map((result) => ({
-              url: result.url,
-              excerpt: String(result.content || (result as any).snippet || ""),
-            }))
+            (response.results || []).map((result) => result.url)
           );
           for (const result of response.results || []) found.push(result);
         } catch (err) {
@@ -152,7 +143,7 @@ export function createSourcePool(deps: {
       const ordered: PooledSource[] = [];
       const seen = new Set<string>();
       for (const query of [...queries.map((q) => q.trim()), ...asked]) {
-        for (const { url } of resultsOf.get(query) ?? []) {
+        for (const url of resultsOf.get(query) ?? []) {
           const page = pages.get(url);
           // Two addresses that led to the same page are one page.
           if (!page || seen.has(page.url)) continue;
@@ -161,18 +152,6 @@ export function createSourcePool(deps: {
         }
       }
       return ordered;
-    },
-    excerptsOf(url) {
-      const excerpts: string[] = [];
-      for (const query of asked) {
-        for (const result of resultsOf.get(query) ?? []) {
-          // Every address that led to this page speaks for it.
-          if (pages.get(result.url)?.url !== url) continue;
-          const excerpt = result.excerpt.trim();
-          if (excerpt && !excerpts.includes(excerpt)) excerpts.push(excerpt);
-        }
-      }
-      return excerpts;
     },
   };
 }

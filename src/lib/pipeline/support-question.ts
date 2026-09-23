@@ -3,13 +3,25 @@ import type { JEVQuestion } from "@/lib/providers";
 /**
  * The one question each sentence is asked (ADR-0011). Its answer, as JEV
  * returns it, is the 信頼度 on screen: higher means "yes, the sources back it".
- * Which sections reach it is decided before it, by JEV, page by page and then
- * section by section (ADR-0018, source-selection.ts).
  */
 export const SUPPORT_QUESTION: JEVQuestion = {
   type: "noul",
   instructions: "記事の原文のこの文（claim.original）は、sources の内容で裏付けられているか。",
 };
+
+/**
+ * The question asked of every section before the one above (ADR-0014): does
+ * this section speak to the sentence at all. One judgment per question, one
+ * question per section, all in the same request (docs.typesafe.ai/patterns/
+ * fan-out). Yes means related. Which sections are passed on is decided in
+ * code from the answers, not here.
+ */
+export function relevanceQuestion(index: number): JEVQuestion {
+  return {
+    type: "noul",
+    instructions: `sources[${index}] のこの節は、claim.original と同じ事柄について述べているか。`,
+  };
+}
 
 /**
  * How large a section is, taken from the official citation cookbook, whose
@@ -45,7 +57,19 @@ export function estimateTokens(text: string): number {
   return Math.ceil(wide * 1.5 + narrow / 3);
 }
 
-/** What a page costs in a state, estimated high. */
+/**
+ * The ceiling on what one claim sends to the relevance question (ADR-0016):
+ * about four requests' worth of state, 120,000 estimated tokens (some 80,000
+ * Japanese characters). Every page in the pool is a candidate; this is the
+ * only thing that keeps one out, and it keeps count of what it kept out.
+ * Four requests is about what one claim sent before, with eight pages of
+ * 5,000–10,000 characters, so the run sends JEV no more than it did (JEV has
+ * no retry on 429 yet; more at once risks going over its rate limit).
+ */
+export const RELEVANCE_REQUESTS_PER_CLAIM = 4;
+export const CANDIDATE_TOKEN_BUDGET = RELEVANCE_REQUESTS_PER_CLAIM * STATE_TOKEN_BUDGET;
+
+/** What a page costs in the relevance question's state, estimated high. */
 export function pageTokens(page: SourcePage): number {
   return estimateTokens(JSON.stringify({ title: page.title, url: page.url, text: page.text }));
 }
@@ -54,11 +78,11 @@ export function pageTokens(page: SourcePage): number {
  * The candidates, in the order given, that fit the budget: each is taken if
  * it still fits, and passed over (and counted) if not, so a page too long for
  * what is left does not also keep out the shorter ones after it. The order is
- * the caller's (search order, ADR-0018); nothing is scored here.
+ * the caller's (search order, ADR-0016); nothing is scored here.
  */
 export function takeWithinBudget<T extends SourcePage>(
   candidates: T[],
-  budget: number
+  budget: number = CANDIDATE_TOKEN_BUDGET
 ): { taken: T[]; overCap: T[] } {
   const taken: T[] = [];
   const overCap: T[] = [];
@@ -166,6 +190,19 @@ function splitLong(line: string, maxChars: number): string[] {
   return pieces;
 }
 
+/** Every page in sections, in page order and then in reading order. */
+export function sectionsOf(pages: OriginPage[]): Section[] {
+  return pages.flatMap((page, index) =>
+    splitSections(page.text).map((text) => ({
+      page: index,
+      source: { title: page.title, url: page.url, text },
+      ...(page.origin !== undefined ? { origin: page.origin } : {}),
+      ...(page.primary !== undefined ? { primary: page.primary } : {}),
+      ...(page.primaryKind !== undefined ? { primaryKind: page.primaryKind } : {}),
+    }))
+  );
+}
+
 /**
  * One origin in the 信頼度 question's `sources` (ADR-0016): the related
  * sections of the pages that share it, each saying whether it comes from a
@@ -197,8 +234,8 @@ export function groupByOrigin(sections: Section[]): OriginSources[] {
 export type JEVRequest = {
   state: {
     claim: { original: string };
-    /** Origins holding their sections (ADR-0016). */
-    sources: OriginSources[];
+    /** One entry per section (relevance), or origins holding their sections (信頼度). */
+    sources: SourcePage[] | OriginSources[];
   };
   /** Which of the given sections `state.sources` holds, in the same order. */
   sections: number[];
@@ -206,11 +243,29 @@ export type JEVRequest = {
 };
 
 /**
- * The last step: the 信頼度 question, with only the sections JEV judged to be
- * about what the sentence is about as `sources` (ADR-0018). With none, it is
- * still asked with `sources` empty — the same as a sentence nothing was found
- * for. Spread over more than one request only when the sections would go over
- * JEV's limit.
+ * The first step: every section is asked whether it speaks to the sentence.
+ * Normally one request; more only when the sections together would go over
+ * JEV's limit. Every section is asked (ADR-0007: none is left out here).
+ */
+export function planRelevanceRequests(params: {
+  original: string;
+  sections: Section[];
+  stateBudget?: number;
+  requestBudget?: number;
+}): JEVRequest[] {
+  if (params.sections.length === 0) return [];
+  return pack({
+    ...params,
+    fixed: {},
+    perSection: relevanceQuestion,
+  });
+}
+
+/**
+ * The second step: the 信頼度 question, with only the sections judged to
+ * speak to the sentence as `sources`. With none, it is still asked with
+ * `sources` empty — the same as a sentence nothing was found for. Spread over
+ * more than one request only when the sections would go over JEV's limit.
  */
 export function planSupportRequests(params: {
   original: string;
@@ -218,49 +273,92 @@ export function planSupportRequests(params: {
   stateBudget?: number;
   requestBudget?: number;
 }): JEVRequest[] {
+  return pack({
+    ...params,
+    fixed: { support: SUPPORT_QUESTION },
+    grouped: true,
+  });
+}
+
+function pack(params: {
+  original: string;
+  sections: Section[];
+  fixed: Record<string, JEVQuestion>;
+  perSection?: (index: number) => JEVQuestion;
+  /** Sources as origins holding their sections (the 信頼度 question), not one entry per section. */
+  grouped?: boolean;
+  stateBudget?: number;
+  requestBudget?: number;
+}): JEVRequest[] {
   const {
     original,
     sections,
+    fixed,
+    perSection,
+    grouped = false,
     stateBudget = STATE_TOKEN_BUDGET,
     requestBudget = REQUEST_TOKEN_BUDGET,
   } = params;
 
   const base = { claim: { original } };
   const cost = (value: unknown) => estimateTokens(JSON.stringify(value));
-  const questions: Record<string, JEVQuestion> = { support: SUPPORT_QUESTION };
-  const asked = cost(SUPPORT_QUESTION);
+  const fixedCost = Object.values(fixed).reduce((sum, q) => sum + cost(q), 0);
+  // The longest question: a fixed one, or a per-section one with a wide index.
+  const longest = Math.max(
+    0,
+    ...Object.values(fixed).map(cost),
+    perSection ? cost(perSection(9999)) : 0
+  );
   const baseCost = cost({ ...base, sources: [] });
 
   const requests: JEVRequest[] = [];
   let current: number[] = [];
   let used = 0;
+  let asked = fixedCost;
 
   const flush = () => {
+    const questions: Record<string, JEVQuestion> = { ...fixed };
+    if (perSection) {
+      current.forEach((_, i) => {
+        questions[`relevant${i}`] = perSection(i);
+      });
+    }
+    const chosen = current.map((i) => sections[i]);
     requests.push({
-      state: { ...base, sources: groupByOrigin(current.map((i) => sections[i])) },
+      state: {
+        ...base,
+        sources: grouped ? groupByOrigin(chosen) : chosen.map((section) => section.source),
+      },
       sections: current,
       questions,
     });
     current = [];
     used = 0;
+    asked = fixedCost;
   };
 
+  // What one section adds to the state. Grouped, it carries its origin's
+  // attributes and its origin's entry is counted with every section: too
+  // high only splits a request that would have fitted.
+  const sizeOf = (section: Section) =>
+    grouped ? cost(groupByOrigin([section])[0]) : cost(section.source);
+
   sections.forEach((section, index) => {
-    // What one section adds: its origin's entry is counted with every
-    // section, plus a separator. Too high only splits a request that would
-    // have fitted.
-    const size = cost(groupByOrigin([section])[0]) + 1;
-    if (baseCost + size + asked > stateBudget) {
+    // A separator's worth on top of the section itself.
+    const size = sizeOf(section) + 1;
+    const extra = perSection ? cost(perSection(current.length)) : 0;
+    if (baseCost + size + longest > stateBudget) {
       throw new Error(
-        `資料の1節が、JEVの入力上限（状態と最長の問いで32kトークン）に収まりません（見積もり ${baseCost + size + asked}）。`
+        `資料の1節が、JEVの入力上限（状態と最長の問いで32kトークン）に収まりません（見積もり ${baseCost + size + longest}）。`
       );
     }
     const fits =
-      baseCost + used + size + asked <= stateBudget &&
-      baseCost + used + size + asked <= requestBudget;
+      baseCost + used + size + longest <= stateBudget &&
+      baseCost + used + size + asked + extra <= requestBudget;
     if (!fits && current.length > 0) flush();
     current.push(index);
     used += size;
+    asked += perSection ? cost(perSection(current.length - 1)) : 0;
   });
 
   if (current.length > 0 || requests.length === 0) flush();
