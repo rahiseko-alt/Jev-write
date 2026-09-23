@@ -73,7 +73,58 @@ export interface JEVDeltaMeaningResult {
   reason?: string;
 }
 
+/**
+ * A question, in the shapes the API takes (see ADR-0007: the spec is JEV's,
+ * https://api.typesafe.ai/openapi.json).
+ */
+export type JEVQuestion =
+  | {
+      type: "noul";
+      instructions: string;
+      criteria?: { true?: string; false?: string };
+    }
+  | {
+      type: "choice";
+      instructions: string;
+      /** Choice name to a description of when it applies. */
+      criteria: Record<string, string>;
+    }
+  | {
+      type: "score";
+      instructions: string;
+      /** Ordered descriptions of the levels; position is the score. */
+      criteria: string[];
+    };
+
+/** An answer, as the API returns it. The numbers are kept, not collapsed. */
+export type JEVAnswer =
+  | { type: "noul"; noul: number }
+  | {
+      type: "choice";
+      choice: string;
+      confidence: number;
+      probabilities: Record<string, number>;
+    }
+  | {
+      type: "score";
+      score: number;
+      confidence: number;
+      legend: unknown;
+      probabilities: number[];
+    };
+
 export interface JEVClient {
+  /**
+   * Ask JEV several questions about one state, in one request.
+   *
+   * Questions are answered in parallel and named, so asking more of them
+   * costs little beyond their tokens. Nothing here reduces the answers: the
+   * caller receives the probabilities and confidence as they came.
+   */
+  ask?(
+    state: unknown,
+    questions: Record<string, JEVQuestion>
+  ): Promise<Record<string, JEVAnswer>>;
   /** How many calls to the real service failed during this run. */
   failureCount?: number;
   /** The first failure's message, with anything credential-shaped removed. */
