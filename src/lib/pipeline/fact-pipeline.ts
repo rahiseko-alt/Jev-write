@@ -1,5 +1,6 @@
 import { correctionFromEvidence } from "./correction";
 import { SourcePool, createSourcePool } from "./source-pool";
+import { readEvidence } from "./evidence-reading";
 import { CAUTION_THRESHOLD, bandOf } from "@/lib/jev/bands";
 import { describeFailure } from "@/lib/providers/diagnostics";
 import {
@@ -401,6 +402,16 @@ async function verifyClaim(params: {
       ambiguous: 0,
     };
 
+    /**
+     * Which sites said what. One site saying otherwise is a lead, not a
+     * finding: a rental-space listing names the subject a dozen times and
+     * still got a fact about it wrong, and two of its pages agreed with each
+     * other because they are the same site. A conflict is reported as one
+     * when two different sites arrive at it independently.
+     */
+    const contradictingSites = new Set<string>();
+    const supportingSites = new Set<string>();
+
     let bestExplanation: string | undefined;
 
     const readable = candidates.filter((candidate) => candidate.text.trim().length > 0);
@@ -492,6 +503,9 @@ async function verifyClaim(params: {
 
         relationCounts[relation]++;
         trace.used++;
+        (relation === "contradicts" ? contradictingSites : supportingSites).add(
+          siteOf(candidate.res.url)
+        );
 
         claimEvidences.push({
           id: `ev-${claim.id}-web-${index}`,
@@ -553,10 +567,28 @@ async function verifyClaim(params: {
           ? "外部の確認サービスに接続できなかったため、確認できませんでした。"
           : "検証に足る明確な裏付け情報が確認できませんでした（証拠0件）。";
       }
-    } else if (relationCounts.contradicts > 0 && relationCounts.supports === 0) {
+    } else if (
+      readEvidence({
+        supports: relationCounts.supports,
+        contradicts: relationCounts.contradicts,
+        contradictingSites: contradictingSites.size,
+      }) === "conflict"
+    ) {
       verdict = "CONTRADICTED";
       confidence = strongest("contradicts");
       reason = bestExplanation || "外部ソースの情報と矛盾する内容が確認されました。";
+    } else if (
+      readEvidence({
+        supports: relationCounts.supports,
+        contradicts: relationCounts.contradicts,
+        contradictingSites: contradictingSites.size,
+      }) === "single-site-conflict"
+    ) {
+      // Shown, with its pages attached, but not called a conflict between the
+      // article and the record: nobody else has said it.
+      verdict = "INSUFFICIENT";
+      confidence = strongest("contradicts");
+      reason = `違うことを書いているページが1つのサイトにだけ見つかりました（JEVの確信度 ${(strongest("contradicts") * 100).toFixed(0)}%）。裏を取れていないので、根拠のページをご自身でお確かめください。`;
     } else if (relationCounts.contradicts > 0 && relationCounts.supports > 0) {
       verdict = "MIXED";
       confidence = Math.max(strongest("contradicts"), strongest("supports"));
@@ -628,6 +660,15 @@ function articleWithoutClaim(articleText: string, claim: Claim): string {
   const at = articleText.indexOf(sentence);
   if (at === -1) return articleText;
   return articleText.slice(0, at) + articleText.slice(at + sentence.length);
+}
+
+/** The site a page belongs to. Two pages of one site are one voice. */
+function siteOf(url: string): string {
+  try {
+    return new URL(url).hostname.replace(/^www\./, "");
+  } catch {
+    return url;
+  }
 }
 
 function buildFactCheckQuery(claim: Claim): string {
