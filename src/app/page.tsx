@@ -278,7 +278,6 @@ export default function HomePage() {
           // =========================================
           <main className="flex-1 overflow-y-auto p-8 flex flex-col justify-between bg-slate-50/40">
             <div className="max-w-4xl mx-auto w-full space-y-6">
-              <h1 className="text-xl font-bold text-slate-900">原文を入力</h1>
 
               {/* Text Input Card */}
               <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden focus-within:border-blue-400 transition">
