@@ -134,7 +134,9 @@ export async function runFactPipeline(
           verdict: "INSUFFICIENT" as ClaimVerdict,
           reason,
           evidence: [],
-          confidence: 0.5,
+          // No judgement was made, so there is no number to show. An invented
+          // one would be the very thing this product exists to replace.
+          confidence: undefined,
           lookupFailed: true,
         },
         ledgerItem: {
@@ -144,7 +146,7 @@ export async function runFactPipeline(
           correctionReason: reason,
           lockedFacts: [],
           evidenceIds: [],
-          confidence: 0.5,
+          confidence: undefined,
         },
         evidences: [],
         isFactCheckHit: false,
@@ -218,7 +220,11 @@ async function verifyClaim(params: {
   let correctedClaim: string | undefined;
   let reason: string | undefined;
   let isFactCheckHit = false;
-  let confidence = 0.7;
+  /**
+   * JEV's number for this claim, or nothing. Every value here comes from an
+   * answer; nothing is filled in to make the screen look decided (ADR-0008).
+   */
+  let confidence: number | undefined;
 
   // Step 2: Query Google Fact Check Tools API
   const query = buildFactCheckQuery(claim);
@@ -268,11 +274,12 @@ async function verifyClaim(params: {
 
           if (isFalse) {
             verdict = "CONTRADICTED";
-            confidence = 0.95;
+            // A published rating decided this, not JEV. There is no number.
+            confidence = undefined;
             reason = `FactCheck評価: ${ratingText} (${review.publisher?.name || "検証機関"})`;
           } else if (isTrue) {
             verdict = "SUPPORTED";
-            confidence = 0.95;
+            confidence = undefined;
             reason = `FactCheck評価: ${ratingText} (${review.publisher?.name || "検証機関"})`;
           } else {
             const normResult = await jev.evaluateAtomicJudgment({
@@ -281,7 +288,7 @@ async function verifyClaim(params: {
               criteria: ["supports", "contradicts", "mixed", "insufficient"],
             });
             verdict = mapChoiceToClaimVerdict(normResult.choice);
-            confidence = normResult.confidence || 0.85;
+            confidence = normResult.confidence;
             reason = normResult.explanation || `FactCheck評価: ${ratingText}`;
           }
 
@@ -415,13 +422,19 @@ async function verifyClaim(params: {
       const questions: Record<string, JEVQuestion> = {};
 
       // Asked whatever the search turned up. A figure nobody published has no
-      // page to contradict it, but the article itself is state JEV can read,
-      // and it answers with a number instead of silence (ADR-0008).
+      // page to contradict it, but the rest of the article is state JEV can
+      // read, and it answers with a number instead of silence (ADR-0008).
+      //
+      // The claim's own sentence is taken out of that state first. Left in,
+      // the question answers itself: a fabricated figure always agrees with
+      // the article that carries it, and JEV rightly said so.
       questions.holdsUp = {
         type: "noul",
         instructions:
-          "claim.text は、article（この文章の全体）および sources に書かれていることと、" +
-          "矛盾なく成り立つか。article や sources の記述から無理が生じる場合は成り立たないとする。",
+          "claim.text の数値や事実関係は、others（この主張の文を取り除いた記事の残り）および " +
+          "sources の記述と突き合わせたとき、辻褄が合うか。" +
+          "数値の辻褄が合わない場合は合わないとする。" +
+          "どちらにも関連する記述が無く判断材料が無い場合は、どちらとも言えない側に寄せること。",
       };
 
       readable.forEach((candidate, index) => {
@@ -440,7 +453,7 @@ async function verifyClaim(params: {
 
       const answers = await jev.ask(
         {
-          article: articleText,
+          others: articleWithoutClaim(articleText, claim),
           claim: {
             text: claim.normalizedText || claim.originalText,
             subject: claim.subject || claim.entities?.[0] || "",
@@ -542,26 +555,26 @@ async function verifyClaim(params: {
           : `裏付けとなるページが見つかりませんでした。JEVの読みは、成り立つ確率 ${(held.probabilityTrue * 100).toFixed(0)}%、確信度 ${(held.confidence * 100).toFixed(0)}% です。`;
       } else {
         verdict = "INSUFFICIENT";
-        confidence = 0.6;
+        confidence = undefined;
         reason = lookupFailed
           ? "外部の確認サービスに接続できなかったため、確認できませんでした。"
           : "検証に足る明確な裏付け情報が確認できませんでした（証拠0件）。";
       }
     } else if (relationCounts.contradicts > 0 && relationCounts.supports === 0) {
       verdict = "CONTRADICTED";
-      confidence = strongest("contradicts") || 0.9;
+      confidence = strongest("contradicts");
       reason = bestExplanation || "外部ソースの情報と矛盾する内容が確認されました。";
     } else if (relationCounts.contradicts > 0 && relationCounts.supports > 0) {
       verdict = "MIXED";
-      confidence = Math.max(strongest("contradicts"), strongest("supports")) || 0.75;
+      confidence = Math.max(strongest("contradicts"), strongest("supports"));
       reason = bestExplanation || "裏付け情報と矛盾する情報の双方が存在します。";
     } else if (relationCounts.supports > 0) {
       verdict = "SUPPORTED";
-      confidence = strongest("supports") || 0.88;
+      confidence = strongest("supports");
       reason = bestExplanation || "信頼できる外部ソースによって事実の裏付けが得られました。";
     } else {
       verdict = "INSUFFICIENT";
-      confidence = consistency?.confidence ?? 0.6;
+      confidence = consistency?.confidence;
       reason = lookupFailed
         ? "外部の確認サービスに接続できなかったため、確認できませんでした。"
         : "検証に足る明確な裏付け情報が確認できませんでした。";
@@ -598,7 +611,7 @@ async function verifyClaim(params: {
     reason,
     evidence: claimEvidences,
     confidence,
-    band: bandOf(confidence),
+    band: confidence === undefined ? undefined : bandOf(confidence),
     consistency,
     lookupFailed,
     evidenceTrace: trace,
@@ -610,6 +623,18 @@ async function verifyClaim(params: {
     evidences: claimEvidences,
     isFactCheckHit,
   };
+}
+
+/**
+ * The article with the claim's own sentence taken out, so that asking whether
+ * the claim fits the article is not asking whether it fits itself.
+ */
+function articleWithoutClaim(articleText: string, claim: Claim): string {
+  const sentence = claim.originalText?.trim();
+  if (!sentence) return articleText;
+  const at = articleText.indexOf(sentence);
+  if (at === -1) return articleText;
+  return articleText.slice(0, at) + articleText.slice(at + sentence.length);
 }
 
 function buildFactCheckQuery(claim: Claim): string {

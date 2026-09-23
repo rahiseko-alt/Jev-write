@@ -52,7 +52,12 @@ export type Finding = {
   title: string;
   categoryLabel: string;
   kind: FindingKind;
-  confidence: number;
+  /**
+   * JEV's confidence as a percentage, or null when no judgement produced a
+   * number. Null is shown as "数値なし": a made-up percentage next to a
+   * judgement is exactly the thing this product replaces (ADR-0008).
+   */
+  confidence: number | null;
   originalText: string;
   revisedText: string;
   sourceTitle: string;
@@ -104,7 +109,6 @@ const FINDING_KINDS: Record<
     label: string;
     heading: string;
     markKind: MarkKind | null;
-    confidence: number;
     explanation: string;
   }
 > = {
@@ -112,7 +116,6 @@ const FINDING_KINDS: Record<
     label: "事実の修正",
     heading: "事実の誤り",
     markKind: "fact",
-    confidence: 0.94,
     explanation:
       "公的発表・一次ソースと照合した結果、数値または日付の記述に明確な食い違いが確認されました。",
   },
@@ -120,21 +123,18 @@ const FINDING_KINDS: Record<
     label: "要確認",
     heading: "根拠が見つかりません",
     markKind: "unverified",
-    confidence: 0.68,
     explanation: "十分な一次証拠が確認できませんでした。専門情報源による再確認を推奨します。",
   },
   "ai-tell": {
     label: "文章表現",
     heading: "AIっぽい言い回し",
     markKind: "style",
-    confidence: 0.85,
     explanation: "AI特有の紋切り型表現または重複が検出されました。",
   },
   confirmed: {
     label: "確認済み",
     heading: "確認済み",
     markKind: null,
-    confidence: 0.97,
     explanation: "公式ソースの記述と整合しており、事実の正しさが確認されています。",
   },
 };
@@ -265,8 +265,9 @@ function factFinding(
   const firstEvidence = result.evidence?.[0];
   const corrected = result.correctedClaim || text;
   const at = sentenceIndexOf(sentences, text);
-  const ratio = result.confidence ?? shape.confidence;
-  const band = result.band ?? bandOf(ratio <= 1 ? ratio : ratio / 100);
+  const ratio = result.confidence;
+  const band =
+    result.band ?? (ratio === undefined ? undefined : bandOf(ratio <= 1 ? ratio : ratio / 100));
 
   return {
     id,
@@ -277,7 +278,7 @@ function factFinding(
     ),
     categoryLabel: shape.label,
     kind,
-    confidence: toPercent(result.confidence ?? shape.confidence),
+    confidence: ratio === undefined ? null : toPercent(ratio),
     originalText: text,
     revisedText: corrected,
     sourceTitle: firstEvidence?.sourceTitle || "",
@@ -291,7 +292,7 @@ function factFinding(
     sentenceAfter: "",
     evidenceTrace: result.evidenceTrace,
     band,
-    bandLabel: BAND_LABEL[band],
+    bandLabel: band === undefined ? undefined : BAND_LABEL[band],
     consistency: result.consistency,
     evidence: (result.evidence ?? []).map((item) => ({
       url: item.sourceUrl,
@@ -321,7 +322,8 @@ function styleFinding(
     title: compose(styleIssue.ruleName || shape.heading, styleIssue.targetText ?? ""),
     categoryLabel: shape.label,
     kind: "ai-tell",
-    confidence: toPercent(styleIssue.confidence || shape.confidence),
+    confidence:
+      typeof styleIssue.confidence === "number" ? toPercent(styleIssue.confidence) : null,
     originalText: before,
     revisedText: after,
     sourceTitle: "",

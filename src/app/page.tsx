@@ -459,7 +459,11 @@ export default function HomePage() {
                               {currentFinding.bandLabel}
                             </span>
                           )}
-                          <span className="font-bold text-slate-900 text-sm">{currentFinding.confidence}%</span>
+                          <span className="font-bold text-slate-900 text-sm">
+                            {currentFinding.confidence === null
+                              ? "数値なし"
+                              : `${currentFinding.confidence}%`}
+                          </span>
                         </span>
                       </div>
                       <div className="w-full h-1.5 bg-slate-100 rounded-full overflow-hidden">
@@ -471,7 +475,7 @@ export default function HomePage() {
                               ? "bg-purple-500"
                               : "bg-amber-500"
                           }`}
-                          style={{ width: `${currentFinding.confidence}%` }}
+                          style={{ width: `${currentFinding.confidence ?? 0}%` }}
                         />
                       </div>
                       {currentFinding.consistency && (
@@ -482,8 +486,8 @@ export default function HomePage() {
                         </p>
                       )}
                       <p className="text-[10px] text-slate-400 leading-tight pt-0.5">
-                        数値はすべてJEVが返したものをそのまま表示しています。80%以上＝確信あり、
-                        50〜80%＝要確認、50%未満＝人が見て判断してください。
+                        数値はすべてJEVが返したものをそのまま表示しています。こちらで数字を作ることは
+                        しません。判定に数値が付かなかった場合は「数値なし」と出ます。
                       </p>
                     </div>
 

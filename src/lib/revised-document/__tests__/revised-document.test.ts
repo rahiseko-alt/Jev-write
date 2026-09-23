@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { buildRevisedDocument } from "@/lib/revised-document";
+import { BAND_LABEL } from "@/lib/jev/bands";
 import type { AnalysisResult, ClaimResult, StyleIssue } from "@/types";
 
 function claim(
@@ -1211,11 +1212,28 @@ describe("JEVの数値を画面まで運ぶ", () => {
 
     expect(finding?.confidence).toBe(86);
     expect(finding?.band).toBe("act");
-    expect(finding?.bandLabel).toContain("80%");
+    expect(finding?.bandLabel).toBe(BAND_LABEL.act);
     expect(finding?.consistency).toEqual({ probabilityTrue: 0.11, confidence: 0.89 });
     expect(finding?.evidence?.[0]).toMatchObject({
       relation: "contradicts",
       confidence: 0.86,
     });
+  });
+});
+
+describe("数字を作らない", () => {
+  it("JEVが数値を返さなかった判定は「数値なし」として運ぶ", () => {
+    const result = claim("裏付けの見つからなかった文。", "INSUFFICIENT");
+    result.confidence = undefined;
+
+    const doc = buildRevisedDocument({
+      analysis: analysis("裏付けの見つからなかった文。", "裏付けの見つからなかった文。", [result]),
+      adoption: {},
+    });
+    const finding = doc.findings.find((item) => item.type === "fact");
+
+    expect(finding?.confidence).toBeNull();
+    expect(finding?.band).toBeUndefined();
+    expect(finding?.bandLabel).toBeUndefined();
   });
 });
