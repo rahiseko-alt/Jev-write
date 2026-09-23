@@ -12,6 +12,15 @@ Issues and specs live as GitHub issues in this repo, via the `gh` CLI. See `docs
 
 Single-context: `CONTEXT.md` at the repo root, ADRs in `docs/adr/`. Both are created lazily by `domain-modeling`. See `docs/agents/domain.md`.
 
+## 不具合の切り分け
+
+原因は層で切り分ける。層の定義と見分け方は `docs/adr/0006-fault-layers.md` にある。
+不具合の調査に入る前に読み、報告には必ず「どの層か」を書く。
+
+0 環境・配備 / 1 LLM（生成） / 2 システム / 3 外部の情報源（検索と取得は別物） / 4 JEV（判定）
+
+上から順に確認する。下の層を疑う前に、上の層が白であることを示す。
+
 ## Navigation (repo-local)
 
 This repo may be driven by a non-engineer. Never assume the user knows which slash command to run.
