@@ -1,7 +1,8 @@
-import { Claim, Importance } from "@/types";
+import { Claim } from "@/types";
 import { LLMProvider } from "./types";
 import { recordFailure, recordRetry } from "../diagnostics";
 import { sendWithRetry } from "../retry";
+import { CLAIM_EXTRACTION_SYSTEM_PROMPT, readExtractedClaims } from "./claim-extraction";
 import {
   CLAIM_QUERY_SYSTEM_PROMPT,
   DOCUMENT_QUERY_SYSTEM_PROMPT,
@@ -129,58 +130,8 @@ export class AnthropicLLMProvider implements LLMProvider {
 
   async extractClaims(text: string): Promise<Claim[]> {
     try {
-      const systemPrompt = `You are an expert fact-checking claim extractor.
-Break down the provided text into atomic, objectively verifiable factual claims.
-Avoid opinions, impressions, rhetoric, and broad paragraphs. Focus strictly on atomic factual assertions.
-Write every field in the same language as the text. Never translate.
-
-Return ONLY a valid JSON object with this exact structure, nothing else:
-{
-  "claims": [
-    {
-      "id": "claim-1",
-      "originalText": "exact sentence or phrase in text",
-      "normalizedText": "canonical, unambiguous statement of fact",
-      "subject": "main entity or subject",
-      "predicate": "action or property",
-      "object": "target or value",
-      "numbers": ["extracted numbers or amounts"],
-      "dates": ["extracted dates or timeframes"],
-      "entities": ["named entities, products, organizations"],
-      "importance": "critical" | "high" | "normal" | "low",
-      "factCheckRequired": true
-    }
-  ]
-}`;
-
-      const rawContent = await this.callMessages(systemPrompt, text);
-      const parsed = this.parseJson(rawContent, "主張の抽出");
-      const rawClaims = Array.isArray(parsed) ? parsed : parsed.claims || [];
-
-      return rawClaims.map((item: any, index: number): Claim => {
-        const id = item.id || `claim-${Date.now()}-${index + 1}`;
-        const validImportance: Importance[] = ["critical", "high", "normal", "low"];
-        const importance: Importance = validImportance.includes(item.importance)
-          ? item.importance
-          : "normal";
-
-        return {
-          id,
-          originalText: String(item.originalText || ""),
-          normalizedText: String(item.normalizedText || item.originalText || ""),
-          subject: item.subject ? String(item.subject) : undefined,
-          predicate: item.predicate ? String(item.predicate) : undefined,
-          object: item.object ? String(item.object) : undefined,
-          numbers: Array.isArray(item.numbers) ? item.numbers.map(String) : [],
-          dates: Array.isArray(item.dates) ? item.dates.map(String) : [],
-          entities: Array.isArray(item.entities) ? item.entities.map(String) : [],
-          importance,
-          factCheckRequired:
-            typeof item.factCheckRequired === "boolean"
-              ? item.factCheckRequired
-              : true,
-        };
-      });
+      const rawContent = await this.callMessages(CLAIM_EXTRACTION_SYSTEM_PROMPT, text);
+      return readExtractedClaims(this.parseJson(rawContent, "主張の抽出"));
     } catch (err) {
       recordFailure(this, err);
       throw err;
