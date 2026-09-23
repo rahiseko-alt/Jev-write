@@ -1,5 +1,6 @@
 import type { AnalysisResult, ClaimResult, StyleIssue,
   EvidenceTrace,
+  ValueConflict,
 } from "@/types";
 import { isFlagged } from "@/lib/jev/bands";
 
@@ -104,6 +105,12 @@ export type Finding = {
     relation?: "supports" | "contradicts";
     confidence?: number;
   }>;
+  /**
+   * Pages that give another value for a date or amount in the sentence, as
+   * the page writes it: 「資料では 2023年10月1日」. The sentence is marked
+   * whatever its 信頼度, which is shown unchanged (ADR-0011, ADR-0012).
+   */
+  valueConflicts?: ValueConflict[];
 };
 
 /**
@@ -357,7 +364,13 @@ function factFinding(
   const percent = ratio === undefined ? null : toPercent(ratio);
   // Every sentence at or below the line gets a ▶, and so does one with no
   // number: nothing was measured, so it has not been looked at (ADR-0011).
-  const flagged = ratio === undefined || isFlagged(ratio <= 1 ? ratio : ratio / 100);
+  // So does one a page gives another date or amount for (ADR-0012): JEV
+  // reads those as text, and its number can stay high over them.
+  const valueConflicts = result.valueConflicts ?? [];
+  const flagged =
+    ratio === undefined ||
+    isFlagged(ratio <= 1 ? ratio : ratio / 100) ||
+    valueConflicts.length > 0;
 
   return {
     id,
@@ -386,6 +399,7 @@ function factFinding(
       relation: item.relation,
       confidence: item.confidence,
     })),
+    ...(valueConflicts.length > 0 ? { valueConflicts } : {}),
   };
 }
 

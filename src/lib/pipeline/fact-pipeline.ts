@@ -1,7 +1,8 @@
 import { SourcePool, createSourcePool } from "./source-pool";
 import { readEvidence } from "./evidence-reading";
 import { CAUTION_THRESHOLD } from "@/lib/jev/bands";
-import { SUPPORT_QUESTION, SourcePage, planSupportRequests } from "./support-question";
+import { SourcePage, planSupportRequests } from "./support-question";
+import { readValueConflicts, statedValues, valueQuestionsFor } from "./value-check";
 import { describeFailure } from "@/lib/providers/diagnostics";
 import {
   Claim,
@@ -422,23 +423,45 @@ async function verifyClaim(params: {
   // Per page, JEV is also asked what the page says about the sentence, in the
   // same request. Those answers only decide which pages are listed as the
   // grounds; the 信頼度 is the support question's answer alone.
+  //
+  // For each date and amount the sentence states, JEV also picks, per page,
+  // which of the page's values of that kind is the one for the same matter.
+  // Code found those candidates and code compares the pick: JEV reads dates
+  // and numbers as text and does not compare them reliably (value-check.ts).
+  const stated = statedValues(claim.originalText);
   const requests = planSupportRequests({
     original: claim.originalText,
     article: articleText,
     pages,
-    questionFor: relationQuestion,
+    questionsFor: (source, index) => ({
+      [`relation${index}`]: relationQuestion(index),
+      ...valueQuestionsFor(stated, source.text, index),
+    }),
   });
 
   const ask = jev.ask.bind(jev);
   const replies = await Promise.all(
-    requests.map((request) => {
-      const questions: Record<string, JEVQuestion> = { support: SUPPORT_QUESTION };
-      request.pages.forEach((_, index) => {
-        questions[`relation${index}`] = relationQuestion(index);
-      });
-      return ask(request.state, questions);
-    })
+    requests.map((request) => ask(request.state, request.questions))
   );
+
+  // A page whose value for the matter is not the sentence's. The 信頼度
+  // stays JEV's support answer as returned (ADR-0011); the difference is
+  // shown beside it, with the page's own wording, and the sentence is marked.
+  const valueConflicts = readValueConflicts(
+    stated,
+    replies.map((answers, r) => ({
+      pages: requests[r].pages,
+      questions: requests[r].questions,
+      answers,
+    })),
+    RELATION_CONFIDENCE_THRESHOLD
+  ).map((conflict) => ({
+    stated: conflict.stated,
+    found: conflict.found,
+    sourceUrl: pages[conflict.page].url,
+    sourceTitle: pages[conflict.page].title,
+    confidence: conflict.confidence,
+  }));
 
   // The 信頼度 is a number JEV returned, as it returned it (ADR-0008,
   // ADR-0011). When the pages had to be spread over several requests, each
@@ -541,6 +564,7 @@ async function verifyClaim(params: {
     confidence,
     lookupFailed,
     evidenceTrace: trace,
+    ...(valueConflicts.length > 0 ? { valueConflicts } : {}),
   };
 
   return {

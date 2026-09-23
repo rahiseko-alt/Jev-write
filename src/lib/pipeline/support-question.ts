@@ -52,7 +52,26 @@ export type SupportRequest = {
   };
   /** The page each entry of `state.sources` came from. */
   pages: number[];
+  /** Everything this request asks: the support question, and each entry's own. */
+  questions: Record<string, JEVQuestion>;
 };
+
+/** The questions asked about one entry of `sources`, named with its position in the request. */
+export type EntryQuestions = (
+  source: SourcePage & { part?: string },
+  index: number
+) => Record<string, JEVQuestion>;
+
+function costOf(questions: Record<string, JEVQuestion>): number {
+  return Object.values(questions).reduce(
+    (sum, question) => sum + estimateTokens(JSON.stringify(question)),
+    0
+  );
+}
+
+function longestOf(questions: Record<string, JEVQuestion>): number {
+  return Math.max(0, ...Object.values(questions).map((q) => estimateTokens(JSON.stringify(q))));
+}
 
 /**
  * The requests that put this sentence's question to JEV, with every page's
@@ -70,7 +89,7 @@ export function planSupportRequests(params: {
   article: string;
   pages: SourcePage[];
   /** Every question that rides along with the support question, by the entry it is about. */
-  questionFor?: (index: number) => JEVQuestion;
+  questionsFor?: EntryQuestions;
   stateBudget?: number;
   requestBudget?: number;
 }): SupportRequest[] {
@@ -78,17 +97,22 @@ export function planSupportRequests(params: {
     original,
     article,
     pages,
-    questionFor,
+    questionsFor,
     stateBudget = STATE_TOKEN_BUDGET,
     requestBudget = REQUEST_TOKEN_BUDGET,
   } = params;
 
   const base = { claim: { original }, article, sources: [] as SupportRequest["state"]["sources"] };
-  const questionCost = (index: number) =>
-    questionFor ? estimateTokens(JSON.stringify(questionFor(index))) : 0;
+  const entryQuestions: EntryQuestions = (source, index) =>
+    questionsFor ? questionsFor(source, index) : {};
   const supportCost = estimateTokens(JSON.stringify(SUPPORT_QUESTION));
-  // The longest question: the support question, or a per-entry one.
-  const longest = Math.max(supportCost, questionCost(99));
+  // The longest question: the support question, or one asked of an entry. A
+  // part of a page offers no option its whole page lacks, so the whole pages
+  // bound it; position 99 bounds what the position's digits cost.
+  const longest = Math.max(
+    supportCost,
+    ...pages.map((page) => longestOf(entryQuestions(page, 99)))
+  );
   const baseCost = estimateTokens(JSON.stringify(base));
   const room = stateBudget - baseCost - longest;
 
@@ -106,9 +130,12 @@ export function planSupportRequests(params: {
   let asked = supportCost;
 
   const flush = () => {
+    const questions: Record<string, JEVQuestion> = { support: SUPPORT_QUESTION };
+    current.forEach((item, index) => Object.assign(questions, entryQuestions(item.source, index)));
     requests.push({
       state: { ...base, sources: current.map((item) => item.source) },
       pages: current.map((item) => item.page),
+      questions,
     });
     current = [];
     used = 0;
@@ -118,13 +145,13 @@ export function planSupportRequests(params: {
   for (const item of items) {
     // A separator's worth on top of the item itself.
     const cost = estimateTokens(JSON.stringify(item.source)) + 1;
-    const extra = questionCost(current.length);
+    const extra = costOf(entryQuestions(item.source, 99));
     const fits =
       used + cost <= room && baseCost + used + cost + asked + extra <= requestBudget;
     if (!fits && current.length > 0) flush();
     current.push(item);
     used += cost;
-    asked += questionCost(current.length - 1);
+    asked += extra;
   }
 
   if (current.length > 0 || requests.length === 0) flush();
