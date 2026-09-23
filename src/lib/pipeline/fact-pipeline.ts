@@ -174,6 +174,9 @@ async function verifyClaim(params: {
 }> {
   const { claim, index, llm, factCheck, jev, search, fetchProvider } = params;
   const claimEvidences: Evidence[] = [];
+  // A lookup that could not be made at all, as opposed to one that ran and
+  // found nothing. The reader is told which of the two happened.
+  let lookupFailed = false;
   let verdict: ClaimVerdict = "INSUFFICIENT";
   let correctedClaim: string | undefined;
   let reason: string | undefined;
@@ -184,11 +187,18 @@ async function verifyClaim(params: {
   const query = buildFactCheckQuery(claim);
   let factHits: GoogleFactCheckClaim[] = [];
 
-  if (typeof (factCheck as any).search === "function") {
-    factHits = await (factCheck as any).search(query);
-  } else if (typeof factCheck.searchClaims === "function") {
-    const res = await factCheck.searchClaims(query);
-    factHits = res.claims || [];
+  try {
+    if (typeof (factCheck as any).search === "function") {
+      factHits = await (factCheck as any).search(query);
+    } else if (typeof factCheck.searchClaims === "function") {
+      const res = await factCheck.searchClaims(query);
+      factHits = res.claims || [];
+    }
+  } catch (err) {
+    // ADR-0003: the lookup failed, so the claim stays unverified and the run
+    // carries on to the web search. Nothing is filled in for it.
+    console.warn(`Fact check lookup failed for claim ${claim.id}:`, err);
+    lookupFailed = true;
   }
 
   if (factHits && factHits.length > 0) {
@@ -272,6 +282,7 @@ async function verifyClaim(params: {
       // ADR-0003: the lookup failed, so the claim stays unverified and the
       // pipeline carries on. It does not get made up for.
       console.warn(`Web search failed for claim ${claim.id}:`, err);
+      lookupFailed = true;
     }
 
     // Sort by source priority
@@ -374,7 +385,9 @@ async function verifyClaim(params: {
     if (claimEvidences.length === 0) {
       verdict = "INSUFFICIENT";
       confidence = 0.6;
-      reason = "検証に足る明確な裏付け情報が確認できませんでした（証拠0件）。";
+      reason = lookupFailed
+        ? "外部の確認サービスに接続できなかったため、確認できませんでした。"
+        : "検証に足る明確な裏付け情報が確認できませんでした（証拠0件）。";
     } else if (relationCounts.contradicts > 0 && relationCounts.supports === 0) {
       verdict = "CONTRADICTED";
       confidence = 0.9;
@@ -402,7 +415,9 @@ async function verifyClaim(params: {
     } else {
       verdict = "INSUFFICIENT";
       confidence = 0.6;
-      reason = "検証に足る明確な裏付け情報が確認できませんでした。";
+      reason = lookupFailed
+        ? "外部の確認サービスに接続できなかったため、確認できませんでした。"
+        : "検証に足る明確な裏付け情報が確認できませんでした。";
     }
   }
 
@@ -419,7 +434,10 @@ async function verifyClaim(params: {
     claimId: claim.id,
     originalClaim: claim.normalizedText || claim.originalText,
     verdict,
-    correctedClaim: verdict === "CONTRADICTED" ? (correctedClaim || claim.normalizedText) : undefined,
+    // No correction the Evidence justifies means no correction. The claim's
+    // own paraphrase is not one, and offering it would authorise a change
+    // nobody checked.
+    correctedClaim: verdict === "CONTRADICTED" ? correctedClaim : undefined,
     correctionReason: reason,
     lockedFacts: Array.from(new Set(lockedFacts)),
     evidenceIds: claimEvidences.map((e) => e.id),
@@ -433,6 +451,7 @@ async function verifyClaim(params: {
     reason,
     evidence: claimEvidences,
     confidence,
+    lookupFailed,
   };
 
   return {

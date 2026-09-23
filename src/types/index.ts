@@ -89,6 +89,12 @@ export type ClaimResult = {
   reason?: string;
   evidence: Evidence[];
   confidence?: number;
+  /**
+   * True when a lookup for this claim could not be made at all — the service
+   * was unreachable or unconfigured. Different from a lookup that ran and
+   * found nothing, and the reader is told which happened.
+   */
+  lookupFailed?: boolean;
 };
 
 export type StageTiming = {

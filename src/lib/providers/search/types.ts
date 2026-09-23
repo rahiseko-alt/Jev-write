@@ -25,5 +25,7 @@ export interface SearchOptions {
 }
 
 export interface SearchProvider {
+  /** True when this provider answered with a stand-in rather than the real service. */
+  servedByFallback?: boolean;
   search(query: string, options?: SearchOptions): Promise<SearchResponse>;
 }

@@ -2,6 +2,9 @@ import { Claim, Importance } from "@/types";
 import { LLMProvider, RewriteInput, SurgicalFixInput } from "./types";
 
 export class MockLLMProvider implements LLMProvider {
+  /** A stand-in, and it says so, so the reader is never shown its output as a real check. */
+  readonly servedByFallback = true;
+
   async extractClaims(text: string): Promise<Claim[]> {
     const claims: Claim[] = [];
     // Split by sentence terminators (Japanese and Western, ignoring decimal points)

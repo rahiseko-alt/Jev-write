@@ -262,9 +262,28 @@ describe("Google Fact Check Provider", () => {
     expect(client).toBeInstanceOf(HTTPGoogleFactCheckClient);
   });
 
-  it("factory returns MockGoogleFactCheckClient if API key is empty string", () => {
+  it("factory returns the stand-in where a test run asks for one", () => {
+    // NODE_ENV=test: the stand-in is asked for, not quietly substituted.
     const client = getGoogleFactCheckClient({ apiKey: "" });
     expect(client).toBeInstanceOf(MockGoogleFactCheckClient);
+  });
+
+  it("factory does not stand in for a missing credential outside a test run", () => {
+    const savedEnv = process.env.NODE_ENV;
+    const savedFlag = process.env.USE_MOCK_FACTCHECK;
+    try {
+      (process.env as Record<string, string>).NODE_ENV = "production";
+      delete process.env.USE_MOCK_FACTCHECK;
+      // Without a key the real client reports it cannot look anything up;
+      // it never answers with a review nobody published.
+      expect(getGoogleFactCheckClient({ apiKey: "" })).toBeInstanceOf(
+        HTTPGoogleFactCheckClient
+      );
+    } finally {
+      (process.env as Record<string, string | undefined>).NODE_ENV = savedEnv;
+      if (savedFlag === undefined) delete process.env.USE_MOCK_FACTCHECK;
+      else process.env.USE_MOCK_FACTCHECK = savedFlag;
+    }
   });
 
   it("aliases getFactCheckClient to getGoogleFactCheckClient", () => {
@@ -333,6 +352,7 @@ describe("Fetch Provider", () => {
       "ANTHROPIC_API_KEY",
       "anthropic",
       "USE_MOCK_FETCH",
+      "NODE_ENV",
     ];
     let saved: Record<string, string | undefined>;
 
@@ -348,8 +368,10 @@ describe("Fetch Provider", () => {
       }
     });
 
-    it("fetches over HTTP once there is a credential to fetch with", () => {
-      process.env.TAVILY_API_KEY = "test-key";
+    it("fetches over HTTP by default", () => {
+      // Reading a public page needs no credential, so nothing licenses a
+      // canned page in its place.
+      (process.env as Record<string, string>).NODE_ENV = "production";
       expect(getFetchProvider({}, false)).toBeInstanceOf(HTTPFetchProvider);
     });
 
@@ -358,13 +380,15 @@ describe("Fetch Provider", () => {
       expect(getFetchProvider({}, true)).toBeInstanceOf(MockFetchProvider);
     });
 
-    it("falls back to the mock when no credential is configured", () => {
-      // ADR-0002: the mock adapters run offline and in CI without credentials.
+    it("uses the mock in a test run", () => {
+      // ADR-0002: the mock adapters run offline and in CI — where they are
+      // asked for, never as a silent stand-in for a missing credential.
+      (process.env as Record<string, string>).NODE_ENV = "test";
       expect(getFetchProvider({}, false)).toBeInstanceOf(MockFetchProvider);
     });
 
-    it("honours USE_MOCK_FETCH even where a credential exists", () => {
-      process.env.TAVILY_API_KEY = "test-key";
+    it("honours USE_MOCK_FETCH outside a test run", () => {
+      (process.env as Record<string, string>).NODE_ENV = "production";
       process.env.USE_MOCK_FETCH = "true";
       expect(getFetchProvider({}, false)).toBeInstanceOf(MockFetchProvider);
     });

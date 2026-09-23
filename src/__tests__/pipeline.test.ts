@@ -272,6 +272,14 @@ describe("Delta Check", () => {
 });
 
 describe("Orchestrator End-to-End", () => {
+  it("records that a run answered by stand-ins was not a real check", async () => {
+    // In a test run every provider is a stand-in, so the result must say so
+    // rather than look like a completed check.
+    const result = await runOrchestrator("これはテスト用の短い文章です。");
+
+    expect(result.servedByFallback).toBe(true);
+  });
+
   it("should coordinate full pipeline, emit progress and return complete AnalysisResult", async () => {
     const sample = SAMPLE_ARTICLES[0].text;
     const store = new JobStore();

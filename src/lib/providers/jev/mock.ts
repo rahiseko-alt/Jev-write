@@ -13,6 +13,9 @@ import {
 import { RatingVerdict } from "../google-factcheck/types";
 
 export class MockJEVClient implements JEVClient {
+  /** A stand-in, and it says so, so the reader is never shown its output as a real check. */
+  readonly servedByFallback = true;
+
   async evaluateAtomicJudgment(req: JEVAtomicJudgmentRequest): Promise<JEVAtomicJudgmentResult> {
     const { type, candidateText, evidenceText, state, instructions, criteria, mode } = req;
 

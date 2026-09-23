@@ -17,6 +17,9 @@ function createSearchResponse(query: string, results: SearchResultItem[]): Searc
 }
 
 export class MockSearchProvider implements SearchProvider {
+  /** A stand-in, and it says so, so the reader is never shown its output as a real check. */
+  readonly servedByFallback = true;
+
   async search(query: string, options: SearchOptions = {}): Promise<SearchResponse> {
     const normalizedQuery = query.toLowerCase().trim();
     const maxResults = options.maxResults || 5;

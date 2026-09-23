@@ -7,21 +7,19 @@ export * from "./fetcher";
 export * from "./mock";
 
 /**
- * Returns an HTTPFetchProvider unless forced or mock is requested.
- * When useMock is true, returns MockFetchProvider.
+ * Returns an HTTPFetchProvider. The stand-in is returned only where it was
+ * asked for (useMock, USE_MOCK_FETCH, or a test run): canned prose must never
+ * stand in for a page nobody fetched.
  */
 export function getFetchProvider(
   options: HTTPFetchProviderOptions = {},
   useMock = false
 ): FetchProvider {
-  const hasAnyKey =
-    process.env.TAVILY_API_KEY ||
-    process.env.tavily ||
-    process.env.OPENAI_API_KEY ||
-    process.env.openai ||
-    process.env.ANTHROPIC_API_KEY ||
-    process.env.anthropic;
-  if (useMock || process.env.USE_MOCK_FETCH === "true" || !hasAnyKey) {
+  if (
+    useMock ||
+    process.env.USE_MOCK_FETCH === "true" ||
+    process.env.NODE_ENV === "test"
+  ) {
     return new MockFetchProvider();
   }
   return new HTTPFetchProvider(options);

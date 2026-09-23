@@ -226,7 +226,8 @@ Entities: ${claim.entities?.join(", ") || "N/A"}`;
   }
 
   async surgicalFix(input: SurgicalFixInput): Promise<string> {
-    this.servedByFallback = true;
-      return await this.fallback.surgicalFix(input);
+    // A capability this adapter does not implement, not a service that failed:
+    // the local repair restores the reader's own figure, inventing nothing.
+    return await this.fallback.surgicalFix(input);
   }
 }
