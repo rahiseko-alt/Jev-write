@@ -301,17 +301,7 @@ export default function HomePage() {
           // =========================================
           <main className="flex-1 overflow-y-auto p-8 flex flex-col justify-between bg-slate-50/40">
             <div className="max-w-4xl mx-auto w-full space-y-6">
-              {/* Title & Help */}
-              <div className="flex items-center justify-between">
-                <h1 className="text-xl font-bold text-slate-900">原文を入力</h1>
-                <button
-                  onClick={() => alert("入力した文章のファクトチェック、AI表現の検査を行い、裏付けの弱い箇所を知らせます。文章は書き換えません。")}
-                  className="flex items-center gap-1.5 text-xs text-blue-600 hover:text-blue-700 font-medium"
-                >
-                  <HelpCircle className="w-4 h-4" />
-                  <span>使い方を見る</span>
-                </button>
-              </div>
+              <h1 className="text-xl font-bold text-slate-900">原文を入力</h1>
 
               {/* Text Input Card */}
               <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden focus-within:border-blue-400 transition">
