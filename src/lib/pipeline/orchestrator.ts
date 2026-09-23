@@ -15,8 +15,6 @@ import {
 } from "../providers";
 import { runFactPipeline } from "./fact-pipeline";
 import { runStylePipeline } from "./style-pipeline";
-import { runRewritePipeline } from "./rewrite-pipeline";
-import { runDeltaCheck } from "./delta-check";
 import {
   FetchProvider,
   GoogleFactCheckClient,
@@ -144,53 +142,9 @@ export async function runOrchestrator(
       durationMs: Date.now() - parallelStartTime,
     });
 
-    emit(
-      "REWRITING",
-      65,
-      `ファクト台帳とスタイル問題に基づく修正計画（RewritePlan）を策定中...`,
-      {
-        claimsCount: factResult.claims.length,
-        styleIssuesCount: styleResult.length,
-      }
-    );
-
-    // Stage 3: Rewrite Pipeline
-    const rewriteStartTime = Date.now();
-    const rewriteOutput = await runRewritePipeline(
-      text,
-      factResult.factLedger,
-      styleResult,
-      {
-        llm,
-        onProgress: (p) => {
-          emit("REWRITING", p.percent, p.message);
-        },
-      }
-    );
-    timings.push({
-      stage: "Rewrite",
-      durationMs: Date.now() - rewriteStartTime,
-    });
-
-    // Stage 4: Delta Check & Final Verification
-    emit("VERIFYING", 85, "リライト文章の差分検査（Delta Check）を実行中...");
-    const deltaStartTime = Date.now();
-    const deltaResult = await runDeltaCheck(
-      text,
-      rewriteOutput.revisedText,
-      rewriteOutput.plan,
-      {
-        jev,
-        llm,
-        onProgress: (p) => {
-          emit("VERIFYING", p.percent, p.message);
-        },
-      }
-    );
-    timings.push({
-      stage: "DeltaCheck",
-      durationMs: Date.now() - deltaStartTime,
-    });
+    // No rewriting. This tool reports how well each sentence is held up and
+    // leaves the writing to the writer: nothing here changes their words.
+    emit("STYLE_ANALYSIS", 85, "結果をまとめています...");
 
     const providerStatuses: ProviderStatus[] = [
       { service: "文章の生成", provider: llm },
@@ -229,7 +183,8 @@ export async function runOrchestrator(
 
     const finalResult: AnalysisResult = {
       originalText: text,
-      revisedText: deltaResult.verifiedText,
+      // The document as written. Nothing was rewritten.
+      revisedText: text,
       summary: {
         claimsChecked: factResult.claims.length,
         supported,
@@ -243,8 +198,6 @@ export async function runOrchestrator(
       sources: factResult.evidences,
       timings,
       providerStatuses,
-      unauthorizedChangeDetected: deltaResult.unauthorizedChangeDetected,
-      revisionRolledBack: deltaResult.rolledBack,
     };
 
     store.updateJob(jobId, {

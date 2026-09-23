@@ -1,5 +1,5 @@
 import { Claim, Importance } from "@/types";
-import { LLMProvider, RewriteInput, SurgicalFixInput } from "./types";
+import { LLMProvider } from "./types";
 import { recordFailure } from "../diagnostics";
 import {
   DOCUMENT_QUERY_SYSTEM_PROMPT,
@@ -217,53 +217,5 @@ Return a JSON object with this exact structure:
     }
   }
 
-  async rewrite(input: RewriteInput): Promise<string> {
-    try {
-      const { originalText, plan } = input;
-
-      const instructions = [
-        "You are a professional editor performing precise text quality assurance.",
-        "Rewrite the provided text strictly adhering to the following rules:",
-        "1. Factual Corrections: Apply ALL fact ledger corrections. Replace contradicted claims with their correctedClaim.",
-        "2. Style Fixes: Remove or revise all identified AI-tells / style issues according to their repair instructions.",
-        "3. Invariant Preservation: You MUST PRESERVE all immutable facts, protected quotes, and protected names without modification.",
-        "4. Natural Flow: Ensure smooth, professional prose while retaining original intent and tone.",
-        "5. No Hallucinations: Do NOT introduce any new unverified factual claims.",
-        "Return ONLY the rewritten prose without meta-commentary, markdown wrapping, or explanations.",
-      ].join("\n");
-
-      const planJson = JSON.stringify(
-        {
-          corrections: plan.corrections.map((c) => ({
-            original: c.originalClaim,
-            verdict: c.verdict,
-            correctedClaim: c.correctedClaim,
-            reason: c.correctionReason,
-            lockedFacts: c.lockedFacts,
-          })),
-          styleIssues: plan.styleIssues.map((s) => ({
-            ruleId: s.ruleId,
-            targetText: s.targetText,
-            repairInstruction: s.repairInstruction,
-          })),
-          immutableFacts: plan.immutableFacts,
-          protectedQuotes: plan.protectedQuotes,
-          protectedNames: plan.protectedNames,
-        },
-        null,
-        2
-      );
-
-      const userPrompt = `Rewrite Plan:\n${planJson}\n\nOriginal Text:\n${originalText}`;
-
-      return await this.callChatCompletion([
-        { role: "system", content: instructions },
-        { role: "user", content: userPrompt },
-      ]);
-    } catch (err) {
-      recordFailure(this, err);
-      throw err;
-    }
-  }
 
 }

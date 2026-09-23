@@ -3,11 +3,7 @@ import { buildRevisedDocument, sortByAttention } from "@/lib/revised-document";
 import { BAND_LABEL } from "@/lib/jev/bands";
 import type { AnalysisResult, ClaimResult, StyleIssue } from "@/types";
 
-function claim(
-  originalText: string,
-  verdict: ClaimResult["verdict"],
-  correctedClaim?: string
-): ClaimResult {
+function claim(originalText: string, verdict: ClaimResult["verdict"]): ClaimResult {
   return {
     claim: {
       id: `claim-${originalText.slice(0, 8)}`,
@@ -17,7 +13,6 @@ function claim(
       factCheckRequired: true,
     },
     verdict,
-    correctedClaim,
     reason: "テスト用の理由。",
     evidence: [],
   };
@@ -219,18 +214,6 @@ describe("buildRevisedDocument", () => {
       expect(view.clipboardText).toBe("価格は12万円。");
     });
 
-    it("carries no marks or annotations", () => {
-      const original = "価格は10万円。";
-
-      const view = buildRevisedDocument({
-        analysis: analysis(original, "価格は12万円。", [
-          claim("価格は10万円", "CONTRADICTED", "価格は12万円"),
-        ]),
-        adoption: { ...ACCEPTED },
-      });
-
-      expect(view.clipboardText).toBe("価格は12万円。");
-    });
   });
 
   describe("character counts", () => {
@@ -291,34 +274,6 @@ describe("buildRevisedDocument", () => {
   });
 
   describe("adoption", () => {
-    it("keeps the corrected wording when nothing was rejected", () => {
-      const original = "価格は10万円。";
-
-      const view = buildRevisedDocument({
-        analysis: analysis(original, "価格は12万円。", [
-          claim("価格は10万円。", "CONTRADICTED", "価格は12万円。"),
-        ]),
-        adoption: { ...ACCEPTED },
-      });
-
-      expect(paragraphText(view.paragraphs[0])).toBe("価格は12万円。");
-      expect(view.clipboardText).toBe("価格は12万円。");
-    });
-
-    it("restores the original wording for a rejected fact correction", () => {
-      const original = "価格は10万円。";
-
-      const view = buildRevisedDocument({
-        analysis: analysis(original, "価格は12万円。", [
-          claim("価格は10万円。", "CONTRADICTED", "価格は12万円。"),
-        ]),
-        adoption: { ...ACCEPTED, "fact-0": false },
-      });
-
-      expect(paragraphText(view.paragraphs[0])).toBe("価格は10万円。");
-      expect(view.clipboardText).toBe("価格は10万円。");
-    });
-
     it("restores the original wording for a rejected style repair", () => {
       const original = "まとめると、こうなる。";
 
@@ -330,35 +285,6 @@ describe("buildRevisedDocument", () => {
       expect(paragraphText(view.paragraphs[0])).toBe("まとめると、こうなる。");
     });
 
-    it("leaves other sentences corrected when one is rejected", () => {
-      const original = "価格は10万円。\n\n発売日は3月1日。";
-      const revised = "価格は12万円。\n\n発売日は4月1日。";
-
-      const view = buildRevisedDocument({
-        analysis: analysis(original, revised, [
-          claim("価格は10万円。", "CONTRADICTED", "価格は12万円。"),
-          claim("発売日は3月1日。", "CONTRADICTED", "発売日は4月1日。"),
-        ]),
-        adoption: { ...ACCEPTED, "fact-0": false },
-      });
-
-      expect(view.clipboardText).toBe("価格は10万円。\n\n発売日は4月1日。");
-    });
-
-    it("reflects a rejection in the comparison pairs too", () => {
-      const original = "価格は10万円。";
-
-      const view = buildRevisedDocument({
-        analysis: analysis(original, "価格は12万円。", [
-          claim("価格は10万円。", "CONTRADICTED", "価格は12万円。"),
-        ]),
-        adoption: { ...ACCEPTED, "fact-0": false },
-      });
-
-      expect(view.comparison).toEqual([
-        { original: "価格は10万円。", revised: "価格は10万円。" },
-      ]);
-    });
   });
 
   describe("the writer's spacing", () => {
@@ -423,95 +349,6 @@ describe("buildRevisedDocument", () => {
     });
   });
 
-  describe("findings", () => {
-    it("returns one Finding per claim and per raised style issue", () => {
-      const original = "価格は10万円。まとめると、こうなる。";
-
-      const view = buildRevisedDocument({
-        analysis: analysis(original, original, [claim("価格は10万円。", "CONTRADICTED", "価格は12万円。")], [
-          styleIssue("まとめると、こうなる。"),
-        ]),
-        adoption: { ...ACCEPTED },
-      });
-
-      expect(view.findings.map((f) => f.id)).toEqual(["fact-0", "style-0"]);
-    });
-
-    it("places each Finding on the sentence it sits in", () => {
-      const original = "価格は10万円。\n\n発売日は3月1日。";
-
-      const view = buildRevisedDocument({
-        analysis: analysis(original, original, [
-          claim("発売日は3月1日。", "CONTRADICTED", "発売日は4月1日。"),
-        ]),
-        adoption: { ...ACCEPTED },
-      });
-
-      expect(view.findings[0].lineIndex).toBe(1);
-    });
-
-    it("places a Finding on its sentence even when the writer indented it", () => {
-      const original = "　価格は10万円。";
-
-      const view = buildRevisedDocument({
-        analysis: analysis(original, original, [
-          claim("価格は10万円。", "CONTRADICTED", "価格は12万円。"),
-        ]),
-        adoption: { ...ACCEPTED },
-      });
-
-      expect(view.findings[0].lineIndex).toBe(0);
-    });
-
-    it("marks a Finding as adopted unless it was rejected", () => {
-      const original = "価格は10万円。";
-      const claims = [claim("価格は10万円。", "CONTRADICTED", "価格は12万円。")];
-
-      const adopted = buildRevisedDocument({
-        analysis: analysis(original, "価格は12万円。", claims),
-        adoption: { ...ACCEPTED },
-      });
-      const rejectedView = buildRevisedDocument({
-        analysis: analysis(original, "価格は12万円。", claims),
-        adoption: { ...ACCEPTED, "fact-0": false },
-      });
-
-      expect(adopted.findings[0].adopted).toBe(true);
-      expect(rejectedView.findings[0].adopted).toBe(false);
-    });
-
-    it("reports confidence as a percentage whichever scale it arrived on", () => {
-      const original = "価格は10万円。";
-      const ratio = { ...claim("価格は10万円。", "CONTRADICTED", "価格は12万円。"), confidence: 0.82 };
-      const scaled = { ...claim("価格は10万円。", "CONTRADICTED", "価格は12万円。"), confidence: 82 };
-
-      const fromRatio = buildRevisedDocument({
-        analysis: analysis(original, original, [ratio]),
-        adoption: { ...ACCEPTED },
-      });
-      const fromScaled = buildRevisedDocument({
-        analysis: analysis(original, original, [scaled]),
-        adoption: { ...ACCEPTED },
-      });
-
-      expect(fromRatio.findings[0].confidence).toBe(82);
-      expect(fromScaled.findings[0].confidence).toBe(82);
-    });
-
-    it("carries no timestamp", () => {
-      const original = "価格は10万円。";
-
-      const view = buildRevisedDocument({
-        analysis: analysis(original, original, [
-          claim("価格は10万円。", "CONTRADICTED", "価格は12万円。"),
-        ]),
-        adoption: { ...ACCEPTED },
-      });
-
-      expect(view.findings[0]).not.toHaveProperty("timeAgo");
-    });
-  });
-
   describe("whether anything was found", () => {
     it("reports nothing found when there are no claims and no style issues", () => {
       const view = buildRevisedDocument({
@@ -531,19 +368,6 @@ describe("buildRevisedDocument", () => {
       });
 
       expect(view.hasFindings).toBe(false);
-    });
-
-    it("reports something found for a contradicted claim", () => {
-      const original = "価格は10万円。";
-
-      const view = buildRevisedDocument({
-        analysis: analysis(original, "価格は12万円。", [
-          claim("価格は10万円", "CONTRADICTED", "価格は12万円"),
-        ]),
-        adoption: { ...ACCEPTED },
-      });
-
-      expect(view.hasFindings).toBe(true);
     });
 
     it("reports something found for an unverified claim", () => {
@@ -594,22 +418,6 @@ describe("inline marks", () => {
       .map((s) => ({ text: s.text, kind: s.mark!.kind, findingId: s.mark!.findingIds[0] }));
   }
 
-  it("marks the corrected span of a fact, not the whole sentence", () => {
-    const original = "アップルは2023年9月13日、iPhone 15 Proを発表した。";
-    const revised = "アップルは2023年9月12日、iPhone 15 Proを発表した。";
-
-    const view = buildRevisedDocument({
-      analysis: analysis(original, revised, [
-        claim("アップルは2023年9月13日", "CONTRADICTED", "アップルは2023年9月12日"),
-      ]),
-      adoption: { ...ACCEPTED },
-    });
-
-    expect(marks(view)).toEqual([
-      { text: "12", kind: "fact", findingId: "fact-0" },
-    ]);
-  });
-
   it("marks a repaired AI-tell across its whole sentence", () => {
     const original = "まとめると、まとめると、こうなる。";
     const revised = "こうなる。";
@@ -648,112 +456,9 @@ describe("inline marks", () => {
     expect(marks(view)).toEqual([]);
   });
 
-  it("falls back to the sentence when the corrected span cannot be located", () => {
-    const original = "価格は10万円である。";
-    const revised = "価格は12万円である。";
-
-    const view = buildRevisedDocument({
-      analysis: analysis(original, revised, [
-        claim("価格は10万円である。", "CONTRADICTED", "まったく別の文言"),
-      ]),
-      adoption: { ...ACCEPTED },
-    });
-
-    expect(marks(view)).toEqual([
-      { text: "価格は12万円である。", kind: "fact", findingId: "fact-0" },
-    ]);
-  });
-
-  it("loses no text to the marks", () => {
-    const original = "アップルは2023年9月13日、iPhone 15 Proを発表した。";
-    const revised = "アップルは2023年9月12日、iPhone 15 Proを発表した。";
-
-    const view = buildRevisedDocument({
-      analysis: analysis(original, revised, [
-        claim("アップルは2023年9月13日", "CONTRADICTED", "アップルは2023年9月12日"),
-      ]),
-      adoption: { ...ACCEPTED },
-    });
-
-    expect(paragraphText(view.paragraphs[0])).toBe(revised);
-  });
-
-  it("keeps marks out of the clipboard body", () => {
-    const original = "アップルは2023年9月13日、iPhone 15 Proを発表した。";
-    const revised = "アップルは2023年9月12日、iPhone 15 Proを発表した。";
-
-    const view = buildRevisedDocument({
-      analysis: analysis(original, revised, [
-        claim("アップルは2023年9月13日", "CONTRADICTED", "アップルは2023年9月12日"),
-      ]),
-      adoption: { ...ACCEPTED },
-    });
-
-    expect(view.clipboardText).toBe(revised);
-  });
-
-  it("reaches both Findings when a fact and an AI-tell share a sentence", () => {
-    const original = "まとめると、価格は10万円である。";
-    const revised = "まとめると、価格は12万円である。";
-
-    const view = buildRevisedDocument({
-      analysis: analysis(
-        original,
-        revised,
-        [claim("価格は10万円である", "CONTRADICTED", "価格は12万円である")],
-        [styleIssue("まとめると、価格は10万円である。")]
-      ),
-      adoption: { ...ACCEPTED },
-    });
-
-    const found = marks(view);
-    expect([...new Set(found.map((m) => m.findingId))].sort()).toEqual(["fact-0", "style-0"]);
-    expect(paragraphText(view.paragraphs[0])).toBe(revised);
-  });
 });
 
 describe("a Finding that cannot be placed", () => {
-  it("reports no sentence rather than guessing at one", () => {
-    const original = "価格は10万円である。";
-
-    const view = buildRevisedDocument({
-      analysis: analysis(original, original, [
-        claim("この文章に存在しない主張", "CONTRADICTED", "訂正後の文言"),
-      ]),
-      adoption: { ...ACCEPTED },
-    });
-
-    expect(view.findings[0].lineIndex).toBe(-1);
-  });
-
-  it("marks nothing at all", () => {
-    const original = "価格は10万円である。";
-
-    const view = buildRevisedDocument({
-      analysis: analysis(original, original, [
-        claim("この文章に存在しない主張", "CONTRADICTED", "訂正後の文言"),
-      ]),
-      adoption: { ...ACCEPTED },
-    });
-
-    const marked = view.paragraphs.flatMap((p) => p.segments).filter((s) => s.mark);
-    expect(marked).toEqual([]);
-  });
-
-  it("does not revert another sentence when it is rejected", () => {
-    const original = "価格は10万円である。";
-    const revised = "価格は12万円である。";
-
-    const view = buildRevisedDocument({
-      analysis: analysis(original, revised, [
-        claim("この文章に存在しない主張", "CONTRADICTED", "訂正後の文言"),
-      ]),
-      adoption: { ...ACCEPTED, "fact-0": false },
-    });
-
-    expect(view.clipboardText).toBe(revised);
-  });
-
   it("does not mark the first sentence for an unplaceable style issue", () => {
     const original = "一文目。二文目。";
 
@@ -774,69 +479,6 @@ describe("locating the changed wording", () => {
       .filter((s) => s.mark)
       .map((s) => ({ text: s.text, ids: s.mark!.findingIds, kind: s.mark!.kind }));
   }
-
-  it("marks the figure that changed, not the claim around it", () => {
-    const original = "本体価格は49980円です。";
-    const revised = "本体価格は69980円です。";
-
-    const view = buildRevisedDocument({
-      analysis: analysis(original, revised, [
-        claim("本体価格は49980円", "CONTRADICTED", "本体価格は69980円"),
-      ]),
-      adoption: { ...ACCEPTED },
-    });
-
-    expect(marked(view).map((m) => m.text)).toEqual(["69980"]);
-  });
-
-  it("marks the right occurrence when the figure appears twice", () => {
-    const original = "12月の売上は12億円でした。";
-    const revised = "12月の売上は15億円でした。";
-
-    const view = buildRevisedDocument({
-      analysis: analysis(original, revised, [
-        claim("12月の売上は12億円", "CONTRADICTED", "12月の売上は15億円"),
-      ]),
-      adoption: { ...ACCEPTED },
-    });
-
-    const found = marked(view);
-    expect(found.map((m) => m.text)).toEqual(["15"]);
-    expect(paragraphText(view.paragraphs[0])).toBe(revised);
-  });
-
-  it("keeps both corrections reachable when one sentence carries two", () => {
-    const original = "価格は10万円で、重さは500gです。";
-    const revised = "価格は12万円で、重さは600gです。";
-
-    const view = buildRevisedDocument({
-      analysis: analysis(original, revised, [
-        claim("価格は10万円", "CONTRADICTED", "価格は12万円"),
-        claim("重さは500g", "CONTRADICTED", "重さは600g"),
-      ]),
-      adoption: { ...ACCEPTED },
-    });
-
-    const ids = marked(view).flatMap((m) => m.ids);
-    expect(ids.sort()).toEqual(["fact-0", "fact-1"]);
-    expect(paragraphText(view.paragraphs[0])).toBe(revised);
-  });
-
-  it("keeps both reachable when neither can be located", () => {
-    const original = "価格は10万円である。";
-
-    const view = buildRevisedDocument({
-      analysis: analysis(original, original, [
-        claim("価格は10万円である。", "CONTRADICTED", "まったく別の文言"),
-        claim("価格は10万円である。", "CONTRADICTED", "これも別の文言"),
-      ]),
-      adoption: { ...ACCEPTED },
-    });
-
-    const found = marked(view);
-    expect(found).toHaveLength(1);
-    expect(found[0].ids.sort()).toEqual(["fact-0", "fact-1"]);
-  });
 
   it("treats a MIXED claim as needing a person, not as confirmed", () => {
     const original = "価格は10万円である。";
@@ -865,19 +507,6 @@ describe("locating the changed wording", () => {
 });
 
 describe("Finding headings", () => {
-  it("names the kind and the words that changed", () => {
-    const original = "価格は10万円である。";
-
-    const view = buildRevisedDocument({
-      analysis: analysis(original, "価格は12万円である。", [
-        claim("価格は10万円", "CONTRADICTED", "価格は12万円"),
-      ]),
-      adoption: { ...ACCEPTED },
-    });
-
-    expect(view.findings[0].title).toBe("資料と食い違い: 10");
-  });
-
   it("names the kind and the claim for an unverified one", () => {
     const original = "価格は10万円である。";
 
@@ -887,19 +516,6 @@ describe("Finding headings", () => {
     });
 
     expect(view.findings[0].title).toBe("裏付けが見つかりません: 価格は10万円である。");
-  });
-
-  it("is meaningful for an article the sample keywords never covered", () => {
-    const original = "売上は前年比120%だった。";
-
-    const view = buildRevisedDocument({
-      analysis: analysis(original, "売上は前年比140%だった。", [
-        claim("売上は前年比120%", "CONTRADICTED", "売上は前年比140%"),
-      ]),
-      adoption: { ...ACCEPTED },
-    });
-
-    expect(view.findings[0].title).toBe("資料と食い違い: 120");
   });
 
   it("names the rule and its target for an AI-tell", () => {
@@ -927,19 +543,6 @@ describe("Evidence and heading edges", () => {
     expect(view.findings[0].sourceUrl).toBe("");
   });
 
-  it("names the wording that was wrong, not the wording that replaced it", () => {
-    const original = "メインカメラは20MPである。";
-
-    const view = buildRevisedDocument({
-      analysis: analysis(original, "メインカメラは48MPである。", [
-        claim("メインカメラは20MP", "CONTRADICTED", "メインカメラは48MP"),
-      ]),
-      adoption: { ...ACCEPTED },
-    });
-
-    expect(view.findings[0].title).toBe("資料と食い違い: 20MP");
-  });
-
   it("says a long target was cut rather than ending mid-word", () => {
     const long = "売上は前年比120%で、これは全社の見通しを大きく上回る結果でした。";
 
@@ -950,157 +553,6 @@ describe("Evidence and heading edges", () => {
 
     expect(view.findings[0].title).toContain("…");
     expect(view.findings[0].title).not.toContain(long);
-  });
-});
-
-describe("a refused correction", () => {
-  function marked(view: { paragraphs: { segments: { text: string; mark?: { findingIds: string[]; kind: string; rejected: boolean } }[] }[] }) {
-    return view.paragraphs
-      .flatMap((p) => p.segments)
-      .filter((s) => s.mark)
-      .map((s) => ({ text: s.text, kind: s.mark!.kind, rejected: s.mark!.rejected }));
-  }
-
-  const original = "価格は10万円である。";
-  const revised = "価格は12万円である。";
-  const claims = [claim("価格は10万円", "CONTRADICTED", "価格は12万円")];
-
-  it("keeps its mark, on the reader's own wording", () => {
-    const view = buildRevisedDocument({
-      analysis: analysis(original, revised, claims),
-      adoption: { ...ACCEPTED, "fact-0": false },
-    });
-
-    expect(marked(view)).toEqual([{ text: "10", kind: "fact", rejected: true }]);
-  });
-
-  it("is told apart from one that was accepted", () => {
-    const accepted = buildRevisedDocument({
-      analysis: analysis(original, revised, claims),
-      adoption: { ...ACCEPTED },
-    });
-
-    expect(marked(accepted)).toEqual([{ text: "12", kind: "fact", rejected: false }]);
-  });
-
-  it("goes back to the correction when it is accepted again", () => {
-    const view = buildRevisedDocument({
-      analysis: analysis(original, revised, claims),
-      adoption: { ...ACCEPTED, "fact-0": true },
-    });
-
-    expect(marked(view)).toEqual([{ text: "12", kind: "fact", rejected: false }]);
-    expect(view.clipboardText).toBe(revised);
-  });
-
-  it("is not something an unverified claim can be", () => {
-    const view = buildRevisedDocument({
-      analysis: analysis(original, original, [claim("価格は10万円である。", "INSUFFICIENT")]),
-      adoption: { ...ACCEPTED },
-    });
-
-    expect(view.findings[0].adoptable).toBe(false);
-  });
-
-  it("is something a correction can be", () => {
-    const view = buildRevisedDocument({
-      analysis: analysis(original, revised, claims),
-      adoption: { ...ACCEPTED },
-    });
-
-    expect(view.findings[0].adoptable).toBe(true);
-  });
-
-  it("is not something a confirmed claim can be", () => {
-    const view = buildRevisedDocument({
-      analysis: analysis(original, original, [claim("価格は10万円である。", "SUPPORTED")]),
-      adoption: { ...ACCEPTED },
-    });
-
-    expect(view.findings[0].adoptable).toBe(false);
-  });
-});
-
-describe("refusing one correction among several", () => {
-  const original = "価格は10万円で、重さは500gである。";
-  const revised = "価格は12万円で、重さは600gである。";
-  const claims = [
-    claim("価格は10万円", "CONTRADICTED", "価格は12万円"),
-    claim("重さは500g", "CONTRADICTED", "重さは600g"),
-  ];
-
-  it("puts back only the words that correction replaced", () => {
-    const view = buildRevisedDocument({
-      analysis: analysis(original, revised, claims),
-      adoption: { ...ACCEPTED, "fact-0": false },
-    });
-
-    expect(view.clipboardText).toBe("価格は10万円で、重さは600gである。");
-  });
-
-  it("leaves the correction accepted alongside it in place", () => {
-    const view = buildRevisedDocument({
-      analysis: analysis(original, revised, claims),
-      adoption: { ...ACCEPTED, "fact-1": false },
-    });
-
-    expect(view.clipboardText).toBe("価格は12万円で、重さは500gである。");
-  });
-
-  it("restores the sentence when both are refused", () => {
-    const view = buildRevisedDocument({
-      analysis: analysis(original, revised, claims),
-      adoption: { ...ACCEPTED, "fact-0": false, "fact-1": false },
-    });
-
-    expect(view.clipboardText).toBe(original);
-  });
-
-  it("restores the whole sentence when the AI-tell repair is refused", () => {
-    const before = "まとめると、価格は10万円である。";
-    const after = "価格は12万円である。";
-
-    const view = buildRevisedDocument({
-      analysis: analysis(before, after, [claim("価格は10万円", "CONTRADICTED", "価格は12万円")], [
-        styleIssue("まとめると、価格は10万円である。"),
-      ]),
-      adoption: { ...ACCEPTED, "style-0": false },
-    });
-
-    expect(view.clipboardText).toBe(before);
-  });
-
-  it("offers nothing to adopt on a claim it could not place", () => {
-    const view = buildRevisedDocument({
-      analysis: analysis(original, revised, [
-        claim("この文章に存在しない主張", "CONTRADICTED", "訂正後の文言"),
-      ]),
-      adoption: { ...ACCEPTED },
-    });
-
-    expect(view.findings[0].adoptable).toBe(false);
-  });
-
-  it("offers nothing to adopt when the correction reads the same as the original", () => {
-    const view = buildRevisedDocument({
-      analysis: analysis(original, original, [claim("価格は10万円", "CONTRADICTED")]),
-      adoption: { ...ACCEPTED },
-    });
-
-    expect(view.findings[0].adoptable).toBe(false);
-  });
-
-  it("shows an AI-tell's own rewrite rather than a stock phrase", () => {
-    const before = "まとめると、まとめると、こうなる。";
-    const after = "こうなる。";
-
-    const view = buildRevisedDocument({
-      analysis: analysis(before, after, [], [styleIssue(before)]),
-      adoption: { ...ACCEPTED },
-    });
-
-    expect(view.findings[0].originalText).toBe(before);
-    expect(view.findings[0].revisedText).toBe(after);
   });
 });
 
@@ -1131,35 +583,6 @@ describe("what the panel shows beside the document", () => {
     expect(view.findings[0].sentenceAfter).toBe(original);
   });
 
-  it("shows the sentence as the document now reads it", () => {
-    const original = "価格は10万円である。";
-    const revised = "価格は12万円である。";
-
-    const view = buildRevisedDocument({
-      analysis: analysis(original, revised, [
-        claim("価格は10万円", "CONTRADICTED", "価格は12万円"),
-      ]),
-      adoption: { ...ACCEPTED },
-    });
-
-    expect(view.findings[0].sentenceBefore).toBe(original);
-    expect(view.findings[0].sentenceAfter).toBe(revised);
-  });
-
-  it("follows a refusal, so the panel never contradicts the document", () => {
-    const original = "価格は10万円である。";
-    const revised = "価格は12万円である。";
-
-    const view = buildRevisedDocument({
-      analysis: analysis(original, revised, [
-        claim("価格は10万円", "CONTRADICTED", "価格は12万円"),
-      ]),
-      adoption: { ...ACCEPTED, "fact-0": false },
-    });
-
-    expect(view.findings[0].sentenceAfter).toBe(original);
-    expect(view.clipboardText).toBe(original);
-  });
 });
 
 describe("where a Finding's evidence went", () => {
@@ -1278,42 +701,6 @@ describe("弱い順に並べる", () => {
   });
 });
 
-describe("断定しない", () => {
-  it("資料が違うことを書いていても、勝手に書き換えない", () => {
-    const original = "価格は10万円。";
-
-    const view = buildRevisedDocument({
-      analysis: analysis(original, "価格は12万円。", [
-        claim("価格は10万円", "CONTRADICTED", "価格は12万円"),
-      ]),
-      adoption: {},
-    });
-
-    // The reader's own words stand until they accept the suggestion.
-    expect(view.clipboardText).toBe("価格は10万円。");
-    expect(view.findings[0].adopted).toBe(false);
-    expect(view.findings[0].adoptable).toBe(true);
-  });
-
-  it("札は「誤り」ではなく、資料との関係を述べる", () => {
-    const view = buildRevisedDocument({
-      analysis: analysis("価格は10万円。", "価格は10万円。", [
-        claim("価格は10万円", "CONTRADICTED", "価格は12万円"),
-        claim("重さは500g", "SUPPORTED"),
-        claim("発売日は3月1日", "INSUFFICIENT"),
-      ]),
-      adoption: {},
-    });
-
-    const labels = view.findings.filter((f) => f.type === "fact").map((f) => f.categoryLabel);
-
-    expect(labels).toContain("資料と食い違い");
-    expect(labels).toContain("資料と一致");
-    expect(labels).toContain("裏付けなし");
-    expect(labels.join()).not.toContain("誤り");
-  });
-});
-
 describe("言い換えられた主張の置き場所", () => {
   it("引用ではなく言い換えでも、その文に結びつける", () => {
     const original = "名古屋駅から徒歩8分、国際センター駅から徒歩3分。名古屋市西区那古野に拠点を構える。";
@@ -1355,17 +742,19 @@ describe("印の見た目", () => {
     expect(marks.every((s) => s.mark!.rejected)).toBe(false);
   });
 
-  it("断られた修正案は、断られたものとして描く", () => {
+});
+
+describe("書き換えない", () => {
+  it("資料と食い違う文も、本文はそのまま出す", () => {
     const original = "価格は10万円。";
 
     const view = buildRevisedDocument({
-      analysis: analysis(original, "価格は12万円。", [
-        claim("価格は10万円", "CONTRADICTED", "価格は12万円"),
-      ]),
+      analysis: analysis(original, original, [claim("価格は10万円", "CONTRADICTED")]),
       adoption: {},
     });
 
-    const marks = view.paragraphs.flatMap((p) => p.segments).filter((s) => s.mark);
-    expect(marks.some((s) => s.mark!.rejected)).toBe(true);
+    expect(view.clipboardText).toBe(original);
+    expect(view.findings[0].adoptable).toBe(false);
+    expect(view.findings[0].revisedText).toBe(view.findings[0].originalText);
   });
 });

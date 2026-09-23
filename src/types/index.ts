@@ -50,18 +50,6 @@ export type ClaimVerdict =
   | "MIXED"
   | "INSUFFICIENT";
 
-export type FactLedgerItem = {
-  claimId: string;
-  originalClaim: string;
-  verdict: ClaimVerdict;
-  correctedClaim?: string;
-  correctionReason?: string;
-  lockedFacts: string[];
-  evidenceIds: string[];
-  /** JEV's number for this claim, or nothing when no judgement produced one. */
-  confidence?: number;
-};
-
 export type StyleSeverity = "low" | "medium" | "high";
 
 export type StyleRule = {
@@ -84,18 +72,9 @@ export type StyleIssue = {
   repairInstruction: string;
 };
 
-export type RewritePlan = {
-  corrections: FactLedgerItem[];
-  styleIssues: StyleIssue[];
-  immutableFacts: string[];
-  protectedQuotes: string[];
-  protectedNames: string[];
-};
-
 export type ClaimResult = {
   claim: Claim;
   verdict: ClaimVerdict;
-  correctedClaim?: string;
   reason?: string;
   evidence: Evidence[];
   confidence?: number;

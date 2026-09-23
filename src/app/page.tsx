@@ -26,7 +26,6 @@ import {
 import {
   AnalysisResult,
   ClaimResult,
-  FactLedgerItem,
   StyleIssue,
 } from "@/types";
 import { splitIntoBlocks } from "@/lib/text/blocks";
@@ -43,9 +42,6 @@ import {
 // Each kind of mark is told apart by shape as well as by colour: a glyph
 // before the span and a distinct underline, so the distinction survives for a
 // reader who cannot separate the hues.
-const NARROW_SCREEN = "(max-width: 1023px)";
-const WIDE_ONLY_TABS = ["side-by-side", "inline"] as const;
-
 const MARK_STYLES: Record<
   MarkKind,
   { className: string; rejectedClassName: string; glyph: string; label: string }
@@ -75,6 +71,9 @@ const MARK_STYLES: Record<
     label: "裏付けが見つかりません",
   },
 };
+
+/** Below this width the Finding opens as a sheet rather than in the side panel. */
+const NARROW_SCREEN = "(max-width: 1023px)";
 
 function MarkedText({
   segment,
@@ -126,9 +125,6 @@ export default function HomePage() {
   const [blockProgress, setBlockProgress] = useState<{ done: number; total: number } | null>(null);
 
   // Result View Controls
-  const [viewTab, setViewTab] = useState<"original" | "revised" | "side-by-side" | "inline">("revised");
-  const [onlyDiff, setOnlyDiff] = useState(false);
-  const [inlineDiffMode, setInlineDiffMode] = useState(true);
   const [selectedFindingId, setSelectedFindingId] = useState<string | null>(null);
   const [categoryFilter, setCategoryFilter] = useState<"all" | "fact" | "warning" | "style" | "verified">("all");
 
@@ -226,29 +222,11 @@ export default function HomePage() {
     }
   };
 
-  // A narrow window offers 修正版 and 原文 only, so a reader carrying one of
-  // the comparison views across the breakpoint lands on the document.
-  useEffect(() => {
-    const narrow = window.matchMedia(NARROW_SCREEN);
-    const settle = () => {
-      if (!narrow.matches) return;
-      setViewTab((current) =>
-        WIDE_ONLY_TABS.includes(current as (typeof WIDE_ONLY_TABS)[number])
-          ? "revised"
-          : current
-      );
-    };
-
-    settle();
-    narrow.addEventListener("change", settle);
-    return () => narrow.removeEventListener("change", settle);
-  }, []);
-
   // The sheet is how a narrow screen opens a Finding. It has no business
   // surviving a change of view, or a window grown past the breakpoint.
   useEffect(() => {
     setSheetOpen(false);
-  }, [viewTab, categoryFilter]);
+  }, [categoryFilter]);
 
   useEffect(() => {
     if (!sheetOpen) return;
@@ -541,17 +519,9 @@ export default function HomePage() {
 
                     {/* 原文 */}
                     <div className="space-y-1">
-                      <span className="text-slate-400 font-medium">原文</span>
+                      <span className="text-slate-400 font-medium">この文</span>
                       <div className="bg-red-50 text-red-900 border border-red-200 rounded-lg p-2 leading-relaxed">
                         {currentFinding.sentenceBefore || currentFinding.originalText}
-                      </div>
-                    </div>
-
-                    {/* 修正版 */}
-                    <div className="space-y-1">
-                      <span className="text-slate-400 font-medium">修正版</span>
-                      <div className="bg-emerald-50 text-emerald-900 border border-emerald-200 rounded-lg p-2 leading-relaxed">
-                        {currentFinding.sentenceAfter || currentFinding.revisedText}
                       </div>
                     </div>
 
@@ -624,44 +594,18 @@ export default function HomePage() {
                     )}
                   </div>
 
-                  {/* 採用 / 元に戻す, where there is a correction to weigh */}
-                  {currentFinding.adoptable ? (
-                  <div className="grid grid-cols-2 gap-3 pt-2">
-                    <button
-                      onClick={() => handleAdoptToggle(currentFinding.id, true)}
-                      className={`flex items-center justify-center gap-1.5 py-2.5 rounded-xl font-bold text-xs transition shadow-sm ${
-                        currentFinding.adopted
-                          ? "bg-blue-600 text-white hover:bg-blue-700"
-                          : "bg-slate-100 text-slate-700 hover:bg-slate-200"
-                      }`}
-                    >
-                      <Check className="w-4 h-4" />
-                      <span>採用</span>
-                    </button>
-
-                    <button
-                      onClick={() => handleAdoptToggle(currentFinding.id, false)}
-                      className={`flex items-center justify-center gap-1.5 py-2.5 rounded-xl font-bold text-xs border transition ${
-                        !currentFinding.adopted
-                          ? "border-blue-600 text-blue-600 bg-blue-50"
-                          : "border-slate-300 text-slate-600 hover:bg-slate-50"
-                      }`}
-                    >
-                      <RotateCcw className="w-4 h-4" />
-                      <span>元に戻す</span>
-                    </button>
-                  </div>
-                  ) : currentFinding.kind === "unverified" ? (
+                  {/* この道具は書き換えない。どう直すかは書き手が決める。 */}
+                  {currentFinding.kind === "unverified" ? (
                     <div className="flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-900">
                       <AlertTriangle className="w-4 h-4 shrink-0 text-amber-600 mt-0.5" />
                       <span>
-                        この箇所は書き換えていません。裏付けが取れなかったため、ご自身で一次情報をお確かめください。
+                        裏付けが取れなかった箇所です。ご自身で一次情報をお確かめください。
                       </span>
                     </div>
                   ) : currentFinding.kind === "confirmed" ? (
                     <div className="flex items-start gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-xs text-emerald-900">
                       <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-600 mt-0.5" />
-                      <span>この箇所は裏付けが取れており、書き換えていません。</span>
+                      <span>集めた資料と一致していた箇所です。</span>
                     </div>
                   ) : null}
 
@@ -909,87 +853,12 @@ export default function HomePage() {
                 </div>
               </div>
 
-              {/* View Switcher Tabs & Diff Toggle */}
-              <div className="px-6 border-b border-slate-200 flex items-center justify-between shrink-0 bg-slate-50/40">
-                <div className="flex items-center gap-8 text-xs font-medium">
-                  <button
-                    onClick={() => setViewTab("original")}
-                    className={`py-3 transition border-b-2 ${
-                      viewTab === "original"
-                        ? "border-blue-600 text-blue-600 font-bold"
-                        : "border-transparent text-slate-500 hover:text-slate-800"
-                    }`}
-                  >
-                    原文
-                  </button>
-                  <button
-                    onClick={() => setViewTab("revised")}
-                    className={`py-3 transition border-b-2 ${
-                      viewTab === "revised"
-                        ? "border-blue-600 text-blue-600 font-bold"
-                        : "border-transparent text-slate-500 hover:text-slate-800"
-                    }`}
-                  >
-                    修正版
-                  </button>
-                  <button
-                    onClick={() => setViewTab("side-by-side")}
-                    className={`hidden lg:block py-3 transition border-b-2 ${
-                      viewTab === "side-by-side"
-                        ? "border-blue-600 text-blue-600 font-bold"
-                        : "border-transparent text-slate-500 hover:text-slate-800"
-                    }`}
-                  >
-                    左右比較
-                  </button>
-                  <button
-                    onClick={() => setViewTab("inline")}
-                    className={`hidden lg:block py-3 transition border-b-2 ${
-                      viewTab === "inline"
-                        ? "border-blue-600 text-blue-600 font-bold"
-                        : "border-transparent text-slate-500 hover:text-slate-800"
-                    }`}
-                  >
-                    インライン差分
-                  </button>
-                </div>
-
-                <div className="flex items-center gap-2 text-xs text-slate-500">
-                  <span>差分のみ表示</span>
-                  <button
-                    onClick={() => setOnlyDiff(!onlyDiff)}
-                    className={`w-9 h-5 rounded-full transition p-0.5 flex items-center ${
-                      onlyDiff ? "bg-blue-600 justify-end" : "bg-slate-300 justify-start"
-                    }`}
-                  >
-                    <div className="w-4 h-4 rounded-full bg-white shadow-sm" />
-                  </button>
-                </div>
-              </div>
-
-              {/* Main Comparison Container depending on viewTab */}
+              {/* この道具は書き換えない。読むのは一つ、書かれた文章そのもの。 */}
               <div className="flex-1 overflow-y-auto p-6">
-                {viewTab === "original" ? (
-                  /* Original Only */
-                  <div className="max-w-3xl mx-auto space-y-3">
-                    <div className="text-xs font-bold text-slate-600 mb-2">
-                      原文 <span className="font-normal text-slate-400">(文字数: {revisedDocument?.originalText.length ?? 0})</span>
-                    </div>
-                    <div className="space-y-2">
-                      {originalLines.map((line, idx) => (
-                        <div key={idx} className="flex items-start gap-3 p-3 rounded-lg border border-slate-100 bg-white text-xs leading-relaxed">
-                          <span className="text-slate-400 font-mono text-[11px] w-4 shrink-0 select-none">{idx + 1}</span>
-                          <span className="flex-1">{line}</span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                ) : viewTab === "revised" ? (
-                  /* Revised Document */
-                  <div className="max-w-3xl mx-auto space-y-4">
+                <div className="max-w-3xl mx-auto space-y-4">
                     <div className="flex items-center justify-between gap-3">
                       <div className="text-xs font-bold text-slate-600">
-                        修正版{" "}
+                        本文{" "}
                         <span className="font-normal text-slate-400">
                           (文字数: {revisedDocument?.clipboardText.length ?? 0})
                         </span>
@@ -1072,21 +941,10 @@ export default function HomePage() {
                       </details>
                     )}
 
-                    {analysisResult?.unauthorizedChangeDetected && (
-                      <div className="flex items-start gap-2 px-4 py-3 rounded-xl border border-amber-200 bg-amber-50 text-xs text-amber-900">
-                        <AlertTriangle className="w-4 h-4 shrink-0 text-amber-600 mt-0.5" />
-                        <span>
-                          {analysisResult?.revisionRolledBack
-                            ? "書き換えの途中で、根拠のない書き換えが見つかりました。安全のため、文章全体を原文のまま戻しています。"
-                            : "書き換えの途中で、根拠のない書き換えが見つかりました。その箇所は原文の内容に戻してあります。気になる場合は原文と見比べてください。"}
-                        </span>
-                      </div>
-                    )}
-
                     {revisedDocument && !revisedDocument.hasFindings && (
                       <div className="flex items-center gap-2 px-4 py-3 rounded-xl border border-emerald-200 bg-emerald-50 text-xs text-emerald-800">
                         <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-600" />
-                        <span>修正箇所はありませんでした。</span>
+                        <span>気になる箇所は見つかりませんでした。</span>
                       </div>
                     )}
 
@@ -1104,201 +962,9 @@ export default function HomePage() {
                         </p>
                       ))}
                     </article>
-                  </div>
-                ) : viewTab === "inline" ? (
-                  /* Inline Git-diff style */
-                  <div className="max-w-3xl mx-auto space-y-3">
-                    <div className="text-xs font-bold text-slate-600 mb-2">インライン統合差分</div>
-                    <div className="space-y-2 font-mono text-xs">
-                      {originalLines.map((line, idx) => {
-                        const revLine = revisedLines[idx] || "";
-                        const hasDiff = line !== revLine;
-                        if (onlyDiff && !hasDiff) return null;
-
-                        if (!hasDiff) {
-                          return (
-                            <div key={idx} className="p-3 rounded-lg border border-slate-100 bg-white text-slate-700 flex items-start gap-2">
-                              <span className="text-slate-400 text-[11px] w-4 select-none">{idx + 1}</span>
-                              <span className="flex-1">{line}</span>
-                            </div>
-                          );
-                        }
-
-                        return (
-                          <div key={idx} className="space-y-1 p-2.5 rounded-lg border border-slate-200 bg-slate-50/50">
-                            <div className="flex items-start gap-2 text-red-800 bg-red-50 p-2 rounded">
-                              <span className="font-bold text-red-500 w-4 text-center select-none">-</span>
-                              <span className="flex-1">{line}</span>
-                            </div>
-                            <div className="flex items-start gap-2 text-emerald-800 bg-emerald-50 p-2 rounded">
-                              <span className="font-bold text-emerald-600 w-4 text-center select-none">+</span>
-                              <span className="flex-1">{revLine}</span>
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                ) : (
-                  /* Side-by-Side Comparison Container */
-                  <div className="grid grid-cols-2 gap-4">
-                    {/* Left Column: 原文 */}
-                    <div className="space-y-3">
-                      <div className="text-xs font-bold text-slate-600 mb-2">
-                        原文 <span className="font-normal text-slate-400">(文字数: {revisedDocument?.originalText.length ?? 0})</span>
-                      </div>
-
-                      <div className="space-y-2">
-                        {originalLines.map((line, idx) => {
-                          const matchedFinding = findings.find((finding) => finding.lineIndex === idx);
-                          const isSelected = currentFinding?.lineIndex === idx;
-                          const revLine = revisedLines[idx] || "";
-                          const hasDiff = line !== revLine;
-
-                          // Only filter if onlyDiff is true
-                          if (onlyDiff && !hasDiff) return null;
-
-                          let rowStyle = "border-slate-100 bg-white";
-                          if (hasDiff && matchedFinding?.kind === "corrected") {
-                            rowStyle = "bg-red-50/70 border-red-200 text-red-950";
-                          } else if (hasDiff && matchedFinding?.kind === "ai-tell") {
-                            rowStyle = "bg-purple-50/70 border-purple-200 text-purple-950";
-                          } else if (hasDiff && matchedFinding?.kind === "unverified") {
-                            rowStyle = "bg-amber-50/70 border-amber-200 text-amber-950";
-                          }
-
-                          if (isSelected) {
-                            rowStyle += " ring-2 ring-blue-500 shadow-sm";
-                          }
-
-                          return (
-                            <div
-                              key={idx}
-                              onClick={() => {
-                                if (matchedFinding) {
-                                  setSelectedFindingId(matchedFinding.id);
-                                }
-                              }}
-                              className={`flex items-start gap-3 p-3 rounded-lg border text-xs leading-relaxed transition cursor-pointer ${rowStyle}`}
-                            >
-                              <span className="text-slate-400 font-mono text-[11px] w-4 shrink-0 select-none">
-                                {idx + 1}
-                              </span>
-                              <span className="flex-1">{line}</span>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-
-                    {/* Right Column: 修正版 */}
-                    <div className="space-y-3">
-                      <div className="text-xs font-bold text-slate-600 mb-2">
-                        修正版 <span className="font-normal text-slate-400">(文字数: {revisedDocument?.clipboardText.length ?? 0})</span>
-                      </div>
-
-                      <div className="space-y-2">
-                        {revisedLines.map((line, idx) => {
-                          const matchedFinding = findings.find((finding) => finding.lineIndex === idx);
-                          const isSelected = currentFinding?.lineIndex === idx;
-                          const origLine = originalLines[idx] || "";
-                          const hasDiff = line !== origLine;
-
-                          // Only filter if onlyDiff is true
-                          if (onlyDiff && !hasDiff) return null;
-
-                          let rowStyle = "border-slate-100 bg-white";
-                          if (hasDiff && matchedFinding?.adopted) {
-                            if (matchedFinding.kind === "corrected") {
-                              rowStyle = "bg-emerald-50/70 border-emerald-200 text-emerald-950";
-                            } else if (matchedFinding.kind === "ai-tell") {
-                              rowStyle = "bg-purple-50/70 border-purple-200 text-purple-950";
-                            }
-                          }
-
-                          if (isSelected) {
-                            rowStyle += " ring-2 ring-blue-500 shadow-sm";
-                          }
-
-                          return (
-                            <div
-                              key={idx}
-                              onClick={() => {
-                                if (matchedFinding) {
-                                  setSelectedFindingId(matchedFinding.id);
-                                }
-                              }}
-                              className={`flex items-start gap-3 p-3 rounded-lg border text-xs leading-relaxed transition cursor-pointer ${rowStyle}`}
-                            >
-                              <span className="text-slate-400 font-mono text-[11px] w-4 shrink-0 select-none">
-                                {idx + 1}
-                              </span>
-                              <span className="flex-1">{line}</span>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  </div>
-                )}
+                </div>
               </div>
 
-              {/* Center Bottom Card: 選択中の変更箇所の差分 (Image 2 - Component 3) */}
-              {currentFinding && (
-                <div className="border-t border-slate-200 p-4 bg-slate-50/50 shrink-0">
-                  <div className="flex items-center justify-between mb-2">
-                    <div className="flex items-center gap-2 text-xs font-bold text-slate-800">
-                      <span>選択中の変更箇所の差分</span>
-                      <span className="text-slate-400 font-normal">
-                        ({currentFinding.lineIndex >= 0 ? `${currentFinding.lineIndex + 1}行目: ` : ""}{currentFinding.title})
-                      </span>
-                    </div>
-                    <div className="flex items-center gap-1.5 text-xs text-slate-500">
-                      <span>インライン差分</span>
-                      <button
-                        onClick={() => setInlineDiffMode(!inlineDiffMode)}
-                        className={`w-8 h-4 rounded-full transition p-0.5 flex items-center ${
-                          inlineDiffMode ? "bg-blue-600 justify-end" : "bg-slate-300 justify-start"
-                        }`}
-                      >
-                        <div className="w-3 h-3 rounded-full bg-white shadow-sm" />
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* Diff Snippet Box */}
-                  <div className="bg-white border border-slate-200 rounded-lg p-2.5 font-mono text-xs space-y-1">
-                    {currentFinding.originalText.trim() === currentFinding.revisedText.trim() ? (
-                      <div className="flex items-center gap-2 text-slate-500 bg-slate-50 p-2 rounded text-xs">
-                        <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0" />
-                        <span>変更なし（検証済み立証事実を保持）: {currentFinding.originalText}</span>
-                      </div>
-                    ) : inlineDiffMode ? (
-                      <>
-                        <div className="flex items-start gap-2 text-red-700 bg-red-50/60 p-1.5 rounded">
-                          <span className="text-red-400 font-bold w-4 text-center select-none">-</span>
-                          <span className="flex-1">{currentFinding.originalText}</span>
-                        </div>
-                        <div className="flex items-start gap-2 text-emerald-700 bg-emerald-50/60 p-1.5 rounded">
-                          <span className="text-emerald-500 font-bold w-4 text-center select-none">+</span>
-                          <span className="flex-1">{currentFinding.revisedText}</span>
-                        </div>
-                      </>
-                    ) : (
-                      <div className="grid grid-cols-2 gap-2 text-[11px]">
-                        <div className="p-2 rounded bg-red-50 text-red-900 border border-red-100">
-                          <div className="text-[10px] font-bold text-red-600 mb-0.5">原文</div>
-                          {currentFinding.originalText}
-                        </div>
-                        <div className="p-2 rounded bg-emerald-50 text-emerald-900 border border-emerald-100">
-                          <div className="text-[10px] font-bold text-emerald-600 mb-0.5">修正版</div>
-                          {currentFinding.revisedText}
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              )}
             </main>
 
             {/* =========================================
@@ -1490,8 +1156,8 @@ export default function HomePage() {
               </div>
 
               <div className="p-3 bg-emerald-50/50 rounded-xl border border-emerald-100 space-y-1">
-                <div className="font-bold text-emerald-900">3. 差分の比較とワンクリック採用</div>
-                <p>「左右比較」「インライン差分」「差分のみ表示」で変更点を正確に把握し、「採用」「元に戻す」で自由に取捨選択できます。</p>
+                <div className="font-bold text-emerald-900">3. 書き換えはしません</div>
+                <p>この道具は文章を書き換えません。裏付けの弱い箇所を数値で示すだけです。どう直すかは書き手が決めます。</p>
               </div>
             </div>
 
