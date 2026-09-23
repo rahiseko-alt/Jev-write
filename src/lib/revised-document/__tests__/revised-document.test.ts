@@ -715,6 +715,19 @@ describe("言い換えられた主張の置き場所", () => {
     expect(view.paragraphs.flatMap((p) => p.segments).some((s) => s.mark)).toBe(true);
   });
 
+  it("言い換えが本文と離れていても、記事から抜き出した文で結びつける", () => {
+    const original = "前置きの一文。SIPSでもSearchとShareが中核に置かれています。結びの一文。";
+    const result = claim("SIPSでもSearchとShareが中核に置かれています。", "CONTRADICTED");
+    result.claim.normalizedText = "消費行動モデルSIPSの段階構成は検索と共有を含む。";
+
+    const view = buildRevisedDocument({
+      analysis: analysis(original, original, [result]),
+      adoption: {},
+    });
+
+    expect(view.findings[0].lineIndex).toBe(1);
+  });
+
   it("言葉をほとんど共有しない主張は、どこにも貼り付けない", () => {
     const original = "名古屋駅から徒歩8分。";
     const result = claim("まったく別の話題についての記述である。", "INSUFFICIENT");

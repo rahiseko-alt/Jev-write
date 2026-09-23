@@ -124,13 +124,14 @@ export class AnthropicLLMProvider implements LLMProvider {
       const systemPrompt = `You are an expert fact-checking claim extractor.
 Break down the provided text into atomic, objectively verifiable factual claims.
 Avoid opinions, impressions, rhetoric, and broad paragraphs. Focus strictly on atomic factual assertions.
+"originalText" must be copied character for character from the text: the whole sentence the claim comes from, unchanged. Never paraphrase, translate, shorten or join sentences in "originalText"; put any rewording in "normalizedText" only.
 
 Return ONLY a valid JSON object with this exact structure, nothing else:
 {
   "claims": [
     {
       "id": "claim-1",
-      "originalText": "exact sentence or phrase in text",
+      "originalText": "the source sentence, copied verbatim from the text",
       "normalizedText": "canonical, unambiguous statement of fact",
       "subject": "main entity or subject",
       "predicate": "action or property",

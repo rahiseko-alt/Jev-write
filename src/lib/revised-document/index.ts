@@ -327,6 +327,16 @@ function claimText(result: ClaimResult): string {
   return result.claim.normalizedText || result.claim.originalText;
 }
 
+/**
+ * The sentence a claim came from. The quote taken from the article is tried
+ * first: the normalised statement is a paraphrase and can share too few words
+ * with the sentence to find it.
+ */
+function placeOf(sentences: string[], result: ClaimResult): number {
+  const quoted = sentenceIndexOf(sentences, result.claim.originalText);
+  return quoted !== -1 ? quoted : sentenceIndexOf(sentences, claimText(result));
+}
+
 function isRaised(styleIssue: StyleIssue): boolean {
   return styleIssue.detected !== false;
 }
@@ -365,7 +375,7 @@ function factFinding(
   // Nothing is rewritten, so the sentence the Finding points at is the
   // sentence as written (ADR-0010).
   const corrected = text;
-  const at = sentenceIndexOf(sentences, text);
+  const at = placeOf(sentences, result);
   const ratio = result.confidence;
   const band =
     result.band ?? (ratio === undefined ? undefined : bandOf(ratio <= 1 ? ratio : ratio / 100));

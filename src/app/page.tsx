@@ -3,25 +3,15 @@
 import React, { useState, useEffect, useRef, useMemo } from "react";
 import {
   Feather,
-  Clock,
-  User,
   FileText,
   Search,
-  HelpCircle,
   AlertCircle,
   AlertTriangle,
-  Star,
   CheckCircle2,
-  Link as LinkIcon,
   RotateCcw,
   Check,
-  ExternalLink,
-  ChevronLeft,
-  ChevronRight,
   MoreHorizontal,
   Loader2,
-  ArrowRight,
-  ChevronDown,
 } from "lucide-react";
 import {
   AnalysisResult,
@@ -125,14 +115,6 @@ export default function HomePage() {
   const bodyRef = useRef<HTMLDivElement>(null);
 
   const [showMoreMenu, setShowMoreMenu] = useState(false);
-  const [lastSavedTime, setLastSavedTime] = useState("");
-
-  useEffect(() => {
-    try {
-      const now = new Date();
-      setLastSavedTime(`${now.getFullYear()}/${now.getMonth() + 1}/${now.getDate()} ${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`);
-    } catch {}
-  }, []);
 
   // Track user adoption state for each Finding
   const [adoptedOverrides, setAdoptedOverrides] = useState<Record<string, boolean>>({});
@@ -239,11 +221,6 @@ export default function HomePage() {
         setAnalysisResult(finalResult);
         setAdoptedOverrides({});
         setOpenFindingIds([]);
-
-        // Update last saved time
-        const now = new Date();
-        const timeStr = `${now.getFullYear()}/${now.getMonth() + 1}/${now.getDate()} ${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
-        setLastSavedTime(timeStr);
       }
     } catch (err: any) {
       console.error(err);
@@ -390,10 +367,6 @@ export default function HomePage() {
                   <h2 className="text-sm font-bold text-slate-900 truncate max-w-md">
                     {revisedDocument?.title ?? "文章の品質検証レポート"}
                   </h2>
-                  <div className="flex items-center gap-3 text-[11px] text-slate-400 mt-0.5">
-                    <span>文字数: {revisedDocument?.originalText.length ?? 0}</span>
-                    <span>最終保存: {lastSavedTime || "2025/4/24 14:32"}</span>
-                  </div>
                 </div>
                 <div className="flex items-center gap-2 relative">
                   <button
@@ -496,39 +469,22 @@ export default function HomePage() {
                     )}
 
                     {analysisResult?.providerStatuses?.some((s) => s.failureCount > 0) && (
-                      <details className="rounded-xl border border-slate-200 bg-slate-50 text-xs text-slate-700">
-                        <summary className="px-4 py-3 cursor-pointer font-bold select-none">
-                          各サービスの状態を見る
-                        </summary>
-                        <div className="px-4 pb-3 space-y-2">
-                          {analysisResult?.providerStatuses?.map((status) => (
-                            <div key={status.service} className="space-y-0.5">
-                              <div className="flex items-center gap-2">
-                                <span
-                                  className={
-                                    status.failureCount > 0
-                                      ? "text-amber-600 font-bold"
-                                      : "text-emerald-600 font-bold"
-                                  }
-                                >
-                                  {status.failureCount > 0 ? "✕" : "✓"}
-                                </span>
-                                <span className="font-bold">{status.service}</span>
-                                <span className="text-slate-500">
-                                  {status.failureCount > 0
-                                    ? `${status.failureCount}件の呼び出しが失敗しました`
-                                    : "応答しました"}
-                                </span>
-                              </div>
-                              {status.lastError && (
-                                <p className="pl-6 text-[11px] text-slate-500 break-all">
-                                  {status.lastError}
-                                </p>
-                              )}
-                            </div>
-                          ))}
+                      // 何が失敗したかではなく、次にできることだけを示す。
+                      <div className="flex items-center justify-between gap-3 px-4 py-3 rounded-xl border border-amber-200 bg-amber-50 text-xs text-amber-900">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <AlertTriangle className="w-4 h-4 shrink-0 text-amber-600" />
+                          <span>一部の確認ができませんでした。結果が不完全な可能性があります。</span>
                         </div>
-                      </details>
+                        <button
+                          type="button"
+                          onClick={() => handleSubmit()}
+                          disabled={isSubmitting}
+                          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-amber-300 bg-white hover:bg-amber-100 text-xs font-medium text-amber-900 transition shrink-0 disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          <RotateCcw className="w-3.5 h-3.5 text-amber-600" />
+                          <span>もう一度確かめる</span>
+                        </button>
+                      </div>
                     )}
 
                     {revisedDocument && !revisedDocument.hasFindings && (
