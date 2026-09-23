@@ -1,0 +1,30 @@
+[
+ {
+  "id": "E1",
+  "sentence": "AISASは、消費者行動のすべてが必ずこの5段階の順序で進むことを前提としたモデルです。",
+  "kind": "(a) 限定語の誇張",
+  "truth": "AISASは段階を順番どおりに必ず進む直線的なモデルとしては示されていない。段階を飛ばしたり繰り返したりする非線形のプロセスも想定しており、「すべてが必ずこの順序で」は言い過ぎである。",
+  "source": "不明"
+ },
+ {
+  "id": "E2",
+  "sentence": "Sympathize（共感する）、Interest（興味を持つ）、Participate（参加する）、Share & Spread（共有・拡散する）の頭文字をとっています。",
+  "kind": "(c) フレームワークの構成要素の取り違え",
+  "truth": "SIPSの「I」はIdentify（確認する）である。Interestではない。共感したあと、その情報が自分にとって有益かどうかを確認する段階を指す（Sympathize → Identify → Participate → Share & Spread）。",
+  "source": "不明"
+ },
+ {
+  "id": "E3",
+  "sentence": "これを受け、景品表示法第5条第3号に基づく告示として「一般消費者が事業者の表示であることを判別することが困難である表示」が指定され、2024年10月1日から施行されています。",
+  "kind": "(e) 数値・年の誤り",
+  "truth": "ステマ告示の施行日は2023年（令和5年）10月1日である。",
+  "source": "https://www.caa.go.jp/policy/policies/representation/fair_labeling/stealth_marketing/"
+ },
+ {
+  "id": "E4",
+  "sentence": "なお、依頼を受けて投稿したインフルエンサー本人も、広告主と同様に規制の対象となり、措置命令を受ける可能性があります。",
+  "kind": "(d) 法令・制度の対象範囲の誤り",
+  "truth": "景品表示法のステマ規制で対象になるのは、商品・サービスを供給する事業者（広告主）である。広告主から依頼を受けたインフルエンサーなどの第三者は規制の対象外で、措置命令を受けるのは広告主である。",
+  "source": "https://www.caa.go.jp/policy/policies/representation/fair_labeling/stealth_marketing/"
+ }
+]
