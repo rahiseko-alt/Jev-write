@@ -1,0 +1,45 @@
+# ファクトチェック結果: article-05（ふるさと納税のしくみをやさしく解説）
+
+- 対象: `/home/user/Jev-write/docs/benchmark/article-05.txt`（このファイルのみ参照）
+- 確認日: 2026-09-23（資料はこの日時点で取得）
+- 文の区切り: 本文を「。」で分割。■で始まる見出し行と、1行目の記事タイトル（本文ではなく「。」も無い）を除外し、先頭から通し番号（全26文）。
+- 信頼度: その文の内容が集めた資料で裏付けられている確率（0〜100）。正誤判定ではない。
+- 対象外の扱い: 事実の主張を含まない意見・感想・助言の文のみ「対象外」。助言を含んでも検証可能な事実の前提を含む文（24・26）は、事実部分のみを評価。
+- 資料: 一次資料（総務省・国税庁・e-Gov法令・自治体）を優先。報道は補助として使用。
+
+| 番号 | 文（先頭40字） | 信頼度 | 理由 | 根拠URL |
+|---|---|---|---|---|
+| 1 | ふるさと納税は、自分が選んだ都道府県や市区町村に寄附をすると、その寄附額に応じて | 95 | 総務省・国税庁とも「自分の選んだ自治体に寄附すると、寄附額のうち2,000円を超える部分が所得税と住民税から控除される制度」と明記。 | https://www.soumu.go.jp/main_sosiki/jichi_zeisei/czaisei/czaisei_seido/furusato/mechanism/about.html<br>https://www.nta.go.jp/taxes/shiraberu/taxanswer/shotoku/1155.htm |
+| 2 | 「納税」という名前がついていますが、実際には自治体への「寄附」であり、生まれ故郷 | 88 | 総務省が「『納税』という言葉がついているが実際には都道府県・市区町村への『寄附』」「生まれ故郷に限らずどの自治体にでも」と明記。ただし2019年以降は総務大臣の指定団体に限られ（東京都は不指定）、「自由に」はやや強い。 | https://www.soumu.go.jp/main_sosiki/jichi_zeisei/czaisei/czaisei_seido/furusato/about/<br>https://www.soumu.go.jp/main_content/001070694.pdf<br>https://www.tax.metro.tokyo.lg.jp/about/furusato |
+| 3 | この制度は2011年度（平成23年度）の税制改正で創設され、生まれ育った故郷や応 | 3 | 創設は平成20年度（2008年度）の地方税法改正（2008年4月30日）で、2011年度ではない。2011年（平成23年）は適用下限額を5,000円→2,000円に引き下げた年。趣旨の部分は総務省の説明と一致。 | https://info.pref.fukui.lg.jp/furusatonouzei/110_subject/detail01.html<br>https://www.tax.metro.tokyo.lg.jp/about/furusato<br>https://www.city.chigasaki.kanagawa.jp/zei/1015353/1003693/1003712.html |
+| 4 | ふるさと納税の大きな特徴は、寄附額のうち2,000円を超える部分が所得税と住民税 | 93 | 総務省「寄附額のうち2,000円を越える部分について、所得税と住民税から原則として全額が控除（一定の上限あり）」と一致。 | https://www.soumu.go.jp/main_sosiki/jichi_zeisei/czaisei/czaisei_seido/furusato/mechanism/about.html<br>https://www.nta.go.jp/taxes/shiraberu/taxanswer/shotoku/1155.htm |
+| 5 | 寄附額がいくらであっても、自己負担は2,000円だけで済みます。 | 3 | 総務省は「一定の上限はあります」とし、特例分が所得割額の2割を超えると「全額が控除されず、実質負担額は2,000円を超えます」と明記。寄附額に関係なく2,000円とする記述は資料と矛盾（本文24の文とも矛盾）。 | https://www.soumu.go.jp/main_sosiki/jichi_zeisei/czaisei/czaisei_seido/furusato/mechanism/deduction.html<br>https://www.soumu.go.jp/main_sosiki/jichi_zeisei/czaisei/czaisei_seido/furusato/mechanism/about.html |
+| 6 | 控除は、所得税の寄附金控除、住民税の基本分、住民税の特例分という三つの部分で構成 | 95 | 総務省・国税庁の計算式（所得税の寄附金控除／住民税基本分／特例分、特例分は所得割額の2割が限度）と地方税法37条の2第11項（百分の二十）に一致。 | https://www.soumu.go.jp/main_sosiki/jichi_zeisei/czaisei/czaisei_seido/furusato/mechanism/deduction.html<br>https://www.nta.go.jp/taxes/shiraberu/taxanswer/shotoku/1155.htm<br>https://laws.e-gov.go.jp/law/325AC0000000226 |
+| 7 | 控除の対象となるのは、その年の1月1日から12月31日までに行った寄附です。 | 93 | 国税庁No.1150「その年に支出した特定寄附金」、総務省FAQ「税の軽減は1月～12月の年単位」、群馬県Q&Aの例示（1月1日～12月31日の寄附）と一致。 | https://www.nta.go.jp/taxes/shiraberu/taxanswer/shotoku/1150.htm<br>https://www.soumu.go.jp/main_sosiki/jichi_zeisei/czaisei/czaisei_seido/furusato/faq/<br>https://www.pref.gunma.jp/site/furusatozei/5402.html |
+| 8 | 多くの自治体は、寄附へのお礼として地域の特産品などを「返礼品」として送っています | 85 | 総務省FAQ「寄附者へのお礼として特産品を送る場合がある」、現況調査（令和8年度）で返礼品調達費が受入額の26.5％（3,528億円）。返礼品を送る団体数を直接示す統計は見当たらず。 | https://www.soumu.go.jp/main_sosiki/jichi_zeisei/czaisei/czaisei_seido/furusato/faq/<br>https://www.soumu.go.jp/main_content/001084951.pdf |
+| 9 | ただし、返礼品競争の過熱を受けて、2019年6月からは総務大臣が自治体を指定する | 95 | 総務省資料「返礼品競争の過熱→法律改正（令和元年6月1日施行）で対象団体を総務大臣が指定（指定制度の創設）」と一致。 | https://www.soumu.go.jp/main_content/001070694.pdf<br>https://www.soumu.go.jp/main_sosiki/jichi_zeisei/czaisei/czaisei_seido/furusato/file/report20190514_02.pdf |
+| 10 | 指定を受けるには、返礼品の調達費用を寄附額の3割以下とすること、返礼品を地場産品 | 85 | 返礼割合3割以下・地場産品は地方税法37条の2第2項、募集費用総額5割以下は告示第179号第2条第2号で規定（現時点で有効）。ただし5割基準は2026年10月1日に告示から削除され、「寄附金活用可能額」基準（令和8年指定52.5％以上→令和11年60％以上）へ移行予定。 | https://laws.e-gov.go.jp/law/325AC0000000226<br>https://www.soumu.go.jp/main_content/000956198.pdf<br>https://www.soumu.go.jp/main_content/001079766.pdf |
+| 11 | なお、自分が住んでいる自治体に寄附をしても控除は受けられますが、その自治体から返 | 95 | 告示第179号第2条第1号ホが「区域内に住所を有する者に対する返礼品等の提供」を禁止。群馬県Q&A「住民の寄附も税の軽減は変わらないが返礼品は対象外」。 | https://www.soumu.go.jp/main_content/000956198.pdf<br>https://www.pref.gunma.jp/site/furusatozei/5402.html |
+| 12 | 控除を受けるための手続きは、大きく分けて二つあります。 | 92 | 総務省・国税庁とも「原則は確定申告、要件を満たせばワンストップ特例」の2通りを説明。 | https://www.soumu.go.jp/main_sosiki/jichi_zeisei/czaisei/czaisei_seido/furusato/mechanism/procedure.html<br>https://www.nta.go.jp/taxes/shiraberu/taxanswer/shotoku/1155.htm |
+| 13 | 一つは確定申告で、寄附先の自治体から送られてくる受領証明書などをもとに申告します | 93 | 総務省「確定申告の際は寄附をした自治体が発行する寄附の証明書・受領書が必要」。国税庁は受領証に代えて特定事業者の「寄附金控除に関する証明書」も可とする（「など」に該当）。 | https://www.soumu.go.jp/main_sosiki/jichi_zeisei/czaisei/czaisei_seido/furusato/mechanism/deduction.html<br>https://www.nta.go.jp/taxes/shiraberu/taxanswer/shotoku/1150.htm |
+| 14 | もう一つが「ワンストップ特例制度」で、確定申告が必要な個人事業主も含め、誰でも利 | 3 | ワンストップ特例は「確定申告の不要な給与所得者等」に限られる（総務省FAQ Q7・国税庁No.1155・地方税法附則7条1項）。確定申告が必要な個人事業主は利用できず、資料と矛盾。 | https://www.soumu.go.jp/main_sosiki/jichi_zeisei/czaisei/czaisei_seido/furusato/faq/<br>https://www.nta.go.jp/taxes/shiraberu/taxanswer/shotoku/1155.htm<br>https://www.soumu.go.jp/main_sosiki/jichi_zeisei/czaisei/czaisei_seido/furusato/topics/20150401.html |
+| 15 | 寄附先が1年間で5団体以内であれば、寄附のたびに申請書を寄附先の自治体へ提出する | 85 | 5団体以内・寄附の都度各寄附先へ申請書を提出（地方税法附則7条、総務省通知「寄附金を支出する毎に申告特例の求め」）と一致。ただし「確定申告不要な給与所得者等」であることが前提で、この文はその条件を欠く。 | https://www.soumu.go.jp/main_sosiki/jichi_zeisei/czaisei/czaisei_seido/furusato/topics/20150401.html<br>https://www.soumu.go.jp/main_content/000362730.pdf<br>https://laws.e-gov.go.jp/law/325AC0000000226 |
+| 16 | 申請書の提出期限は、寄附した翌年の1月10日です。 | 88 | 京都市など自治体は「寄付の翌年の1月10日（必着）」と案内。法令上は寄附時に申請し1月10日は変更届出の期限（附則7条4項）だが、総務省通知の運用（申告特例通知書は1月11日以降送付）と整合。 | https://www.city.kyoto.lg.jp/gyozai/page/0000318763.html<br>https://www.soumu.go.jp/main_content/000362730.pdf<br>https://www.pref.gunma.jp/site/furusatozei/5402.html |
+| 17 | ワンストップ特例を利用した場合、控除は所得税からの還付と翌年度の住民税の減額の二 | 3 | 総務省・国税庁「ワンストップ特例が適用される場合、所得税からの控除は行われず、その分も含めた全額が翌年度の住民税から控除」。所得税の還付があるとする記述は矛盾。 | https://www.soumu.go.jp/main_sosiki/jichi_zeisei/czaisei/czaisei_seido/furusato/faq/<br>https://www.soumu.go.jp/main_sosiki/jichi_zeisei/czaisei/czaisei_seido/furusato/topics/20150401.html<br>https://www.soumu.go.jp/main_sosiki/jichi_zeisei/czaisei/czaisei_seido/furusato/mechanism/deduction.html |
+| 18 | なお、ワンストップ特例を申請していても、後から確定申告を行うと特例の申請は無効に | 95 | 国税庁No.1155「確定申告を行う方は、ワンストップ特例の申請が無効となるため、申請をした分も含めて寄附金控除額を計算する必要」。地方税法附則7条6項・総務省資料と一致。 | https://www.nta.go.jp/taxes/shiraberu/taxanswer/shotoku/1155.htm<br>https://www.soumu.go.jp/main_sosiki/jichi_zeisei/czaisei/czaisei_seido/furusato/file/20160818.pdf<br>https://www.soumu.go.jp/main_content/000362730.pdf |
+| 19 | ふるさと納税では、多くの自治体が「子育て支援」「教育」「環境保全」「災害復興」な | 92 | 総務省現況調査（令和8年度）で使途を選択できる団体1,749（98.2％）、分野を選択できる団体94.6％。分野に子ども・子育て、教育、環境・衛生、災害支援・復興が並ぶ。 | https://www.soumu.go.jp/main_content/001084951.pdf<br>https://www.soumu.go.jp/main_sosiki/jichi_zeisei/czaisei/czaisei_seido/furusato/about/ |
+| 20 | 大きな災害が起きた際には、被災した自治体を応援するために返礼品を求めずに寄附する | 85 | 石川県が被災市町・県で返礼品なしの災害支援寄附を受付と明記。日経は能登半島地震で返礼品なしの寄付が主要4サイトで54億円超（過去最多）と報道。「少なくない」は量的に曖昧。 | https://www.pref.ishikawa.lg.jp/kenmin/furusatonouzei/r6notohantouzisinkifu.html<br>https://www.nikkei.com/article/DGXZQOCC273OD0X20C24A3000000/<br>https://www.soumu.go.jp/main_content/001084951.pdf |
+| 21 | また、個人向けのふるさと納税とは別に、企業が地方公共団体の地方創生事業に寄附する | 93 | 内閣府「国が認定した地域再生計画に位置付けられる地方公共団体の地方創生プロジェクトに企業が寄附した場合に法人関係税から税額控除する仕組み」と一致。令和7年度改正で2028年3月末まで延長。 | https://www.cao.go.jp/press/new_wave/20240822.html |
+| 22 | 返礼品だけでなく、寄附がどのように地域で活かされるかにも目を向けると、制度本来の | 対象外 | 意見・助言（制度趣旨に沿った活用の勧め）で、事実の主張を含まない。 | — |
+| 23 | 控除上限額は、年収や家族構成、ほかの控除の有無によって人それぞれ異なります。 | 90 | 総務省FAQ「上限は収入や他の控除等の状況による」。総務省資料は上限の試算を「扶養家族が配偶者のみ」「独身又は夫婦共働き・住宅ローン控除等なし」など家族構成と他の控除を前提に示しており、家族構成で変わる点も整合。 | https://www.soumu.go.jp/main_sosiki/jichi_zeisei/czaisei/czaisei_seido/furusato/faq/<br>https://www.soumu.go.jp/main_sosiki/jichi_zeisei/czaisei/czaisei_seido/furusato/topics/20150401.html<br>https://www.soumu.go.jp/main_content/001070694.pdf |
+| 24 | 上限を超えて寄附した分は控除されず、純粋な自己負担になるため、総務省のふるさと納 | 45 | 神戸市FAQ等は「上限を超えるとその分は控除されない」と説明する一方、総務省・国税庁の計算式では上限超過分にも所得税・住民税基本分の控除が及ぶ（「全額が控除されず実質負担額が2,000円を超える」）ため「控除されず、純粋な自己負担」は厳密には不正確。現行の総務省サイトに年間上限の目安表は見当たらない。後半の助言は評価対象外。 | https://www.soumu.go.jp/main_sosiki/jichi_zeisei/czaisei/czaisei_seido/furusato/mechanism/deduction.html<br>https://faq.city.kobe.lg.jp/faq/show/3487?site_domain=default<br>https://www.soumu.go.jp/main_content/001070694.pdf |
+| 25 | また、2025年10月からは、寄附に伴ってポイントを付与する仲介サイトを通じた募 | 92 | 総務省報道資料（2024年6月28日）「寄附に伴いポイント等の付与を行う者を通じた募集を禁止（令和7年10月1日から適用）」、告示第179号第2条第1号ロ(2)と一致。楽天の無効確認訴訟（2025年7月提起）で無効とされた事実は確認できず。 | https://www.soumu.go.jp/menu_news/s-news/01zeimu04_02000126.html<br>https://www.soumu.go.jp/main_content/000956198.pdf |
+| 26 | 制度は毎年のように見直されているため、最新の情報を確認しながら上手に活用しましょ | 88 | 総務省トピックス一覧で指定基準の告示改正・運用通知が2019年以降ほぼ毎年出ており、2026年も税制改正（寄附金活用可能額基準、特例控除額の定額上限）あり。後半の助言は評価対象外で、前提部分のみ評価。 | https://www.soumu.go.jp/main_sosiki/jichi_zeisei/czaisei/czaisei_seido/furusato/topics/<br>https://www.soumu.go.jp/main_content/001070694.pdf |
+
+## 集計
+- 信頼度80以下: No.3（3）、No.5（3）、No.14（3）、No.17（3）、No.24（45）
+- 対象外: 1件（No.22）
+- 評価した文: 25件
+
+## かかった時間の目安
+- 約18分（17:11〜17:29 UTC。記事の読み込みと文分割 約1分、Web検索と一次資料（総務省ページ・告示・通知・現況調査PDF、国税庁タックスアンサー、e-Gov地方税法、自治体ページ）の取得・照合 約13分、表の作成と根拠URLの応答確認 約4分）
