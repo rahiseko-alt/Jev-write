@@ -1,5 +1,6 @@
 import { correctionFromEvidence } from "./correction";
 import { isAboutSubject } from "./relevance";
+import { describeFailure } from "@/lib/providers/diagnostics";
 import {
   Claim,
   ClaimResult,
@@ -90,17 +91,48 @@ export async function runFactPipeline(
   let factHitsCount = 0;
 
   // Process claims in parallel
-  const claimPromises = extractedClaims.map((claim, index) =>
-    verifyClaim({
-      claim,
-      index,
-      llm,
-      factCheck,
-      jev,
-      search,
-      fetchProvider,
-    })
-  );
+  const claimPromises = extractedClaims.map(async (claim, index) => {
+    try {
+      return await verifyClaim({
+        claim,
+        index,
+        llm,
+        factCheck,
+        jev,
+        search,
+        fetchProvider,
+      });
+    } catch (err) {
+      // ADR-0003: one claim that could not be checked leaves that claim
+      // unverified; it does not throw away the other twenty. Nothing is
+      // invented in its place, and the failure is reported — on the claim
+      // and in the run's service report — rather than passed off as a check.
+      console.warn(`Claim ${claim.id} could not be checked:`, err);
+      const reason = `この主張の検証中に問題が起きたため、確認できませんでした（${describeFailure(err)}）。`;
+
+      return {
+        claimResult: {
+          claim,
+          verdict: "INSUFFICIENT" as ClaimVerdict,
+          reason,
+          evidence: [],
+          confidence: 0.5,
+          lookupFailed: true,
+        },
+        ledgerItem: {
+          claimId: claim.id,
+          originalClaim: claim.normalizedText || claim.originalText,
+          verdict: "INSUFFICIENT" as ClaimVerdict,
+          correctionReason: reason,
+          lockedFacts: [],
+          evidenceIds: [],
+          confidence: 0.5,
+        },
+        evidences: [],
+        isFactCheckHit: false,
+      };
+    }
+  });
 
   const resolved = await Promise.all(claimPromises);
 
@@ -299,7 +331,15 @@ async function verifyClaim(params: {
         // A page that never names what the claim is about cannot answer for
         // it. Asking JEV anyway produces a confident verdict about the wrong
         // company (ADR-0006, layer 2).
-        if (!isAboutSubject(content, claim)) {
+        //
+        // Everything known about the page is read, not just the search
+        // snippet: a snippet is a few lines chosen around the query, and a
+        // page about the subject often names it nowhere near them.
+        const everythingKnown = [fetched.title, res.title, rawContent, content]
+          .filter(Boolean)
+          .join(" ");
+
+        if (!isAboutSubject(everythingKnown, claim)) {
           continue;
         }
 
