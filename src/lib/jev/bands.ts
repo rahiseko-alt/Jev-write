@@ -20,9 +20,31 @@ export const ACT_THRESHOLD = readThreshold("JEV_ACT_THRESHOLD", 0.9);
 /** At or above this, the answer is shown but not acted on. Below it, a person decides. */
 export const CAUTION_THRESHOLD = readThreshold("JEV_CAUTION_THRESHOLD", 0.5);
 
+/**
+ * At or below this 信頼度, a sentence gets a ▶ (ADR-0011: the user's line).
+ * The 信頼度 is JEV's own probability that the sentence is backed by the
+ * sources it was given. `NEXT_PUBLIC_JEV_FLAG_THRESHOLD` moves it without a
+ * code change. It is a public variable because the marks are drawn in the
+ * browser, and Next.js carries only variables named that way — written out
+ * in full, as here — into the browser's code; a change takes effect on the
+ * next deployment.
+ */
+export const FLAG_THRESHOLD = thresholdOf(process.env.NEXT_PUBLIC_JEV_FLAG_THRESHOLD, 0.8);
+
+/**
+ * Whether a 信頼度 (0–1) is low enough to point the reader at it. Compared as
+ * the whole percentage the reader sees, so a sentence shown at 80% is marked.
+ */
+export function isFlagged(confidence: number): boolean {
+  return Math.round(confidence * 100) <= Math.round(FLAG_THRESHOLD * 100);
+}
+
 /** A threshold from the environment, or the default when it is absent or unusable. */
 function readThreshold(name: string, fallback: number): number {
-  const raw = process.env[name];
+  return thresholdOf(process.env[name], fallback);
+}
+
+function thresholdOf(raw: string | undefined, fallback: number): number {
   if (!raw) return fallback;
   const value = Number(raw);
   return Number.isFinite(value) && value > 0 && value <= 1 ? value : fallback;
