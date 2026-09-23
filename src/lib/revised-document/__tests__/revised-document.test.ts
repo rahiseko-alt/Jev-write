@@ -1340,3 +1340,32 @@ describe("言い換えられた主張の置き場所", () => {
     expect(view.findings[0].lineIndex).toBe(-1);
   });
 });
+
+describe("印の見た目", () => {
+  it("裏付けが無い文は、断られた修正案としては描かない", () => {
+    const original = "名古屋駅から徒歩8分。";
+
+    const view = buildRevisedDocument({
+      analysis: analysis(original, original, [claim("名古屋駅から徒歩8分", "INSUFFICIENT")]),
+      adoption: {},
+    });
+
+    const marks = view.paragraphs.flatMap((p) => p.segments).filter((s) => s.mark);
+    expect(marks).not.toHaveLength(0);
+    expect(marks.every((s) => s.mark!.rejected)).toBe(false);
+  });
+
+  it("断られた修正案は、断られたものとして描く", () => {
+    const original = "価格は10万円。";
+
+    const view = buildRevisedDocument({
+      analysis: analysis(original, "価格は12万円。", [
+        claim("価格は10万円", "CONTRADICTED", "価格は12万円"),
+      ]),
+      adoption: {},
+    });
+
+    const marks = view.paragraphs.flatMap((p) => p.segments).filter((s) => s.mark);
+    expect(marks.some((s) => s.mark!.rejected)).toBe(true);
+  });
+});
