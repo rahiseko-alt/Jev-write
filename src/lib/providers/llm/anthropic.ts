@@ -32,10 +32,9 @@ export class AnthropicLLMProvider implements LLMProvider {
       process.env.ANTHROPIC_API_KEY ||
       process.env.CLAUDE_API_KEY ||
       "";
-    this.model =
-      options.model ||
-      process.env.ANTHROPIC_MODEL ||
-      "claude-sonnet-5";
+    // Pinned to Sonnet on the user's order: no option or environment variable
+    // may switch the run to a costlier model.
+    this.model = "claude-sonnet-5";
     this.maxTokens = Number(
       options.maxTokens || process.env.ANTHROPIC_MAX_TOKENS || 16384
     );
