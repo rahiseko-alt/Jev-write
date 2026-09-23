@@ -165,6 +165,10 @@ export async function runOrchestrator(
       sources: factResult.evidences,
       timings,
       providerStatuses,
+      // What became of every sentence the code cut: claims, set aside with a
+      // reason, or missing from the answer (ADR-0020). Kept with the result
+      // so a missing sentence is on record, and two runs can be compared.
+      extraction: llm.lastExtraction,
     };
 
     store.updateJob(jobId, {

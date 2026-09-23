@@ -195,6 +195,11 @@ export type AnalysisResult = {
    * because a service never answered, look identical without this.
    */
   providerStatuses?: ProviderStatus[];
+  /**
+   * How the article was taken apart into claims (ADR-0020): every sentence
+   * the code cut, and what became of it. Absent when no extraction ran.
+   */
+  extraction?: ExtractionTrace;
 };
 
 export type ProviderStatus = {
@@ -206,6 +211,38 @@ export type ProviderStatus = {
   lastError?: string;
   /** How many times a busy service (429/529) was asked the same thing again. */
   retryCount?: number;
+};
+
+/**
+ * The record of one claim extraction (ADR-0020). The code cuts the article
+ * into sentences and checks that the answer accounts for every one of them:
+ * as claims, or as set aside with a reason. A sentence the answer left out is
+ * listed as missing, never dropped without a word.
+ */
+export type ExtractionTrace = {
+  /** Every sentence the code cut the article into, in reading order. */
+  sentences: SentenceTrace[];
+  /** Lines taken as headings: shown to the generation as context, never judged. */
+  headings: string[];
+  /** The ids of the sentences the answer did not account for. */
+  missing: string[];
+  /** What in the answer did not fit the fixed format, and what was done about it. */
+  notes: string[];
+};
+
+export type SentenceTrace = {
+  /** s1, s2, … as the code numbered it. */
+  id: string;
+  /** The sentence as cut from the article. */
+  text: string;
+  /** Claims were taken from it, it was set aside, or the answer said nothing of it. */
+  outcome: "claims" | "excluded" | "missing";
+  /** The claims taken from it, in order. Empty unless the outcome is "claims". */
+  claimIds: string[];
+  /** Why it holds no fact, as a fixed kind (opinion, advice, …). Only when set aside. */
+  excluded?: string;
+  /** The answer's own reason for setting it aside. */
+  reason?: string;
 };
 
 export type JobStatus =

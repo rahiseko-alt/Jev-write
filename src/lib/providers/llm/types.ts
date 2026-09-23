@@ -1,8 +1,13 @@
-import { Claim } from "@/types";
+import { Claim, ExtractionTrace } from "@/types";
 import type { ClaimQueryPlan, DocumentQueryPlan } from "./search-queries";
 
 export interface LLMProvider {
   extractClaims(text: string): Promise<Claim[]>;
+  /**
+   * What the last extraction made of every sentence (ADR-0020): claims, set
+   * aside with a reason, or missing from the answer.
+   */
+  lastExtraction?: ExtractionTrace;
   /**
    * For every claim, its searches as the generation wrote them: what it is
    * about, the kind of fact, what it says (kept out of the queries) and 1–2
