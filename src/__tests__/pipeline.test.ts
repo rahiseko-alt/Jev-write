@@ -1,58 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import {
-  STYLE_RULES,
-  getEnabledStyleRules,
-  getStyleRuleById,
-} from "@/lib/rules/style-rules";
 import { JobStore } from "@/lib/jobs/job-store";
-
-describe("Style Rules Registry", () => {
-  it("should contain all required style rules AI001 - AI012+", () => {
-    const ruleIds = STYLE_RULES.map((r) => r.id);
-    const expectedRules = [
-      "AI001",
-      "AI002",
-      "AI003",
-      "AI004",
-      "AI005",
-      "AI006",
-      "AI007",
-      "AI008",
-      "AI009",
-      "AI010",
-      "AI011",
-      "AI012",
-    ];
-
-    for (const id of expectedRules) {
-      expect(ruleIds).toContain(id);
-    }
-  });
-
-  it("each rule should have id, name, description, jevQuestion, severity, repairInstruction, enabled", () => {
-    for (const rule of STYLE_RULES) {
-      expect(rule.id).toBeTruthy();
-      expect(rule.name).toBeTruthy();
-      expect(rule.description).toBeTruthy();
-      expect(rule.jevQuestion).toBeTruthy();
-      expect(["low", "medium", "high"]).toContain(rule.severity);
-      expect(rule.repairInstruction).toBeTruthy();
-      expect(typeof rule.enabled).toBe("boolean");
-    }
-  });
-
-  it("should filter enabled rules correctly", () => {
-    const enabled = getEnabledStyleRules();
-    expect(enabled.length).toBeGreaterThanOrEqual(12);
-    expect(enabled.every((r) => r.enabled)).toBe(true);
-  });
-
-  it("should find rule by id", () => {
-    const rule = getStyleRuleById("AI002");
-    expect(rule).toBeDefined();
-    expect(rule?.name).toContain("対比");
-  });
-});
 
 describe("JobStore", () => {
   let store: JobStore;

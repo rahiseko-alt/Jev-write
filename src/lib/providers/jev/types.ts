@@ -32,24 +32,6 @@ export interface JEVAtomicJudgmentResult {
   explanation?: string;
 }
 
-export interface JEVBatchRulesRequest {
-  text: string;
-  questions: { id: string; question: string }[];
-}
-
-export interface JEVBatchRuleItemResult {
-  ruleId?: string;
-  detected: boolean;
-  confidence: number;
-  explanation?: string;
-  targetSnippet?: string;
-  targetText?: string;
-}
-
-export interface JEVBatchRulesResult {
-  results: Record<string, JEVBatchRuleItemResult>;
-}
-
 export interface JEVDeltaMeaningParams {
   originalText?: string;
   revisedText?: string;
@@ -130,6 +112,4 @@ export interface JEVClient {
   /** The first failure's message, with anything credential-shaped removed. */
   lastError?: string;
   evaluateAtomicJudgment(req: JEVAtomicJudgmentRequest): Promise<JEVAtomicJudgmentResult>;
-  evaluateBatchRules(req: JEVBatchRulesRequest): Promise<JEVBatchRulesResult>;
-  evaluateBatchRules(text: string, rules: any[]): Promise<any>;
 }

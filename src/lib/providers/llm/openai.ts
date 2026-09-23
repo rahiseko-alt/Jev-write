@@ -36,17 +36,6 @@ function parseJson(raw: string, step: string): any {
   }
 }
 
-/** Search terms for a person to check a claim: strings only, no blanks, at most two. */
-function readCheckQueries(value: unknown): string[] | undefined {
-  if (!Array.isArray(value)) return undefined;
-  const queries = value
-    .filter((q): q is string => typeof q === "string")
-    .map((q) => q.trim())
-    .filter((q) => q.length > 0)
-    .slice(0, 2);
-  return queries.length > 0 ? queries : undefined;
-}
-
 export class OpenAILLMProvider implements LLMProvider {
   private apiKey: string;
   private model: string;
@@ -125,15 +114,13 @@ export class OpenAILLMProvider implements LLMProvider {
       const systemPrompt = `You are an expert fact-checking claim extractor.
 Break down the provided text into atomic, objectively verifiable factual claims.
 Avoid opinions, impressions, rhetoric, and broad paragraphs. Focus strictly on atomic factual assertions.
-"originalText" must be copied character for character from the text: the whole sentence the claim comes from, unchanged. Never paraphrase, translate, shorten or join sentences in "originalText"; put any rewording in "normalizedText" only.
-"checkQueries" holds 1 or 2 search terms, in the same language as the text, that a person can paste into Google as-is to check the claim against primary sources themselves. Put official or proper names in double quotes where useful. Use site: when it reaches the primary source: site:go.jp or the ministry's own domain for laws and public programs, the company's official domain for company facts only when you know it for certain, site:ac.jp or a paper database for research. Never guess or invent a domain. Do not put the claim's own numbers or dates in the terms (a wrong value finds nothing); instead name the subject and the attribute, so the search reaches the place that publishes the value, e.g. "\"景品表示法\" ステルスマーケティング 告示 site:caa.go.jp". At most 12 words per term, and never phrased as a question.
 
 Return a JSON object with this exact structure:
 {
   "claims": [
     {
       "id": "claim-1",
-      "originalText": "the source sentence, copied verbatim from the text",
+      "originalText": "exact sentence or phrase in text",
       "normalizedText": "canonical, unambiguous statement of fact",
       "subject": "main entity or subject",
       "predicate": "action or property",
@@ -142,8 +129,7 @@ Return a JSON object with this exact structure:
       "dates": ["extracted dates or timeframes"],
       "entities": ["named entities, products, organizations"],
       "importance": "critical" | "high" | "normal" | "low",
-      "factCheckRequired": true | false,
-      "checkQueries": ["search term a person can paste into Google"]
+      "factCheckRequired": true | false
     }
   ]
 }`;
@@ -176,7 +162,6 @@ Return a JSON object with this exact structure:
           entities: Array.isArray(item.entities) ? item.entities.map(String) : [],
           importance,
           factCheckRequired: typeof item.factCheckRequired === "boolean" ? item.factCheckRequired : true,
-          checkQueries: readCheckQueries(item.checkQueries),
         };
       });
     } catch (err) {

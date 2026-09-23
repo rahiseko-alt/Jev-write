@@ -14,7 +14,6 @@ import {
   getSearchProvider,
 } from "../providers";
 import { runFactPipeline } from "./fact-pipeline";
-import { runStylePipeline } from "./style-pipeline";
 import {
   FetchProvider,
   GoogleFactCheckClient,
@@ -36,8 +35,7 @@ export interface OrchestratorOptions {
 
 /**
  * Main Quality Assurance Pipeline Orchestrator (Sections 29-33 of specification)
- * Coordinates Fact & Style pipelines in parallel, executes Rewrite, Delta Check,
- * and streams progress updates.
+ * Runs the Fact pipeline and streams progress updates.
  */
 export async function runOrchestrator(
   text: string,
@@ -61,7 +59,7 @@ export async function runOrchestrator(
     status: JobStatus,
     progressPercent: number,
     currentMessage: string,
-    extra?: { claimsCount?: number; factHits?: number; styleIssuesCount?: number }
+    extra?: { claimsCount?: number; factHits?: number }
   ) => {
     const event: JobProgressEvent = {
       jobId,
@@ -70,7 +68,6 @@ export async function runOrchestrator(
       currentMessage,
       claimsCount: extra?.claimsCount,
       factHits: extra?.factHits,
-      styleIssuesCount: extra?.styleIssuesCount,
       timestamp: new Date().toISOString(),
     };
 
@@ -81,70 +78,38 @@ export async function runOrchestrator(
   try {
     emit("ANALYZING", 5, "文章の構造解析と主張（Claim）の抽出を開始...");
 
-    // Stage 1 & 2: Parallel Fact Pipeline and Style Pipeline
-    const parallelStartTime = Date.now();
-
-    const [factResult, styleResult] = await Promise.all([
-      // Fact Pipeline
-      (async () => {
-        const factStart = Date.now();
-        const res = await runFactPipeline(text, {
-          llm,
-          factCheck,
-          jev,
-          search,
-          fetch: fetchProvider,
-          onProgress: (p) => {
-            if (p.stage === "FACTCHECK_DB") {
-              emit("FACTCHECK_DATABASE", p.percent, p.message, {
-                claimsCount: p.claimsCount,
-              });
-            } else if (p.stage === "WEB_SEARCH") {
-              emit("WEB_SEARCH", p.percent, p.message, {
-                claimsCount: p.claimsCount,
-                factHits: p.factHits,
-              });
-            } else {
-              emit("ANALYZING", p.percent, p.message, {
-                claimsCount: p.claimsCount,
-              });
-            }
-          },
-        });
-        timings.push({
-          stage: "FactVerification",
-          durationMs: Date.now() - factStart,
-        });
-        return res;
-      })(),
-
-      // Style Pipeline
-      (async () => {
-        const styleStart = Date.now();
-        const res = await runStylePipeline(text, {
-          jev,
-          onProgress: (p) => {
-            emit("STYLE_ANALYSIS", p.percent, p.message, {
-              styleIssuesCount: p.styleIssuesCount,
-            });
-          },
-        });
-        timings.push({
-          stage: "StyleAnalysis",
-          durationMs: Date.now() - styleStart,
-        });
-        return res;
-      })(),
-    ]);
-
+    const factStart = Date.now();
+    const factResult = await runFactPipeline(text, {
+      llm,
+      factCheck,
+      jev,
+      search,
+      fetch: fetchProvider,
+      onProgress: (p) => {
+        if (p.stage === "FACTCHECK_DB") {
+          emit("FACTCHECK_DATABASE", p.percent, p.message, {
+            claimsCount: p.claimsCount,
+          });
+        } else if (p.stage === "WEB_SEARCH") {
+          emit("WEB_SEARCH", p.percent, p.message, {
+            claimsCount: p.claimsCount,
+            factHits: p.factHits,
+          });
+        } else {
+          emit("ANALYZING", p.percent, p.message, {
+            claimsCount: p.claimsCount,
+          });
+        }
+      },
+    });
     timings.push({
-      stage: "ParallelAnalysisPhase",
-      durationMs: Date.now() - parallelStartTime,
+      stage: "FactVerification",
+      durationMs: Date.now() - factStart,
     });
 
     // No rewriting. This tool reports how well each sentence is held up and
     // leaves the writing to the writer: nothing here changes their words.
-    emit("STYLE_ANALYSIS", 85, "結果をまとめています...");
+    emit("ANALYZING", 85, "結果をまとめています...");
 
     const providerStatuses: ProviderStatus[] = [
       { service: "文章の生成", provider: llm },
@@ -191,10 +156,11 @@ export async function runOrchestrator(
         contradicted,
         mixed,
         insufficient,
-        styleIssuesFixed: styleResult.length,
+        // AI-tell detection was removed: there are no style findings.
+        styleIssuesFixed: 0,
       },
       claims: factResult.claims,
-      styleIssues: styleResult,
+      styleIssues: [],
       sources: factResult.evidences,
       timings,
       providerStatuses,
@@ -205,13 +171,11 @@ export async function runOrchestrator(
       progressPercent: 100,
       currentMessage: "文章品質保証の全プロセスが完了しました",
       claimsCount: factResult.claims.length,
-      styleIssuesCount: styleResult.length,
       result: finalResult,
     });
 
     emit("COMPLETED", 100, "文章品質保証の全プロセスが完了しました", {
       claimsCount: factResult.claims.length,
-      styleIssuesCount: styleResult.length,
     });
 
     return finalResult;

@@ -338,13 +338,11 @@ function claimText(result: ClaimResult): string {
  * with the sentence to find it.
  */
 /**
- * What the reader can search to check a claim. The queries written for a
- * person come first; failing those, the query the check itself ran, which a
- * result from before they existed still carries.
+ * What the reader can search to check a claim: the query the check itself
+ * ran. It names the subject and the attribute rather than the figure under
+ * scrutiny, so it reaches the page that would publish the true value.
  */
 function checkQueriesOf(result: ClaimResult): string[] {
-  const written = (result.claim.checkQueries ?? []).filter((query) => query.trim());
-  if (written.length > 0) return written;
   const ran = result.evidenceTrace?.query?.trim();
   return ran ? [ran] : [];
 }
@@ -562,6 +560,18 @@ export function buildRevisedDocument(
     separator: paragraph.separator,
   }));
 
+  // The margin shows a Finding only where its mark is. One that should mark
+  // the document but ended up on no mark is shown as unplaced rather than
+  // dropped without a word.
+  const marked = new Set(
+    paragraphs.flatMap((p) => p.segments).flatMap((s) => s.mark?.findingIds ?? [])
+  );
+  for (const finding of findings) {
+    if (finding.markKind !== null && finding.lineIndex >= 0 && !marked.has(finding.id)) {
+      finding.lineIndex = -1;
+    }
+  }
+
   const clipboardText = paragraphs
     .map((paragraph) => paragraphText(paragraph) + paragraph.separator)
     .join("");
@@ -757,6 +767,15 @@ function markSentence(
   }
 
   if (at < text.length) segments.push(gap(text.slice(at), background));
+
+  // A span covering the whole sentence leaves no gap for the background to
+  // show in. Its Findings ride on the first mark instead of vanishing.
+  if (background && !segments.some((segment) => segment.mark === background)) {
+    const first = segments.find((segment) => segment.mark)!.mark!;
+    first.findingIds.push(...background.findingIds);
+    first.kind = strongest([first.kind, background.kind]);
+    first.rejected = first.rejected && background.rejected;
+  }
 
   return segments;
 }

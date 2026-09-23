@@ -1,8 +1,6 @@
 import {
   JEVAtomicJudgmentRequest,
   JEVAtomicJudgmentResult,
-  JEVBatchRulesRequest,
-  JEVBatchRulesResult,
   JEVClient,
   JEVDeltaMeaningParams,
   JEVDeltaMeaningResult,
@@ -182,74 +180,6 @@ export class HTTPJEVClient implements JEVClient {
         verdict: choice as JEVAtomicJudgmentResult["verdict"],
         confidence: typeof answer.confidence === "number" ? answer.confidence : 0,
       };
-    } catch (err) {
-      recordFailure(this, err);
-      throw err;
-    }
-  }
-
-  /**
-   * Evaluates multiple style rules simultaneously in parallel on the same state
-   */
-  async evaluateBatchRules(
-    reqOrText: JEVBatchRulesRequest | string,
-    maybeRules?: any[]
-  ): Promise<any> {
-    let text = "";
-    let rulesList: Array<{ id: string; question: string }> = [];
-    const isStyleRulesArrayCall = typeof reqOrText === "string" && Array.isArray(maybeRules);
-
-    if (isStyleRulesArrayCall) {
-      text = reqOrText;
-      rulesList = (maybeRules || []).map((r) => ({
-        id: r.id,
-        question: r.jevQuestion || r.question || r.description || r.name,
-      }));
-    } else {
-      const req = reqOrText as JEVBatchRulesRequest;
-      text = req.text;
-      rulesList = req.questions || [];
-    }
-
-    // Convert each rule question into a Noul (true/false) or Choice question for Jev
-    const questionsPayload: Record<string, any> = {};
-    for (const r of rulesList) {
-      questionsPayload[r.id] = {
-        type: "noul",
-        instructions: `${r.question} (文章中にこの表現や特徴が明確に存在するか？)`,
-      };
-    }
-
-    try {
-      const data = await this.callSystemOne(text, questionsPayload);
-      const answers = data?.answers || {};
-
-      const formattedResults: Record<string, any> = {};
-      for (const r of rulesList) {
-        const item = answers[r.id] || {};
-        const noulValue = typeof item.noul === "number" ? item.noul : 0;
-        formattedResults[r.id] = {
-          detected: noulValue > 0.5,
-          confidence: noulValue >= 0.5 ? noulValue : 1 - noulValue,
-        };
-      }
-
-      if (isStyleRulesArrayCall) {
-        const arrayResult = rulesList.map((q) => {
-          const item = formattedResults[q.id];
-          return {
-            ruleId: q.id,
-            detected: item.detected,
-            confidence: item.confidence,
-            explanation: item.explanation,
-            targetText: item.targetSnippet,
-          };
-        });
-        (arrayResult as any).results = formattedResults;
-        return arrayResult;
-      }
-
-      return { results: formattedResults };
     } catch (err) {
       recordFailure(this, err);
       throw err;

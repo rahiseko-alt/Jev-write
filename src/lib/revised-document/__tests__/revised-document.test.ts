@@ -772,11 +772,61 @@ describe("書き換えない", () => {
   });
 });
 
+describe("同じ文に乗った指摘", () => {
+  it("食い違いの印が文全体を覆っても、同じ文の他の指摘を印から落とさない", () => {
+    const original = "会費は月額1万円です。";
+    const contradicted = claim("会費は月額1万円です。", "CONTRADICTED");
+    const unverified = claim("会費は月額1万円です。", "INSUFFICIENT");
+    unverified.claim.id = "claim-other";
+
+    const view = buildRevisedDocument({
+      analysis: analysis(original, original, [contradicted, unverified], [styleIssue("会費は月額1万円です。")]),
+      adoption: {},
+    });
+
+    const marked = new Set(
+      view.paragraphs
+        .flatMap((p) => p.segments)
+        .flatMap((s) => s.mark?.findingIds ?? [])
+    );
+    const shouldMark = view.findings.filter((f) => f.markKind !== null && f.lineIndex >= 0);
+    expect(shouldMark.length).toBe(3);
+    for (const finding of shouldMark) expect(marked.has(finding.id)).toBe(true);
+  });
+});
+
+describe("指摘を黙って落とさない", () => {
+  it("印を付けるべき指摘は、どれも本文の印に乗るか、場所不明として残る", () => {
+    const original = "会費は月額1万円です。入会金は無料です。まったく別の段落です。";
+    const claims = [
+      claim("会費は月額1万円です。", "CONTRADICTED"),
+      claim("会費は月額1万円です。", "INSUFFICIENT"),
+      claim("入会金は無料です。", "MIXED"),
+      claim("どこにも無い話題についての主張である。", "INSUFFICIENT"),
+      claim("入会金は無料です。", "SUPPORTED"),
+    ];
+    claims.forEach((c, i) => (c.claim.id = `claim-${i}`));
+
+    const view = buildRevisedDocument({
+      analysis: analysis(original, original, claims, [styleIssue("入会金は無料です。")]),
+      adoption: {},
+    });
+
+    const marked = new Set(
+      view.paragraphs.flatMap((p) => p.segments).flatMap((s) => s.mark?.findingIds ?? [])
+    );
+    const shouldShow = view.findings.filter((f) => f.markKind !== null);
+    expect(shouldShow.length).toBe(5);
+    for (const finding of shouldShow) {
+      expect(marked.has(finding.id) || isUnplaced(finding)).toBe(true);
+    }
+  });
+});
+
 describe("ご自身で確かめるための検索語", () => {
-  it("人向けに書かれた検索語を出し、無ければ確認に使った検索語を出す", () => {
+  it("確認に使った検索語を出し、無ければ出さない", () => {
     const original = "一文目。二文目。";
-    const written = claim("一文目。", "INSUFFICIENT");
-    written.claim.checkQueries = ['"景品表示法" 告示 site:caa.go.jp'];
+    const none = claim("一文目。", "INSUFFICIENT");
     const older = claim("二文目。", "INSUFFICIENT");
     older.evidenceTrace = {
       query: "二文目 公式",
@@ -789,12 +839,12 @@ describe("ご自身で確かめるための検索語", () => {
     };
 
     const view = buildRevisedDocument({
-      analysis: analysis(original, original, [written, older], [styleIssue("一文目")]),
+      analysis: analysis(original, original, [none, older], [styleIssue("一文目")]),
       adoption: {},
     });
 
     const byText = (text: string) => view.findings.find((f) => f.originalText === text);
-    expect(byText("一文目。")?.checkQueries).toEqual(['"景品表示法" 告示 site:caa.go.jp']);
+    expect(byText("一文目。")?.checkQueries).toEqual([]);
     expect(byText("二文目。")?.checkQueries).toEqual(["二文目 公式"]);
     expect(view.findings.find((f) => f.type === "style")?.checkQueries).toEqual([]);
   });
