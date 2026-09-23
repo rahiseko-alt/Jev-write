@@ -32,6 +32,15 @@ export const CAUTION_THRESHOLD = readThreshold("JEV_CAUTION_THRESHOLD", 0.5);
 export const FLAG_THRESHOLD = thresholdOf(process.env.NEXT_PUBLIC_JEV_FLAG_THRESHOLD, 0.8);
 
 /**
+ * At or above this, a section of a page is judged to speak to the sentence
+ * and goes into the 信頼度 question (ADR-0014). The starting point is the
+ * official cookbook's relevance floor (docs.typesafe.ai/cookbooks/
+ * classifying_rag_passages: `relevant_min` 0.45, "a starting point, not a
+ * default"). `JEV_RELEVANCE_THRESHOLD` moves it without a code change.
+ */
+export const RELEVANCE_THRESHOLD = readThreshold("JEV_RELEVANCE_THRESHOLD", 0.45);
+
+/**
  * Whether a 信頼度 (0–1) is low enough to point the reader at it. Compared as
  * the whole percentage the reader sees, so a sentence shown at 80% is marked.
  */

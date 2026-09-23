@@ -10,6 +10,29 @@ export const SUPPORT_QUESTION: JEVQuestion = {
 };
 
 /**
+ * The question asked of every section before the one above (ADR-0014): does
+ * this section speak to the sentence at all. One judgment per question, one
+ * question per section, all in the same request (docs.typesafe.ai/patterns/
+ * fan-out). Yes means related. Which sections are passed on is decided in
+ * code from the answers, not here.
+ */
+export function relevanceQuestion(index: number): JEVQuestion {
+  return {
+    type: "noul",
+    instructions: `sources[${index}] のこの節は、claim.original と同じ事柄について述べているか。`,
+  };
+}
+
+/**
+ * How large a section is, taken from the official citation cookbook, whose
+ * sections ran from 270 to 3,122 characters (docs.typesafe.ai/cookbooks/
+ * citation_check). A section is closed at a heading once it has reached the
+ * smaller size, and before it would grow past the larger one.
+ */
+export const SECTION_MIN_CHARS = 270;
+export const SECTION_MAX_CHARS = 3122;
+
+/**
  * JEV's input limits (docs.typesafe.ai/models): 64k tokens per request, and
  * 32k tokens for the state plus the single longest question. The budgets
  * below keep a margin under both, on top of an estimate that already
@@ -34,119 +57,212 @@ export function estimateTokens(text: string): number {
   return Math.ceil(wide * 1.5 + narrow / 3);
 }
 
-/** A page as it goes into the state. */
+/** A page as it was collected, or one section of it as it goes into the state. */
 export type SourcePage = { title: string; url: string; text: string };
 
-/** One entry of `sources` in one request: a whole page, or one part of a long one. */
-export type SourceItem = {
-  /** Which page this came from, in the order the pages were given. */
-  page: number;
-  source: SourcePage & { part?: string };
-};
+/** One section, and the page it came from (the order the pages were given). */
+export type Section = { page: number; source: SourcePage };
 
-export type SupportRequest = {
+/**
+ * Whether a line reads as a heading: marked as one, or short and not ending
+ * the way a sentence does. Pages arrive as one line per block element, so
+ * this is all there is to go on.
+ */
+function isHeading(line: string): boolean {
+  const trimmed = line.trim();
+  if (!trimmed) return false;
+  if (/^#{1,6}\s/.test(trimmed)) return true;
+  if (/^[■□◆◇●▼▽【]/.test(trimmed) && trimmed.length <= 60) return true;
+  return trimmed.length <= 40 && !/[。．.!?！？、,，」』）)]$/.test(trimmed);
+}
+
+/**
+ * A page's text in sections, cut at headings and paragraph breaks. Nothing is
+ * dropped: the sections joined back together are the text, character for
+ * character. A single paragraph longer than a section is cut at the ends of
+ * its sentences, and a sentence longer than that at the size itself.
+ */
+export function splitSections(
+  text: string,
+  minChars: number = SECTION_MIN_CHARS,
+  maxChars: number = SECTION_MAX_CHARS
+): string[] {
+  if (!text) return [];
+
+  // Lines, each keeping its own line break, so joining them gives the text back.
+  const lines = text.match(/[^\n]*\n|[^\n]+$/g) ?? [text];
+  const pieces = lines.flatMap((line) => (length(line) > maxChars ? splitLong(line, maxChars) : [line]));
+
+  const sections: string[] = [];
+  let current = "";
+  for (const piece of pieces) {
+    const size = length(current);
+    const atHeading = isHeading(piece) && size >= minChars;
+    const tooLong = size > 0 && size + length(piece) > maxChars;
+    if (current && (atHeading || tooLong)) {
+      sections.push(current);
+      current = "";
+    }
+    current += piece;
+  }
+  if (current) sections.push(current);
+  return sections;
+}
+
+function length(text: string): number {
+  return Array.from(text).length;
+}
+
+/** A paragraph too long for one section, at sentence ends, each piece within `maxChars`. */
+function splitLong(line: string, maxChars: number): string[] {
+  const sentences = line.match(/[^。．.!?！？]*[。．.!?！？]+|[^。．.!?！？]+$/g) ?? [line];
+  const pieces: string[] = [];
+  let current = "";
+  for (const sentence of sentences) {
+    const chars = Array.from(sentence);
+    if (chars.length > maxChars) {
+      if (current) pieces.push(current);
+      current = "";
+      for (let at = 0; at < chars.length; at += maxChars) {
+        pieces.push(chars.slice(at, at + maxChars).join(""));
+      }
+      continue;
+    }
+    if (length(current) + chars.length > maxChars) {
+      pieces.push(current);
+      current = "";
+    }
+    current += sentence;
+  }
+  if (current) pieces.push(current);
+  return pieces;
+}
+
+/** Every page in sections, in page order and then in reading order. */
+export function sectionsOf(pages: SourcePage[]): Section[] {
+  return pages.flatMap((page, index) =>
+    splitSections(page.text).map((text) => ({
+      page: index,
+      source: { title: page.title, url: page.url, text },
+    }))
+  );
+}
+
+export type JEVRequest = {
   state: {
     claim: { original: string };
-    article: string;
-    sources: Array<SourcePage & { part?: string }>;
+    sources: SourcePage[];
   };
-  /** The page each entry of `state.sources` came from. */
-  pages: number[];
+  /** Which of the given sections `state.sources` holds, in the same order. */
+  sections: number[];
+  questions: Record<string, JEVQuestion>;
 };
 
 /**
- * The requests that put this sentence's question to JEV, with every page's
- * full text in them.
- *
- * Normally one. Only when the pages together would go over JEV's limit are
- * they spread across more, each carrying the sentence and the whole article
- * again; a page too long to fit even on its own is cut into consecutive
- * parts, all of which are sent. Nothing is left out to make it fit
- * (ADR-0007): asking in several requests is what the limit leaves, not a
- * choice to split.
+ * The first step: every section is asked whether it speaks to the sentence.
+ * Normally one request; more only when the sections together would go over
+ * JEV's limit. Every section is asked (ADR-0007: none is left out here).
+ */
+export function planRelevanceRequests(params: {
+  original: string;
+  sections: Section[];
+  stateBudget?: number;
+  requestBudget?: number;
+}): JEVRequest[] {
+  if (params.sections.length === 0) return [];
+  return pack({
+    ...params,
+    fixed: {},
+    perSection: relevanceQuestion,
+  });
+}
+
+/**
+ * The second step: the 信頼度 question, with only the sections judged to
+ * speak to the sentence as `sources`. With none, it is still asked with
+ * `sources` empty — the same as a sentence nothing was found for. Spread over
+ * more than one request only when the sections would go over JEV's limit.
  */
 export function planSupportRequests(params: {
   original: string;
-  article: string;
-  pages: SourcePage[];
-  /** Every question that rides along with the support question, by the entry it is about. */
-  questionFor?: (index: number) => JEVQuestion;
+  sections: Section[];
   stateBudget?: number;
   requestBudget?: number;
-}): SupportRequest[] {
+}): JEVRequest[] {
+  return pack({
+    ...params,
+    fixed: { support: SUPPORT_QUESTION },
+  });
+}
+
+function pack(params: {
+  original: string;
+  sections: Section[];
+  fixed: Record<string, JEVQuestion>;
+  perSection?: (index: number) => JEVQuestion;
+  stateBudget?: number;
+  requestBudget?: number;
+}): JEVRequest[] {
   const {
     original,
-    article,
-    pages,
-    questionFor,
+    sections,
+    fixed,
+    perSection,
     stateBudget = STATE_TOKEN_BUDGET,
     requestBudget = REQUEST_TOKEN_BUDGET,
   } = params;
 
-  const base = { claim: { original }, article, sources: [] as SupportRequest["state"]["sources"] };
-  const questionCost = (index: number) =>
-    questionFor ? estimateTokens(JSON.stringify(questionFor(index))) : 0;
-  const supportCost = estimateTokens(JSON.stringify(SUPPORT_QUESTION));
-  // The longest question: the support question, or a per-entry one.
-  const longest = Math.max(supportCost, questionCost(99));
-  const baseCost = estimateTokens(JSON.stringify(base));
-  const room = stateBudget - baseCost - longest;
+  const base = { claim: { original } };
+  const cost = (value: unknown) => estimateTokens(JSON.stringify(value));
+  const fixedCost = Object.values(fixed).reduce((sum, q) => sum + cost(q), 0);
+  // The longest question: a fixed one, or a per-section one with a wide index.
+  const longest = Math.max(
+    0,
+    ...Object.values(fixed).map(cost),
+    perSection ? cost(perSection(9999)) : 0
+  );
+  const baseCost = cost({ ...base, sources: [] });
 
-  if (room <= 0) {
-    throw new Error(
-      `記事が長すぎて、JEVの入力上限（状態と最長の問いで32kトークン）に収まりません（見積もり ${baseCost + longest}）。`
-    );
-  }
-
-  const items: SourceItem[] = pages.flatMap((page, index) => splitPage(page, index, room));
-
-  const requests: SupportRequest[] = [];
-  let current: SourceItem[] = [];
+  const requests: JEVRequest[] = [];
+  let current: number[] = [];
   let used = 0;
-  let asked = supportCost;
+  let asked = fixedCost;
 
   const flush = () => {
+    const questions: Record<string, JEVQuestion> = { ...fixed };
+    if (perSection) {
+      current.forEach((_, i) => {
+        questions[`relevant${i}`] = perSection(i);
+      });
+    }
     requests.push({
-      state: { ...base, sources: current.map((item) => item.source) },
-      pages: current.map((item) => item.page),
+      state: { ...base, sources: current.map((i) => sections[i].source) },
+      sections: current,
+      questions,
     });
     current = [];
     used = 0;
-    asked = supportCost;
+    asked = fixedCost;
   };
 
-  for (const item of items) {
-    // A separator's worth on top of the item itself.
-    const cost = estimateTokens(JSON.stringify(item.source)) + 1;
-    const extra = questionCost(current.length);
+  sections.forEach((section, index) => {
+    // A separator's worth on top of the section itself.
+    const size = cost(section.source) + 1;
+    const extra = perSection ? cost(perSection(current.length)) : 0;
+    if (baseCost + size + longest > stateBudget) {
+      throw new Error(
+        `資料の1節が、JEVの入力上限（状態と最長の問いで32kトークン）に収まりません（見積もり ${baseCost + size + longest}）。`
+      );
+    }
     const fits =
-      used + cost <= room && baseCost + used + cost + asked + extra <= requestBudget;
+      baseCost + used + size + longest <= stateBudget &&
+      baseCost + used + size + asked + extra <= requestBudget;
     if (!fits && current.length > 0) flush();
-    current.push(item);
-    used += cost;
-    asked += questionCost(current.length - 1);
-  }
+    current.push(index);
+    used += size;
+    asked += perSection ? cost(perSection(current.length - 1)) : 0;
+  });
 
   if (current.length > 0 || requests.length === 0) flush();
   return requests;
-}
-
-/** A page, whole if it fits in `room`, otherwise in consecutive parts that each do. */
-function splitPage(page: SourcePage, index: number, room: number): SourceItem[] {
-  const whole = { page: index, source: page };
-  if (estimateTokens(JSON.stringify(page)) + 1 <= room) return [whole];
-
-  const overhead = estimateTokens(JSON.stringify({ ...page, text: "", part: "999/999" })) + 1;
-  // JSON escaping can double an ASCII character; count each as a wide one to be safe.
-  const perPart = Math.max(1, Math.floor((room - overhead) / 1.5));
-  const chars = Array.from(page.text);
-  const parts: string[] = [];
-  for (let at = 0; at < chars.length; at += perPart) {
-    parts.push(chars.slice(at, at + perPart).join(""));
-  }
-
-  return parts.map((text, i) => ({
-    page: index,
-    source: { ...page, part: `${i + 1}/${parts.length}`, text },
-  }));
 }
