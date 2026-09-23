@@ -240,11 +240,11 @@ export default function HomePage() {
         if (blockResult) {
           finished.push(blockResult);
           setBlockProgress({ done: finished.length, total: blocks.length });
-          setAnalysisResult(mergeAnalyses(finished));
+          setAnalysisResult(mergeAnalyses(finished, blocks));
         }
       }
 
-      const finalResult = finished.length > 0 ? mergeAnalyses(finished) : null;
+      const finalResult = finished.length > 0 ? mergeAnalyses(finished, blocks) : null;
 
       if (finalResult) {
         setAnalysisResult(finalResult);

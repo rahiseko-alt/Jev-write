@@ -7,7 +7,18 @@ import type { AnalysisResult, ClaimResult, ProviderStatus } from "@/types";
  * checked one after another. What the reader gets back is one document, in
  * the order they wrote it: the blocks are concatenated exactly as they were
  * cut, so the text comes back whole.
+ *
+ * The server trims the text it is sent, so a block's result lacks the blank
+ * lines its cut fell on. Given the blocks as they were sent, those line
+ * breaks are put back around each block's text; without them, a heading that
+ * began a block would run on from the end of the previous paragraph.
  */
+
+/** The block as it was sent, when the server returned it unchanged apart from trimming. */
+function restoreEdges(text: string, block: string | undefined): string {
+  if (block === undefined || block.trim() !== text.trim()) return text;
+  return block;
+}
 
 /** Findings from different blocks must not collide: each block numbered its own from one. */
 function withBlockId(result: ClaimResult, block: number): ClaimResult {
@@ -41,14 +52,17 @@ function mergeStatuses(results: AnalysisResult[]): ProviderStatus[] {
   return Array.from(byService.values());
 }
 
-export function mergeAnalyses(results: AnalysisResult[]): AnalysisResult {
+export function mergeAnalyses(
+  results: AnalysisResult[],
+  blocks: string[] = []
+): AnalysisResult {
   const claims = results.flatMap((result, block) =>
     result.claims.map((claim) => withBlockId(claim, block))
   );
 
   return {
-    originalText: results.map((r) => r.originalText).join(""),
-    revisedText: results.map((r) => r.revisedText).join(""),
+    originalText: results.map((r, i) => restoreEdges(r.originalText, blocks[i])).join(""),
+    revisedText: results.map((r, i) => restoreEdges(r.revisedText, blocks[i])).join(""),
     summary: {
       claimsChecked: results.reduce((n, r) => n + r.summary.claimsChecked, 0),
       supported: results.reduce((n, r) => n + r.summary.supported, 0),
