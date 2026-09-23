@@ -1,0 +1,30 @@
+[
+ {
+  "id": "E1",
+  "sentence": "軽減税率の対象は、酒類と外食を除く飲食料品だけです。",
+  "kind": "(a) 限定語の誇張",
+  "truth": "軽減税率8%の対象は、酒類・外食を除く飲食料品に加え、定期購読契約に基づく週2回以上発行される新聞も含まれる。",
+  "source": "https://www.nta.go.jp/taxes/shiraberu/zeimokubetsu/shohi/keigenzeiritsu/index.htm"
+ },
+ {
+  "id": "E2",
+  "sentence": "ここでいう基準期間とは、個人事業者なら前年、法人なら前事業年度のことです。",
+  "kind": "(b) 用語の定義の誤用",
+  "truth": "基準期間は、個人事業者は前々年、法人は原則として前々事業年度。前年（前事業年度）の上半期は「特定期間」という別の概念。",
+  "source": "https://www.nta.go.jp/taxes/shiraberu/taxanswer/shohi/6501.htm"
+ },
+ {
+  "id": "E3",
+  "sentence": "2023年10月から2026年9月までは、仕入税額相当額の50%を控除できます。",
+  "kind": "(e) 数値の誤り",
+  "truth": "2023年10月1日から2026年9月30日までは仕入税額相当額の80%を控除できる（50%は2026年10月以降の段階として設けられた割合）。",
+  "source": "https://www.nta.go.jp/taxes/shiraberu/zeimokubetsu/shohi/keigenzeiritsu/invoice.htm"
+ },
+ {
+  "id": "E4",
+  "sentence": "少額特例は事業規模にかかわらず全ての事業者が利用でき、2029年9月30日までの課税仕入れが対象です。",
+  "kind": "(d) 制度の対象範囲の誤り",
+  "truth": "少額特例の対象は、基準期間の課税売上高が1億円以下、または特定期間の課税売上高が5,000万円以下の事業者に限られる。",
+  "source": "https://www.nta.go.jp/taxes/shiraberu/zeimokubetsu/shohi/keigenzeiritsu/invoice.htm"
+ }
+]

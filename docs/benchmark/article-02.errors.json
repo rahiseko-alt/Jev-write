@@ -1,0 +1,30 @@
+[
+ {
+  "id": "E1",
+  "sentence": "これらは「保健機能食品」と総称され、特定保健用食品（トクホ）、機能性表示食品、特別用途食品の3つで構成されています。",
+  "kind": "(c) 制度の構成要素の取り違え",
+  "truth": "保健機能食品は特定保健用食品（トクホ）・栄養機能食品・機能性表示食品の3つで構成される。特別用途食品は健康増進法に基づく別の制度で、保健機能食品には含まれない（トクホは特別用途食品にも位置づけられる）。",
+  "source": "https://www.caa.go.jp/policies/policy/food_labeling/foods_with_function_claims/"
+ },
+ {
+  "id": "E2",
+  "sentence": "機能性表示食品制度は、食品表示法に基づく制度として2016年4月に始まりました。",
+  "kind": "(e) 数値・年の誤り",
+  "truth": "機能性表示食品制度は食品表示法の施行に合わせて2015年（平成27年）4月1日に始まった。",
+  "source": "https://www.caa.go.jp/policies/policy/food_labeling/foods_with_function_claims/"
+ },
+ {
+  "id": "E3",
+  "sentence": "研究レビューとはシステマティックレビューのことで、特定の臨床試験を1本選び、その結果を詳しく検証する手法を指します。",
+  "kind": "(b) 用語の定義の誤用",
+  "truth": "システマティックレビュー（研究レビュー）は、あらかじめ定めた方法で関連する研究を網羅的に収集し、質を評価したうえで総合的に評価する手法であり、単一の試験を選んで検証するものではない。",
+  "source": "https://www.caa.go.jp/policies/policy/food_labeling/foods_with_function_claims/"
+ },
+ {
+  "id": "E4",
+  "sentence": "また、この制度の対象はサプリメント形状の加工食品に限られ、野菜や果物などの生鮮食品は対象外とされています。",
+  "kind": "(d) 制度の対象範囲の誤り",
+  "truth": "機能性表示食品は、サプリメント形状の加工食品、その他の加工食品、生鮮食品のいずれも対象となる（アルコールを含む飲料等の一部を除く）。生鮮食品の届出例も多数ある。",
+  "source": "https://www.caa.go.jp/policies/policy/food_labeling/foods_with_function_claims/"
+ }
+]

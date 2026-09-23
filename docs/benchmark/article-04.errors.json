@@ -1,0 +1,30 @@
+[
+ {
+  "id": "E1",
+  "sentence": "PageRankとは、ページの滞在時間やクリック率をもとに、そのページの重要度を計算するアルゴリズムです。",
+  "kind": "(b) 用語・理論の定義の誤用",
+  "truth": "PageRankは、ウェブページ間のリンク構造（どのページからどれだけ、どの程度重要なページからリンクされているか）をもとにページの重要度を計算するアルゴリズムであり、滞在時間やクリック率に基づくものではない。",
+  "source": "http://infolab.stanford.edu/~backrub/google.html"
+ },
+ {
+  "id": "E2",
+  "sentence": "従来の「E-A-T」に「経験（Experience）」が加えられたのは2020年のことで、実際に製品を使った人や現地を訪れた人の一次的な体験がより重視されるようになりました。",
+  "kind": "(e) 数値・年の誤り",
+  "truth": "E-A-TにExperienceが追加されE-E-A-Tとなったのは2022年12月の検索品質評価ガイドライン更新である。",
+  "source": "https://developers.google.com/search/blog/2022/12/google-raters-guidelines-e-e-a-t"
+ },
+ {
+  "id": "E3",
+  "sentence": "その代表的な指標がCore Web Vitalsで、読み込み速度を示すLCP、操作への応答性を示すFID、表示の安定性を示すCLSの3つで構成されています。",
+  "kind": "(c) フレームワークや制度の構成要素の取り違え",
+  "truth": "2024年3月にFIDはINP（Interaction to Next Paint）に置き換えられ、現在のCore Web VitalsはLCP・INP・CLSの3指標で構成される。",
+  "source": "https://web.dev/articles/vitals"
+ },
+ {
+  "id": "E4",
+  "sentence": "robots.txtでブロックすれば、そのページは必ず検索結果に表示されなくなります。",
+  "kind": "(a) 限定語の誇張",
+  "truth": "robots.txtはクロールを制御するもので、インデックス登録を防ぐ手段ではない。他のページからリンクされていれば、ブロックされたページもURLが検索結果に表示されることがある。検索結果から除外するにはnoindex等を使う（その場合はクロールを許可する必要がある）。",
+  "source": "https://developers.google.com/search/docs/crawling-indexing/robots/intro"
+ }
+]
