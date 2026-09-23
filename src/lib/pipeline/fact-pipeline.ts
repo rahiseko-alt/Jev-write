@@ -1,4 +1,3 @@
-import { correctionFromEvidence } from "./correction";
 import { SourcePool, createSourcePool } from "./source-pool";
 import { readEvidence } from "./evidence-reading";
 import { CAUTION_THRESHOLD, bandOf } from "@/lib/jev/bands";
@@ -9,7 +8,6 @@ import {
   EvidenceTrace,
   ClaimVerdict,
   Evidence,
-  FactLedgerItem,
   SourceType,
 } from "@/types";
 import {
@@ -45,7 +43,6 @@ export interface FactPipelineOptions {
 
 export interface FactPipelineOutput {
   claims: ClaimResult[];
-  factLedger: FactLedgerItem[];
   evidences: Evidence[];
 }
 
@@ -140,7 +137,6 @@ export async function runFactPipeline(
   }
 
   const claimResults: ClaimResult[] = [];
-  const factLedger: FactLedgerItem[] = [];
   const allEvidences: Evidence[] = [];
   let factHitsCount = 0;
 
@@ -196,7 +192,6 @@ export async function runFactPipeline(
 
   for (const item of resolved) {
     claimResults.push(item.claimResult);
-    factLedger.push(item.ledgerItem);
     allEvidences.push(...item.evidences);
     if (item.isFactCheckHit) {
       factHitsCount++;
@@ -213,7 +208,6 @@ export async function runFactPipeline(
 
   return {
     claims: claimResults,
-    factLedger,
     evidences: allEvidences,
   };
 }
@@ -232,7 +226,6 @@ async function verifyClaim(params: {
   fetchProvider: FetchProvider;
 }): Promise<{
   claimResult: ClaimResult;
-  ledgerItem: FactLedgerItem;
   evidences: Evidence[];
   isFactCheckHit: boolean;
 }> {
@@ -256,7 +249,6 @@ async function verifyClaim(params: {
     used: 0,
   };
   let verdict: ClaimVerdict = "INSUFFICIENT";
-  let correctedClaim: string | undefined;
   let reason: string | undefined;
   let isFactCheckHit = false;
   /**
@@ -344,11 +336,6 @@ async function verifyClaim(params: {
           claimEvidences.push(evidence);
         }
 
-        if (verdict === "CONTRADICTED") {
-          // A review's headline is an article title, not a replacement
-          // sentence. The conflict is reported; the wording stays.
-          correctedClaim = undefined;
-        }
         break; // Matched primary fact check hit
       }
     }
@@ -526,10 +513,6 @@ async function verifyClaim(params: {
               ? `このページは違うことを書いています（JEVの確信度 ${(certainty * 100).toFixed(0)}%）。どちらが正しいかはページを見てお確かめください。`
               : `このページは同じことを書いています（JEVの確信度 ${(certainty * 100).toFixed(0)}%）。`;
         }
-
-        if (relation === "contradicts" && !correctedClaim) {
-          correctedClaim = await deriveCorrectionFromText(candidate.text, claim, llm);
-        }
       }
     }
 
@@ -606,33 +589,9 @@ async function verifyClaim(params: {
     }
   }
 
-  // Locked facts for Fact Ledger (immutable facts that rewriting LLM must not modify)
-  const lockedFacts: string[] = [];
-  if (verdict === "SUPPORTED") {
-    lockedFacts.push(claim.normalizedText);
-    if (claim.numbers) lockedFacts.push(...claim.numbers);
-    if (claim.dates) lockedFacts.push(...claim.dates);
-    if (claim.entities) lockedFacts.push(...claim.entities);
-  }
-
-  const ledgerItem: FactLedgerItem = {
-    claimId: claim.id,
-    originalClaim: claim.normalizedText || claim.originalText,
-    verdict,
-    // No correction the Evidence justifies means no correction. The claim's
-    // own paraphrase is not one, and offering it would authorise a change
-    // nobody checked.
-    correctedClaim: verdict === "CONTRADICTED" ? correctedClaim : undefined,
-    correctionReason: reason,
-    lockedFacts: Array.from(new Set(lockedFacts)),
-    evidenceIds: claimEvidences.map((e) => e.id),
-    confidence,
-  };
-
   const claimResult: ClaimResult = {
     claim,
     verdict,
-    correctedClaim: ledgerItem.correctedClaim,
     reason,
     evidence: claimEvidences,
     confidence,
@@ -644,7 +603,6 @@ async function verifyClaim(params: {
 
   return {
     claimResult,
-    ledgerItem,
     evidences: claimEvidences,
     isFactCheckHit,
   };
@@ -697,29 +655,6 @@ function mapChoiceToClaimVerdict(choice?: string): ClaimVerdict {
     default:
       return "INSUFFICIENT";
   }
-}
-
-async function deriveCorrectionFromText(
-  text: string,
-  claim: Claim,
-  llm?: LLMProvider
-): Promise<string | undefined> {
-  // The LLM reads the Evidence and states the corrected fact, where it can.
-  if (llm && typeof (llm as any).deriveCorrection === "function") {
-    try {
-      const res = await (llm as any).deriveCorrection(claim, text);
-      if (res && res.trim().length > 0) {
-        return res.trim();
-      }
-    } catch (e) {
-      console.warn("LLM deriveCorrection failed:", e);
-    }
-  }
-
-  // Otherwise the Evidence's own figures, and only where they answer the same
-  // question the Claim asks. Anything less specific is a guess, and a guess
-  // here rewrites the reader's article with another document's facts.
-  return correctionFromEvidence(claim, text);
 }
 
 function extractRelevantExcerpt(content: string, claim: Claim, maxLength = 2500): string {

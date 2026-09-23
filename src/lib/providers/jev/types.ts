@@ -132,9 +132,4 @@ export interface JEVClient {
   evaluateAtomicJudgment(req: JEVAtomicJudgmentRequest): Promise<JEVAtomicJudgmentResult>;
   evaluateBatchRules(req: JEVBatchRulesRequest): Promise<JEVBatchRulesResult>;
   evaluateBatchRules(text: string, rules: any[]): Promise<any>;
-  evaluateDeltaMeaningChange(
-    originalClaimOrParams: string | JEVDeltaMeaningParams,
-    revisedText?: string,
-    allowedChanges?: string[]
-  ): Promise<JEVDeltaMeaningResult>;
 }

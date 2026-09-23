@@ -348,7 +348,9 @@ function factFinding(
   const shape = FINDING_KINDS[kind];
   const id = factFindingId(index);
   const firstEvidence = result.evidence?.[0];
-  const corrected = result.correctedClaim || text;
+  // Nothing is rewritten, so the sentence the Finding points at is the
+  // sentence as written (ADR-0010).
+  const corrected = text;
   const at = sentenceIndexOf(sentences, text);
   const ratio = result.confidence;
   const band =
@@ -372,7 +374,7 @@ function factFinding(
     lineIndex: at,
     adopted: isAdopted(adoption, id, false),
     markKind: shape.markKind,
-    adoptable: kind === "corrected" && at >= 0 && corrected !== text,
+    adoptable: false,
     sentenceBefore: "",
     sentenceAfter: "",
     evidenceTrace: result.evidenceTrace,
@@ -452,8 +454,10 @@ function resolveSentence(
   findings: Finding[],
   sentenceIndex: number
 ): string {
+  // Only a suggestion can be put back, and this tool makes none: a Finding
+  // that was never adoptable leaves the sentence exactly as written.
   const refused = findings.filter(
-    (finding) => finding.lineIndex === sentenceIndex && !finding.adopted
+    (finding) => finding.lineIndex === sentenceIndex && isRefused(finding)
   );
 
   if (refused.length === 0) return revised;

@@ -1,5 +1,5 @@
 import { Claim, Importance } from "@/types";
-import { LLMProvider, RewriteInput, SurgicalFixInput } from "./types";
+import { LLMProvider } from "./types";
 import { recordFailure } from "../diagnostics";
 import {
   DOCUMENT_QUERY_SYSTEM_PROMPT,
@@ -216,51 +216,5 @@ Return ONLY a valid JSON object with this exact structure, nothing else:
     }
   }
 
-  async rewrite(input: RewriteInput): Promise<string> {
-    try {
-      const { originalText, plan } = input;
-
-      const instructions = [
-        "You are a professional Japanese editor performing precise text quality assurance and fact revision.",
-        "Rewrite the provided text strictly adhering to the following 5 principles:",
-        "1. Factual Corrections: Apply ALL fact ledger corrections. Replace contradicted claims with their correctedClaim accurately.",
-        "2. Style Fixes: Remove or revise all identified AI-tells and style issues according to their repair instructions.",
-        "3. Invariant Preservation: You MUST PRESERVE all immutable facts, verified figures, and proper nouns.",
-        "4. Natural Flow: Ensure smooth, natural Japanese prose retaining original author intent and tone.",
-        "5. No Hallucinations: Do NOT introduce unverified new facts or numbers.",
-        "Return ONLY the rewritten Japanese article without meta-commentary, markdown wrapping, or explanations.",
-      ].join("\n");
-
-      const planJson = JSON.stringify(
-        {
-          corrections: plan.corrections.map((c) => ({
-            original: c.originalClaim,
-            verdict: c.verdict,
-            correctedClaim: c.correctedClaim,
-            reason: c.correctionReason,
-            lockedFacts: c.lockedFacts,
-          })),
-          styleIssues: plan.styleIssues.map((s) => ({
-            ruleId: s.ruleId,
-            targetText: s.targetText,
-            repairInstruction: s.repairInstruction,
-          })),
-          immutableFacts: plan.immutableFacts,
-          protectedQuotes: plan.protectedQuotes,
-          protectedNames: plan.protectedNames,
-        },
-        null,
-        2
-      );
-
-      const userPrompt = `Rewrite Plan:\n${planJson}\n\nOriginal Text:\n${originalText}`;
-
-      const result = await this.callMessages(instructions, userPrompt);
-      return result.trim();
-    } catch (err) {
-      recordFailure(this, err);
-      throw err;
-    }
-  }
 
 }

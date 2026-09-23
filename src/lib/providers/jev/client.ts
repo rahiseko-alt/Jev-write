@@ -259,47 +259,4 @@ export class HTTPJEVClient implements JEVClient {
   /**
    * Verifies if revised text introduces unauthorized factual mutations
    */
-  async evaluateDeltaMeaningChange(
-    originalClaimOrParams: string | JEVDeltaMeaningParams,
-    revisedText?: string,
-    allowedChanges?: string[]
-  ): Promise<JEVDeltaMeaningResult> {
-    let orig = "";
-    let rev = "";
-    let allowed: string[] = [];
-
-    if (typeof originalClaimOrParams === "object") {
-      orig = originalClaimOrParams.originalText || originalClaimOrParams.originalClaim || "";
-      rev = originalClaimOrParams.revisedText || "";
-      allowed = originalClaimOrParams.authorizedChanges || originalClaimOrParams.allowedChanges || [];
-    } else {
-      orig = originalClaimOrParams;
-      rev = revisedText || "";
-      allowed = allowedChanges || [];
-    }
-
-    const state = {
-      originalClaim: orig,
-      revisedText: rev,
-      permittedChanges: allowed,
-    };
-
-    const atomicResult = await this.evaluateAtomicJudgment({
-      state,
-      instructions: "修正後の文章は、許可された変更（permittedChanges）以外に意味上の新しい事実変更や数値の改変を行っているか？",
-      mode: "noul",
-    });
-
-    const hasUnauthorized = (atomicResult.noul ?? 0) > 0.5;
-    return {
-      hasUnauthorizedChange: hasUnauthorized,
-      unauthorizedChangeDetected: hasUnauthorized,
-      unauthorizedChanges: hasUnauthorized
-        ? [{ segment: rev, reason: atomicResult.explanation || "未許可の事実変更を検出しました" }]
-        : [],
-      explanation: atomicResult.explanation,
-      authorized: !hasUnauthorized,
-      reason: hasUnauthorized ? (atomicResult.explanation || "未許可の事実変更を検出しました") : undefined,
-    };
-  }
 }
