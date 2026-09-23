@@ -56,7 +56,7 @@ const MARK_STYLES: Record<
     rejectedClassName:
       "bg-slate-50 text-red-800/70 underline decoration-red-300 decoration-dashed underline-offset-4",
     glyph: "✎",
-    label: "事実の修正",
+    label: "資料と食い違い",
   },
   style: {
     className:
@@ -479,7 +479,13 @@ export default function HomePage() {
                             : "bg-amber-100 text-amber-700"
                         }`}
                       >
-                        {currentFinding.kind === "corrected" ? "誤り" : currentFinding.kind === "ai-tell" ? "AI癖表現" : "要確認"}
+                        {currentFinding.kind === "corrected"
+                          ? "資料と食い違い"
+                          : currentFinding.kind === "ai-tell"
+                          ? "AI癖表現"
+                          : currentFinding.kind === "confirmed"
+                          ? "資料と一致"
+                          : "裏付けなし"}
                       </span>
                     </div>
 

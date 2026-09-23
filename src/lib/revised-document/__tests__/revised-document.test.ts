@@ -71,12 +71,20 @@ const THREE_PARAGRAPHS_REVISED = [
   "三つ目の段落の一文目。二文目。三文目。",
 ].join("\n\n");
 
+/**
+ * A fact suggestion now starts refused: what a source says differently is not
+ * a settled error. Tests about what an accepted correction does say so here.
+ */
+const ACCEPTED: Record<string, boolean> = Object.fromEntries(
+  Array.from({ length: 12 }, (_, i) => [`fact-${i}`, true])
+);
+
 describe("buildRevisedDocument", () => {
   describe("the document it marks up", () => {
     it("is the one the analysis ran on, not the one being typed", () => {
       const view = buildRevisedDocument({
         analysis: analysis(THREE_PARAGRAPHS, THREE_PARAGRAPHS_REVISED),
-        adoption: {},
+        adoption: { ...ACCEPTED },
       });
 
       expect(view.originalText).toBe(THREE_PARAGRAPHS);
@@ -89,7 +97,7 @@ describe("buildRevisedDocument", () => {
     it("returns one paragraph per paragraph in the original", () => {
       const view = buildRevisedDocument({
         analysis: analysis(THREE_PARAGRAPHS, THREE_PARAGRAPHS_REVISED),
-        adoption: {},
+        adoption: { ...ACCEPTED },
       });
 
       expect(view.paragraphs).toHaveLength(3);
@@ -98,7 +106,7 @@ describe("buildRevisedDocument", () => {
     it("does not split a paragraph into one entry per sentence", () => {
       const view = buildRevisedDocument({
         analysis: analysis("一文目。二文目。三文目。", "一文目。二文目。三文目。"),
-        adoption: {},
+        adoption: { ...ACCEPTED },
       });
 
       expect(view.paragraphs).toHaveLength(1);
@@ -108,7 +116,7 @@ describe("buildRevisedDocument", () => {
     it("keeps each paragraph's text intact", () => {
       const view = buildRevisedDocument({
         analysis: analysis(THREE_PARAGRAPHS, THREE_PARAGRAPHS_REVISED),
-        adoption: {},
+        adoption: { ...ACCEPTED },
       });
 
       expect(view.paragraphs.map(paragraphText)).toEqual([
@@ -121,7 +129,7 @@ describe("buildRevisedDocument", () => {
     it("ignores blank lines beyond the paragraph breaks themselves", () => {
       const view = buildRevisedDocument({
         analysis: analysis("一つ目。\n\n\n二つ目。", "一つ目。\n\n\n二つ目。"),
-        adoption: {},
+        adoption: { ...ACCEPTED },
       });
 
       expect(view.paragraphs).toHaveLength(2);
@@ -130,7 +138,7 @@ describe("buildRevisedDocument", () => {
     it("returns no paragraphs for empty input", () => {
       const view = buildRevisedDocument({
         analysis: analysis("", ""),
-        adoption: {},
+        adoption: { ...ACCEPTED },
       });
 
       expect(view.paragraphs).toEqual([]);
@@ -144,7 +152,7 @@ describe("buildRevisedDocument", () => {
 
       const view = buildRevisedDocument({
         analysis: analysis(original, revised),
-        adoption: {},
+        adoption: { ...ACCEPTED },
       });
 
       expect(view.paragraphs.map(paragraphText)).toEqual([
@@ -159,7 +167,7 @@ describe("buildRevisedDocument", () => {
 
       const view = buildRevisedDocument({
         analysis: analysis(original, revised),
-        adoption: {},
+        adoption: { ...ACCEPTED },
       });
 
       expect(paragraphText(view.paragraphs[0])).toBe("一文目を直した。二文目。三文目。");
@@ -170,7 +178,7 @@ describe("buildRevisedDocument", () => {
 
       const view = buildRevisedDocument({
         analysis: analysis(original, ""),
-        adoption: {},
+        adoption: { ...ACCEPTED },
       });
 
       expect(paragraphText(view.paragraphs[0])).toBe("一文目。二文目。");
@@ -181,7 +189,7 @@ describe("buildRevisedDocument", () => {
     it("reproduces the original paragraph breaks", () => {
       const view = buildRevisedDocument({
         analysis: analysis(THREE_PARAGRAPHS, THREE_PARAGRAPHS_REVISED),
-        adoption: {},
+        adoption: { ...ACCEPTED },
       });
 
       expect(view.clipboardText).toBe(THREE_PARAGRAPHS_REVISED);
@@ -192,7 +200,7 @@ describe("buildRevisedDocument", () => {
 
       const view = buildRevisedDocument({
         analysis: analysis(original, original),
-        adoption: {},
+        adoption: { ...ACCEPTED },
       });
 
       expect(view.clipboardText).toBe("一文目。二文目。三文目。");
@@ -205,7 +213,7 @@ describe("buildRevisedDocument", () => {
 
       const view = buildRevisedDocument({
         analysis: analysis(original, revised),
-        adoption: {},
+        adoption: { ...ACCEPTED },
       });
 
       expect(view.clipboardText).toBe("価格は12万円。");
@@ -218,7 +226,7 @@ describe("buildRevisedDocument", () => {
         analysis: analysis(original, "価格は12万円。", [
           claim("価格は10万円", "CONTRADICTED", "価格は12万円"),
         ]),
-        adoption: {},
+        adoption: { ...ACCEPTED },
       });
 
       expect(view.clipboardText).toBe("価格は12万円。");
@@ -231,7 +239,7 @@ describe("buildRevisedDocument", () => {
 
       const view = buildRevisedDocument({
         analysis: analysis(original, original),
-        adoption: {},
+        adoption: { ...ACCEPTED },
       });
 
       expect(view.originalText).toBe(original);
@@ -244,7 +252,7 @@ describe("buildRevisedDocument", () => {
 
       const view = buildRevisedDocument({
         analysis: analysis(original, revised),
-        adoption: {},
+        adoption: { ...ACCEPTED },
       });
 
       expect(view.originalText).toBe(original);
@@ -256,7 +264,7 @@ describe("buildRevisedDocument", () => {
 
       const view = buildRevisedDocument({
         analysis: analysis(original, original),
-        adoption: {},
+        adoption: { ...ACCEPTED },
       });
 
       // Three breaks' worth of characters are part of both documents.
@@ -272,7 +280,7 @@ describe("buildRevisedDocument", () => {
 
       const view = buildRevisedDocument({
         analysis: analysis(original, revised),
-        adoption: {},
+        adoption: { ...ACCEPTED },
       });
 
       expect(view.comparison).toEqual([
@@ -290,7 +298,7 @@ describe("buildRevisedDocument", () => {
         analysis: analysis(original, "価格は12万円。", [
           claim("価格は10万円。", "CONTRADICTED", "価格は12万円。"),
         ]),
-        adoption: {},
+        adoption: { ...ACCEPTED },
       });
 
       expect(paragraphText(view.paragraphs[0])).toBe("価格は12万円。");
@@ -304,7 +312,7 @@ describe("buildRevisedDocument", () => {
         analysis: analysis(original, "価格は12万円。", [
           claim("価格は10万円。", "CONTRADICTED", "価格は12万円。"),
         ]),
-        adoption: { "fact-0": false },
+        adoption: { ...ACCEPTED, "fact-0": false },
       });
 
       expect(paragraphText(view.paragraphs[0])).toBe("価格は10万円。");
@@ -316,7 +324,7 @@ describe("buildRevisedDocument", () => {
 
       const view = buildRevisedDocument({
         analysis: analysis(original, "こうなる。", [], [styleIssue("まとめると、こうなる。")]),
-        adoption: { "style-0": false },
+        adoption: { ...ACCEPTED, "style-0": false },
       });
 
       expect(paragraphText(view.paragraphs[0])).toBe("まとめると、こうなる。");
@@ -331,7 +339,7 @@ describe("buildRevisedDocument", () => {
           claim("価格は10万円。", "CONTRADICTED", "価格は12万円。"),
           claim("発売日は3月1日。", "CONTRADICTED", "発売日は4月1日。"),
         ]),
-        adoption: { "fact-0": false },
+        adoption: { ...ACCEPTED, "fact-0": false },
       });
 
       expect(view.clipboardText).toBe("価格は10万円。\n\n発売日は4月1日。");
@@ -344,7 +352,7 @@ describe("buildRevisedDocument", () => {
         analysis: analysis(original, "価格は12万円。", [
           claim("価格は10万円。", "CONTRADICTED", "価格は12万円。"),
         ]),
-        adoption: { "fact-0": false },
+        adoption: { ...ACCEPTED, "fact-0": false },
       });
 
       expect(view.comparison).toEqual([
@@ -359,7 +367,7 @@ describe("buildRevisedDocument", () => {
 
       const view = buildRevisedDocument({
         analysis: analysis(original, original),
-        adoption: {},
+        adoption: { ...ACCEPTED },
       });
 
       expect(view.clipboardText).toBe(original);
@@ -370,7 +378,7 @@ describe("buildRevisedDocument", () => {
 
       const view = buildRevisedDocument({
         analysis: analysis(original, original),
-        adoption: {},
+        adoption: { ...ACCEPTED },
       });
 
       expect(view.clipboardText).toBe(original);
@@ -381,7 +389,7 @@ describe("buildRevisedDocument", () => {
 
       const view = buildRevisedDocument({
         analysis: analysis(original, original),
-        adoption: {},
+        adoption: { ...ACCEPTED },
       });
 
       expect(view.clipboardText).toBe(original);
@@ -394,7 +402,7 @@ describe("buildRevisedDocument", () => {
 
       const view = buildRevisedDocument({
         analysis: analysis(original, original),
-        adoption: {},
+        adoption: { ...ACCEPTED },
       });
 
       expect(view.paragraphs.map((p) => p.separator)).toEqual(["\n", "\n\n", ""]);
@@ -405,7 +413,7 @@ describe("buildRevisedDocument", () => {
 
       const view = buildRevisedDocument({
         analysis: analysis(original, original),
-        adoption: {},
+        adoption: { ...ACCEPTED },
       });
 
       const assembled = view.paragraphs
@@ -423,7 +431,7 @@ describe("buildRevisedDocument", () => {
         analysis: analysis(original, original, [claim("価格は10万円。", "CONTRADICTED", "価格は12万円。")], [
           styleIssue("まとめると、こうなる。"),
         ]),
-        adoption: {},
+        adoption: { ...ACCEPTED },
       });
 
       expect(view.findings.map((f) => f.id)).toEqual(["fact-0", "style-0"]);
@@ -436,7 +444,7 @@ describe("buildRevisedDocument", () => {
         analysis: analysis(original, original, [
           claim("発売日は3月1日。", "CONTRADICTED", "発売日は4月1日。"),
         ]),
-        adoption: {},
+        adoption: { ...ACCEPTED },
       });
 
       expect(view.findings[0].lineIndex).toBe(1);
@@ -449,7 +457,7 @@ describe("buildRevisedDocument", () => {
         analysis: analysis(original, original, [
           claim("価格は10万円。", "CONTRADICTED", "価格は12万円。"),
         ]),
-        adoption: {},
+        adoption: { ...ACCEPTED },
       });
 
       expect(view.findings[0].lineIndex).toBe(0);
@@ -461,11 +469,11 @@ describe("buildRevisedDocument", () => {
 
       const adopted = buildRevisedDocument({
         analysis: analysis(original, "価格は12万円。", claims),
-        adoption: {},
+        adoption: { ...ACCEPTED },
       });
       const rejectedView = buildRevisedDocument({
         analysis: analysis(original, "価格は12万円。", claims),
-        adoption: { "fact-0": false },
+        adoption: { ...ACCEPTED, "fact-0": false },
       });
 
       expect(adopted.findings[0].adopted).toBe(true);
@@ -479,11 +487,11 @@ describe("buildRevisedDocument", () => {
 
       const fromRatio = buildRevisedDocument({
         analysis: analysis(original, original, [ratio]),
-        adoption: {},
+        adoption: { ...ACCEPTED },
       });
       const fromScaled = buildRevisedDocument({
         analysis: analysis(original, original, [scaled]),
-        adoption: {},
+        adoption: { ...ACCEPTED },
       });
 
       expect(fromRatio.findings[0].confidence).toBe(82);
@@ -497,7 +505,7 @@ describe("buildRevisedDocument", () => {
         analysis: analysis(original, original, [
           claim("価格は10万円。", "CONTRADICTED", "価格は12万円。"),
         ]),
-        adoption: {},
+        adoption: { ...ACCEPTED },
       });
 
       expect(view.findings[0]).not.toHaveProperty("timeAgo");
@@ -508,7 +516,7 @@ describe("buildRevisedDocument", () => {
     it("reports nothing found when there are no claims and no style issues", () => {
       const view = buildRevisedDocument({
         analysis: analysis("一文目。", "一文目。"),
-        adoption: {},
+        adoption: { ...ACCEPTED },
       });
 
       expect(view.hasFindings).toBe(false);
@@ -519,7 +527,7 @@ describe("buildRevisedDocument", () => {
 
       const view = buildRevisedDocument({
         analysis: analysis(original, original, [claim("一文目", "SUPPORTED")]),
-        adoption: {},
+        adoption: { ...ACCEPTED },
       });
 
       expect(view.hasFindings).toBe(false);
@@ -532,7 +540,7 @@ describe("buildRevisedDocument", () => {
         analysis: analysis(original, "価格は12万円。", [
           claim("価格は10万円", "CONTRADICTED", "価格は12万円"),
         ]),
-        adoption: {},
+        adoption: { ...ACCEPTED },
       });
 
       expect(view.hasFindings).toBe(true);
@@ -543,7 +551,7 @@ describe("buildRevisedDocument", () => {
 
       const view = buildRevisedDocument({
         analysis: analysis(original, original, [claim("価格は10万円", "INSUFFICIENT")]),
-        adoption: {},
+        adoption: { ...ACCEPTED },
       });
 
       expect(view.hasFindings).toBe(true);
@@ -554,7 +562,7 @@ describe("buildRevisedDocument", () => {
 
       const view = buildRevisedDocument({
         analysis: analysis(original, "こうなる。", [], [styleIssue("まとめると、まとめると、")]),
-        adoption: {},
+        adoption: { ...ACCEPTED },
       });
 
       expect(view.hasFindings).toBe(true);
@@ -566,7 +574,7 @@ describe("buildRevisedDocument", () => {
 
       const view = buildRevisedDocument({
         analysis: analysis(original, original, [], [undetected]),
-        adoption: {},
+        adoption: { ...ACCEPTED },
       });
 
       expect(view.hasFindings).toBe(false);
@@ -594,7 +602,7 @@ describe("inline marks", () => {
       analysis: analysis(original, revised, [
         claim("アップルは2023年9月13日", "CONTRADICTED", "アップルは2023年9月12日"),
       ]),
-      adoption: {},
+      adoption: { ...ACCEPTED },
     });
 
     expect(marks(view)).toEqual([
@@ -608,7 +616,7 @@ describe("inline marks", () => {
 
     const view = buildRevisedDocument({
       analysis: analysis(original, revised, [], [styleIssue("まとめると、まとめると、こうなる。")]),
-      adoption: {},
+      adoption: { ...ACCEPTED },
     });
 
     expect(marks(view)).toEqual([
@@ -621,7 +629,7 @@ describe("inline marks", () => {
 
     const view = buildRevisedDocument({
       analysis: analysis(original, original, [claim("価格は10万円である。", "INSUFFICIENT")]),
-      adoption: {},
+      adoption: { ...ACCEPTED },
     });
 
     expect(marks(view)).toEqual([
@@ -634,7 +642,7 @@ describe("inline marks", () => {
 
     const view = buildRevisedDocument({
       analysis: analysis(original, original, [claim("価格は10万円である。", "SUPPORTED")]),
-      adoption: {},
+      adoption: { ...ACCEPTED },
     });
 
     expect(marks(view)).toEqual([]);
@@ -648,7 +656,7 @@ describe("inline marks", () => {
       analysis: analysis(original, revised, [
         claim("価格は10万円である。", "CONTRADICTED", "まったく別の文言"),
       ]),
-      adoption: {},
+      adoption: { ...ACCEPTED },
     });
 
     expect(marks(view)).toEqual([
@@ -664,7 +672,7 @@ describe("inline marks", () => {
       analysis: analysis(original, revised, [
         claim("アップルは2023年9月13日", "CONTRADICTED", "アップルは2023年9月12日"),
       ]),
-      adoption: {},
+      adoption: { ...ACCEPTED },
     });
 
     expect(paragraphText(view.paragraphs[0])).toBe(revised);
@@ -678,7 +686,7 @@ describe("inline marks", () => {
       analysis: analysis(original, revised, [
         claim("アップルは2023年9月13日", "CONTRADICTED", "アップルは2023年9月12日"),
       ]),
-      adoption: {},
+      adoption: { ...ACCEPTED },
     });
 
     expect(view.clipboardText).toBe(revised);
@@ -695,7 +703,7 @@ describe("inline marks", () => {
         [claim("価格は10万円である", "CONTRADICTED", "価格は12万円である")],
         [styleIssue("まとめると、価格は10万円である。")]
       ),
-      adoption: {},
+      adoption: { ...ACCEPTED },
     });
 
     const found = marks(view);
@@ -712,7 +720,7 @@ describe("a Finding that cannot be placed", () => {
       analysis: analysis(original, original, [
         claim("この文章に存在しない主張", "CONTRADICTED", "訂正後の文言"),
       ]),
-      adoption: {},
+      adoption: { ...ACCEPTED },
     });
 
     expect(view.findings[0].lineIndex).toBe(-1);
@@ -725,7 +733,7 @@ describe("a Finding that cannot be placed", () => {
       analysis: analysis(original, original, [
         claim("この文章に存在しない主張", "CONTRADICTED", "訂正後の文言"),
       ]),
-      adoption: {},
+      adoption: { ...ACCEPTED },
     });
 
     const marked = view.paragraphs.flatMap((p) => p.segments).filter((s) => s.mark);
@@ -740,7 +748,7 @@ describe("a Finding that cannot be placed", () => {
       analysis: analysis(original, revised, [
         claim("この文章に存在しない主張", "CONTRADICTED", "訂正後の文言"),
       ]),
-      adoption: { "fact-0": false },
+      adoption: { ...ACCEPTED, "fact-0": false },
     });
 
     expect(view.clipboardText).toBe(revised);
@@ -751,7 +759,7 @@ describe("a Finding that cannot be placed", () => {
 
     const view = buildRevisedDocument({
       analysis: analysis(original, original, [], [styleIssue("どこにも無い言い回し")]),
-      adoption: {},
+      adoption: { ...ACCEPTED },
     });
 
     expect(view.findings[0].lineIndex).toBe(-1);
@@ -775,7 +783,7 @@ describe("locating the changed wording", () => {
       analysis: analysis(original, revised, [
         claim("本体価格は49980円", "CONTRADICTED", "本体価格は69980円"),
       ]),
-      adoption: {},
+      adoption: { ...ACCEPTED },
     });
 
     expect(marked(view).map((m) => m.text)).toEqual(["69980"]);
@@ -789,7 +797,7 @@ describe("locating the changed wording", () => {
       analysis: analysis(original, revised, [
         claim("12月の売上は12億円", "CONTRADICTED", "12月の売上は15億円"),
       ]),
-      adoption: {},
+      adoption: { ...ACCEPTED },
     });
 
     const found = marked(view);
@@ -806,7 +814,7 @@ describe("locating the changed wording", () => {
         claim("価格は10万円", "CONTRADICTED", "価格は12万円"),
         claim("重さは500g", "CONTRADICTED", "重さは600g"),
       ]),
-      adoption: {},
+      adoption: { ...ACCEPTED },
     });
 
     const ids = marked(view).flatMap((m) => m.ids);
@@ -822,7 +830,7 @@ describe("locating the changed wording", () => {
         claim("価格は10万円である。", "CONTRADICTED", "まったく別の文言"),
         claim("価格は10万円である。", "CONTRADICTED", "これも別の文言"),
       ]),
-      adoption: {},
+      adoption: { ...ACCEPTED },
     });
 
     const found = marked(view);
@@ -835,11 +843,11 @@ describe("locating the changed wording", () => {
 
     const view = buildRevisedDocument({
       analysis: analysis(original, original, [claim("価格は10万円である。", "MIXED")]),
-      adoption: {},
+      adoption: { ...ACCEPTED },
     });
 
     expect(view.findings[0].kind).toBe("unverified");
-    expect(view.findings[0].categoryLabel).toBe("要確認");
+    expect(view.findings[0].categoryLabel).toBe("裏付けなし");
     expect(marked(view).map((m) => m.kind)).toEqual(["unverified"]);
     expect(view.hasFindings).toBe(true);
   });
@@ -849,7 +857,7 @@ describe("locating the changed wording", () => {
 
     const view = buildRevisedDocument({
       analysis: analysis(original, original),
-      adoption: {},
+      adoption: { ...ACCEPTED },
     });
 
     expect(view.title).toBe("PlayStation 5 Proは家庭用ゲーム機です。");
@@ -864,10 +872,10 @@ describe("Finding headings", () => {
       analysis: analysis(original, "価格は12万円である。", [
         claim("価格は10万円", "CONTRADICTED", "価格は12万円"),
       ]),
-      adoption: {},
+      adoption: { ...ACCEPTED },
     });
 
-    expect(view.findings[0].title).toBe("事実の誤り: 10");
+    expect(view.findings[0].title).toBe("資料と食い違い: 10");
   });
 
   it("names the kind and the claim for an unverified one", () => {
@@ -875,10 +883,10 @@ describe("Finding headings", () => {
 
     const view = buildRevisedDocument({
       analysis: analysis(original, original, [claim("価格は10万円である。", "INSUFFICIENT")]),
-      adoption: {},
+      adoption: { ...ACCEPTED },
     });
 
-    expect(view.findings[0].title).toBe("根拠が見つかりません: 価格は10万円である。");
+    expect(view.findings[0].title).toBe("裏付けが見つかりません: 価格は10万円である。");
   });
 
   it("is meaningful for an article the sample keywords never covered", () => {
@@ -888,10 +896,10 @@ describe("Finding headings", () => {
       analysis: analysis(original, "売上は前年比140%だった。", [
         claim("売上は前年比120%", "CONTRADICTED", "売上は前年比140%"),
       ]),
-      adoption: {},
+      adoption: { ...ACCEPTED },
     });
 
-    expect(view.findings[0].title).toBe("事実の誤り: 120");
+    expect(view.findings[0].title).toBe("資料と食い違い: 120");
   });
 
   it("names the rule and its target for an AI-tell", () => {
@@ -899,7 +907,7 @@ describe("Finding headings", () => {
 
     const view = buildRevisedDocument({
       analysis: analysis(original, "こうなる。", [], [styleIssue("まとめると、こうなる。")]),
-      adoption: {},
+      adoption: { ...ACCEPTED },
     });
 
     expect(view.findings[0].title).toBe("無意味な反復: まとめると、こうなる。");
@@ -912,7 +920,7 @@ describe("Evidence and heading edges", () => {
 
     const view = buildRevisedDocument({
       analysis: analysis(original, "こうなる。", [], [styleIssue("まとめると、こうなる。")]),
-      adoption: {},
+      adoption: { ...ACCEPTED },
     });
 
     expect(view.findings[0].sourceTitle).toBe("");
@@ -926,10 +934,10 @@ describe("Evidence and heading edges", () => {
       analysis: analysis(original, "メインカメラは48MPである。", [
         claim("メインカメラは20MP", "CONTRADICTED", "メインカメラは48MP"),
       ]),
-      adoption: {},
+      adoption: { ...ACCEPTED },
     });
 
-    expect(view.findings[0].title).toBe("事実の誤り: 20MP");
+    expect(view.findings[0].title).toBe("資料と食い違い: 20MP");
   });
 
   it("says a long target was cut rather than ending mid-word", () => {
@@ -937,11 +945,11 @@ describe("Evidence and heading edges", () => {
 
     const view = buildRevisedDocument({
       analysis: analysis(long, long, [claim(long, "INSUFFICIENT")]),
-      adoption: {},
+      adoption: { ...ACCEPTED },
     });
 
     expect(view.findings[0].title).toContain("…");
-    expect(view.findings[0].title.length).toBeLessThan(long.length);
+    expect(view.findings[0].title).not.toContain(long);
   });
 });
 
@@ -960,7 +968,7 @@ describe("a refused correction", () => {
   it("keeps its mark, on the reader's own wording", () => {
     const view = buildRevisedDocument({
       analysis: analysis(original, revised, claims),
-      adoption: { "fact-0": false },
+      adoption: { ...ACCEPTED, "fact-0": false },
     });
 
     expect(marked(view)).toEqual([{ text: "10", kind: "fact", rejected: true }]);
@@ -969,7 +977,7 @@ describe("a refused correction", () => {
   it("is told apart from one that was accepted", () => {
     const accepted = buildRevisedDocument({
       analysis: analysis(original, revised, claims),
-      adoption: {},
+      adoption: { ...ACCEPTED },
     });
 
     expect(marked(accepted)).toEqual([{ text: "12", kind: "fact", rejected: false }]);
@@ -978,7 +986,7 @@ describe("a refused correction", () => {
   it("goes back to the correction when it is accepted again", () => {
     const view = buildRevisedDocument({
       analysis: analysis(original, revised, claims),
-      adoption: { "fact-0": true },
+      adoption: { ...ACCEPTED, "fact-0": true },
     });
 
     expect(marked(view)).toEqual([{ text: "12", kind: "fact", rejected: false }]);
@@ -988,7 +996,7 @@ describe("a refused correction", () => {
   it("is not something an unverified claim can be", () => {
     const view = buildRevisedDocument({
       analysis: analysis(original, original, [claim("価格は10万円である。", "INSUFFICIENT")]),
-      adoption: {},
+      adoption: { ...ACCEPTED },
     });
 
     expect(view.findings[0].adoptable).toBe(false);
@@ -997,7 +1005,7 @@ describe("a refused correction", () => {
   it("is something a correction can be", () => {
     const view = buildRevisedDocument({
       analysis: analysis(original, revised, claims),
-      adoption: {},
+      adoption: { ...ACCEPTED },
     });
 
     expect(view.findings[0].adoptable).toBe(true);
@@ -1006,7 +1014,7 @@ describe("a refused correction", () => {
   it("is not something a confirmed claim can be", () => {
     const view = buildRevisedDocument({
       analysis: analysis(original, original, [claim("価格は10万円である。", "SUPPORTED")]),
-      adoption: {},
+      adoption: { ...ACCEPTED },
     });
 
     expect(view.findings[0].adoptable).toBe(false);
@@ -1024,7 +1032,7 @@ describe("refusing one correction among several", () => {
   it("puts back only the words that correction replaced", () => {
     const view = buildRevisedDocument({
       analysis: analysis(original, revised, claims),
-      adoption: { "fact-0": false },
+      adoption: { ...ACCEPTED, "fact-0": false },
     });
 
     expect(view.clipboardText).toBe("価格は10万円で、重さは600gである。");
@@ -1033,7 +1041,7 @@ describe("refusing one correction among several", () => {
   it("leaves the correction accepted alongside it in place", () => {
     const view = buildRevisedDocument({
       analysis: analysis(original, revised, claims),
-      adoption: { "fact-1": false },
+      adoption: { ...ACCEPTED, "fact-1": false },
     });
 
     expect(view.clipboardText).toBe("価格は12万円で、重さは500gである。");
@@ -1042,7 +1050,7 @@ describe("refusing one correction among several", () => {
   it("restores the sentence when both are refused", () => {
     const view = buildRevisedDocument({
       analysis: analysis(original, revised, claims),
-      adoption: { "fact-0": false, "fact-1": false },
+      adoption: { ...ACCEPTED, "fact-0": false, "fact-1": false },
     });
 
     expect(view.clipboardText).toBe(original);
@@ -1056,7 +1064,7 @@ describe("refusing one correction among several", () => {
       analysis: analysis(before, after, [claim("価格は10万円", "CONTRADICTED", "価格は12万円")], [
         styleIssue("まとめると、価格は10万円である。"),
       ]),
-      adoption: { "style-0": false },
+      adoption: { ...ACCEPTED, "style-0": false },
     });
 
     expect(view.clipboardText).toBe(before);
@@ -1067,7 +1075,7 @@ describe("refusing one correction among several", () => {
       analysis: analysis(original, revised, [
         claim("この文章に存在しない主張", "CONTRADICTED", "訂正後の文言"),
       ]),
-      adoption: {},
+      adoption: { ...ACCEPTED },
     });
 
     expect(view.findings[0].adoptable).toBe(false);
@@ -1076,7 +1084,7 @@ describe("refusing one correction among several", () => {
   it("offers nothing to adopt when the correction reads the same as the original", () => {
     const view = buildRevisedDocument({
       analysis: analysis(original, original, [claim("価格は10万円", "CONTRADICTED")]),
-      adoption: {},
+      adoption: { ...ACCEPTED },
     });
 
     expect(view.findings[0].adoptable).toBe(false);
@@ -1088,7 +1096,7 @@ describe("refusing one correction among several", () => {
 
     const view = buildRevisedDocument({
       analysis: analysis(before, after, [], [styleIssue(before)]),
-      adoption: {},
+      adoption: { ...ACCEPTED },
     });
 
     expect(view.findings[0].originalText).toBe(before);
@@ -1116,7 +1124,7 @@ describe("what the panel shows beside the document", () => {
           evidence: [],
         },
       ]),
-      adoption: {},
+      adoption: { ...ACCEPTED },
     });
 
     expect(view.findings[0].sentenceBefore).toBe(original);
@@ -1131,7 +1139,7 @@ describe("what the panel shows beside the document", () => {
       analysis: analysis(original, revised, [
         claim("価格は10万円", "CONTRADICTED", "価格は12万円"),
       ]),
-      adoption: {},
+      adoption: { ...ACCEPTED },
     });
 
     expect(view.findings[0].sentenceBefore).toBe(original);
@@ -1146,7 +1154,7 @@ describe("what the panel shows beside the document", () => {
       analysis: analysis(original, revised, [
         claim("価格は10万円", "CONTRADICTED", "価格は12万円"),
       ]),
-      adoption: { "fact-0": false },
+      adoption: { ...ACCEPTED, "fact-0": false },
     });
 
     expect(view.findings[0].sentenceAfter).toBe(original);
@@ -1171,7 +1179,7 @@ describe("where a Finding's evidence went", () => {
       },
     ]);
 
-    const view = buildRevisedDocument({ analysis: withTrace, adoption: {} });
+    const view = buildRevisedDocument({ analysis: withTrace, adoption: { ...ACCEPTED } });
 
     expect(view.findings[0].evidenceTrace).toEqual({
       query: "価格 799ドル",
@@ -1206,7 +1214,7 @@ describe("JEVの数値を画面まで運ぶ", () => {
 
     const doc = buildRevisedDocument({
       analysis: analysis("9月には142人に到達した。", "9月には142人に到達した。", [result]),
-      adoption: {},
+      adoption: { ...ACCEPTED },
     });
     const finding = doc.findings.find((item) => item.type === "fact");
 
@@ -1228,7 +1236,7 @@ describe("数字を作らない", () => {
 
     const doc = buildRevisedDocument({
       analysis: analysis("裏付けの見つからなかった文。", "裏付けの見つからなかった文。", [result]),
-      adoption: {},
+      adoption: { ...ACCEPTED },
     });
     const finding = doc.findings.find((item) => item.type === "fact");
 
@@ -1257,7 +1265,7 @@ describe("弱い順に並べる", () => {
         "辻褄13%の文。辻褄95%の文。数値の無い文。",
         [strong, weak, noNumber]
       ),
-      adoption: {},
+      adoption: { ...ACCEPTED },
     });
 
     const order = sortByAttention(doc.findings.filter((f) => f.type === "fact")).map(
@@ -1267,5 +1275,41 @@ describe("弱い順に並べる", () => {
     expect(order[0]).toContain("数値の無い文");
     expect(order[1]).toContain("辻褄13%");
     expect(order[2]).toContain("辻褄95%");
+  });
+});
+
+describe("断定しない", () => {
+  it("資料が違うことを書いていても、勝手に書き換えない", () => {
+    const original = "価格は10万円。";
+
+    const view = buildRevisedDocument({
+      analysis: analysis(original, "価格は12万円。", [
+        claim("価格は10万円", "CONTRADICTED", "価格は12万円"),
+      ]),
+      adoption: {},
+    });
+
+    // The reader's own words stand until they accept the suggestion.
+    expect(view.clipboardText).toBe("価格は10万円。");
+    expect(view.findings[0].adopted).toBe(false);
+    expect(view.findings[0].adoptable).toBe(true);
+  });
+
+  it("札は「誤り」ではなく、資料との関係を述べる", () => {
+    const view = buildRevisedDocument({
+      analysis: analysis("価格は10万円。", "価格は10万円。", [
+        claim("価格は10万円", "CONTRADICTED", "価格は12万円"),
+        claim("重さは500g", "SUPPORTED"),
+        claim("発売日は3月1日", "INSUFFICIENT"),
+      ]),
+      adoption: {},
+    });
+
+    const labels = view.findings.filter((f) => f.type === "fact").map((f) => f.categoryLabel);
+
+    expect(labels).toContain("資料と食い違い");
+    expect(labels).toContain("資料と一致");
+    expect(labels).toContain("裏付けなし");
+    expect(labels.join()).not.toContain("誤り");
   });
 });

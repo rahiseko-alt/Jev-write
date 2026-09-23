@@ -146,17 +146,20 @@ const FINDING_KINDS: Record<
   }
 > = {
   corrected: {
-    label: "事実の修正",
-    heading: "事実の誤り",
+    label: "資料と食い違い",
+    heading: "資料と食い違い",
     markKind: "fact",
     explanation:
-      "公的発表・一次ソースと照合した結果、数値または日付の記述に明確な食い違いが確認されました。",
+      "集めた資料の中に、この記述と違うことを書いているページがありました。" +
+      "どちらが正しいかは、この道具では決められません。根拠のページを見て判断してください。",
   },
   unverified: {
-    label: "要確認",
-    heading: "根拠が見つかりません",
+    label: "裏付けなし",
+    heading: "裏付けが見つかりません",
     markKind: "unverified",
-    explanation: "十分な一次証拠が確認できませんでした。専門情報源による再確認を推奨します。",
+    explanation:
+      "集めた資料の中に、この記述を裏付けるページも、否定するページもありませんでした。" +
+      "誤りという意味ではありません。ご自身で一次情報をお確かめください。",
   },
   "ai-tell": {
     label: "文章表現",
@@ -165,10 +168,11 @@ const FINDING_KINDS: Record<
     explanation: "AI特有の紋切り型表現または重複が検出されました。",
   },
   confirmed: {
-    label: "確認済み",
-    heading: "確認済み",
+    label: "資料と一致",
+    heading: "資料と一致",
     markKind: null,
-    explanation: "公式ソースの記述と整合しており、事実の正しさが確認されています。",
+    explanation:
+      "集めた資料の記述と一致していました。資料そのものが正しいかどうかまでは分かりません。",
   },
 };
 
@@ -276,8 +280,19 @@ function isRaised(styleIssue: StyleIssue): boolean {
   return styleIssue.detected !== false;
 }
 
-function isAdopted(adoption: Record<string, boolean>, id: string): boolean {
-  return adoption[id] !== false;
+/**
+ * Whether the reader has taken this suggestion.
+ *
+ * A fact suggestion starts refused: what a source says differently is not a
+ * settled error, so the reader's own words stand until they choose otherwise.
+ * A wording repair starts accepted — nothing factual rides on it.
+ */
+function isAdopted(
+  adoption: Record<string, boolean>,
+  id: string,
+  byDefault: boolean
+): boolean {
+  return adoption[id] ?? byDefault;
 }
 
 /** Percentages arrive either as a 0–1 ratio or already scaled; normalise both. */
@@ -318,7 +333,7 @@ function factFinding(
     sourceUrl: firstEvidence?.sourceUrl || "",
     explanation: result.reason || shape.explanation,
     lineIndex: at,
-    adopted: isAdopted(adoption, id),
+    adopted: isAdopted(adoption, id, false),
     markKind: shape.markKind,
     adoptable: kind === "corrected" && at >= 0 && corrected !== text,
     sentenceBefore: "",
@@ -364,7 +379,7 @@ function styleFinding(
     sourceUrl: "",
     explanation: styleIssue.repairInstruction || shape.explanation,
     lineIndex: at,
-    adopted: isAdopted(adoption, id),
+    adopted: isAdopted(adoption, id, true),
     markKind: isRaised(styleIssue) ? shape.markKind : null,
     adoptable: isRaised(styleIssue) && at >= 0 && after !== before,
     sentenceBefore: "",
@@ -676,7 +691,7 @@ function gap(text: string, background?: Mark): Segment {
 
 const SPAN_LENGTH = 20;
 
-/** "事実の誤り: 12万円" — the kind, then what it points at. */
+/** "資料と食い違い: 12万円" — the kind, then what it points at. */
 function compose(heading: string, span: string): string {
   const target = span.trim();
   if (!target) return heading;
