@@ -47,7 +47,13 @@ export interface FactPipelineOutput {
 }
 
 /** How many candidates one claim asks JEV about. They ride in one request. */
-const MAX_SOURCES_PER_CLAIM = 5;
+const MAX_SOURCES_PER_CLAIM = 6;
+
+/** How many ways of asking the web about one claim. */
+const QUERIES_PER_CLAIM = 2;
+
+/** How many pages each of those asks for. */
+const RESULTS_PER_QUERY = 4;
 
 /** Below an even chance, JEV says the page is about something else. */
 const SAME_SUBJECT_THRESHOLD = 0.5;
@@ -300,12 +306,40 @@ async function verifyClaim(params: {
 
   // Step 3: Fallback to Web Search if no usable Google Fact Check hit
   if (!isFactCheckHit) {
-    const searchQuery = buildWebSearchQuery(claim);
-    trace.query = searchQuery;
+    // What to search for is a writing job, and the generation side has one
+    // for it. A query assembled here out of the claim's parts asked for
+    // "フリノバギルド 登録者数の推移 2026年4月 公式" and found nothing.
+    let queries: string[] = [];
+    try {
+      queries = (await llm.generateSearchQueries(claim))
+        .map((query) => query.trim())
+        .filter(Boolean)
+        .slice(0, QUERIES_PER_CLAIM);
+    } catch (err) {
+      console.warn(`Search queries could not be written for claim ${claim.id}:`, err);
+    }
+
+    if (queries.length === 0) {
+      queries = [claim.normalizedText || claim.originalText];
+    }
+
+    trace.query = queries.join(" / ");
+
     let searchResults: SearchResultItem[] = [];
     try {
-      const searchResponse = await search.search(searchQuery, { maxResults: 3 });
-      searchResults = searchResponse.results || [];
+      const responses = await Promise.all(
+        queries.map((query) => search.search(query, { maxResults: RESULTS_PER_QUERY }))
+      );
+
+      // The same page found by two queries is one candidate, not two.
+      const seen = new Set<string>();
+      for (const response of responses) {
+        for (const result of response.results || []) {
+          if (seen.has(result.url)) continue;
+          seen.add(result.url);
+          searchResults.push(result);
+        }
+      }
       trace.found = searchResults.length;
     } catch (err) {
       // ADR-0003: the lookup failed, so the claim stays unverified and the
@@ -379,7 +413,7 @@ async function verifyClaim(params: {
       readable.forEach((candidate, index) => {
         questions[`subject${index}`] = {
           type: "noul",
-          instructions: `sources[${index}] は、claim.subject と同じ対象について書かれた情報か。同名の別の組織や製品であれば、そうではない。`,
+          instructions: `sources[${index}] は、claim.text が述べている対象（組織・製品・出来事）について書かれた情報か。呼び方が短くても長くても、同じ対象を指していれば真。まったく別の組織や製品であれば偽。`,
         };
         questions[`relation${index}`] = {
           type: "choice",
@@ -559,40 +593,6 @@ function buildFactCheckQuery(claim: Claim): string {
   return parts.join(" ");
 }
 
-function buildWebSearchQuery(claim: Claim): string {
-  const parts: string[] = [];
-
-  // 1. The name the claim is about. Whatever it is: a list of brands the demo
-  // articles happened to use left every other subject out of its own query.
-  const primaryEntity = claim.entities?.[0];
-  if (primaryEntity) {
-    parts.push(primaryEntity);
-  }
-
-  // 2. Subject
-  if (claim.subject) {
-    if (!primaryEntity || !claim.subject.includes(primaryEntity)) {
-      parts.push(claim.subject);
-    }
-  }
-
-  // 3. Predicate
-  if (claim.predicate) {
-    parts.push(claim.predicate);
-  }
-
-  // 4. Dates
-  if (claim.dates && claim.dates.length > 0) {
-    parts.push(claim.dates[0]);
-  }
-
-  if (parts.length > 0) {
-    parts.push("公式");
-    return Array.from(new Set(parts)).join(" ");
-  }
-
-  return claim.normalizedText.replace(/[、。！？\n]/g, " ").slice(0, 60).trim();
-}
 
 function mapChoiceToClaimVerdict(choice?: string): ClaimVerdict {
   switch (choice) {
