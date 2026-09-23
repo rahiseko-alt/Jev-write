@@ -5,10 +5,13 @@ import { sendWithRetry } from "../retry";
 import { CLAIM_EXTRACTION_SYSTEM_PROMPT, readExtractedClaims } from "./claim-extraction";
 import {
   CLAIM_QUERY_SYSTEM_PROMPT,
+  ClaimQueryPlan,
   DOCUMENT_QUERY_SYSTEM_PROMPT,
+  DocumentQueryPlan,
   buildClaimQueryUserPrompt,
   buildDocumentQueryUserPrompt,
   readClaimQueries,
+  readDocumentQueries,
 } from "./search-queries";
 
 export interface AnthropicLLMOptions {
@@ -138,7 +141,7 @@ export class AnthropicLLMProvider implements LLMProvider {
     }
   }
 
-  async generateClaimQueries(claims: Claim[]): Promise<Map<string, string[]>> {
+  async generateClaimQueries(claims: Claim[]): Promise<Map<string, ClaimQueryPlan>> {
     if (claims.length === 0) return new Map();
     try {
       const rawContent = await this.callMessages(
@@ -152,17 +155,13 @@ export class AnthropicLLMProvider implements LLMProvider {
     }
   }
 
-  async generateDocumentQueries(text: string): Promise<string[]> {
+  async generateDocumentQueries(text: string): Promise<DocumentQueryPlan[]> {
     try {
       const rawContent = await this.callMessages(
         DOCUMENT_QUERY_SYSTEM_PROMPT,
         buildDocumentQueryUserPrompt(text)
       );
-      const parsed = this.parseJson(rawContent, "資料を集める検索クエリの作成");
-
-      if (Array.isArray(parsed)) return parsed.map(String);
-      if (Array.isArray(parsed.queries)) return parsed.queries.map(String);
-      return [];
+      return readDocumentQueries(this.parseJson(rawContent, "資料を集める検索クエリの作成"));
     } catch (err) {
       recordFailure(this, err);
       throw err;
