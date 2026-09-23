@@ -73,12 +73,8 @@ export async function runFactPipeline(
     message: "主張（Claim）の抽出中...",
   });
 
-  let extractedClaims: Claim[] = [];
-  try {
-    extractedClaims = await llm.extractClaims(text);
-  } catch (err) {
-    console.warn("Claim extraction failed, continuing with empty claims:", err);
-  }
+  // No stand-in: a generation that failed is the run failing, said out loud.
+  const extractedClaims: Claim[] = await llm.extractClaims(text);
 
   onProgress?.({
     stage: "FACTCHECK_DB",
@@ -93,44 +89,17 @@ export async function runFactPipeline(
   let factHitsCount = 0;
 
   // Process claims in parallel
-  const claimPromises = extractedClaims.map(async (claim, index) => {
-    try {
-      return await verifyClaim({
-        claim,
-        index,
-        llm,
-        factCheck,
-        jev,
-        search,
-        fetchProvider,
-      });
-    } catch (err) {
-      console.warn(`Graceful fallback for claim ${claim.id}:`, err);
-      // Graceful fallback per ADR-0003
-      const fallbackEvidence: Evidence[] = [];
-      const fallbackResult: ClaimResult = {
-        claim,
-        verdict: "INSUFFICIENT",
-        reason: "検証処理中にタイムアウトまたは外部接続エラーが発生したため未検証です。",
-        evidence: fallbackEvidence,
-      };
-      const fallbackLedger: FactLedgerItem = {
-        claimId: claim.id,
-        originalClaim: claim.normalizedText || claim.originalText,
-        verdict: "INSUFFICIENT",
-        correctionReason: "外部検証サービスにアクセスできませんでした。",
-        lockedFacts: [],
-        evidenceIds: [],
-        confidence: 0.5,
-      };
-      return {
-        claimResult: fallbackResult,
-        ledgerItem: fallbackLedger,
-        evidences: fallbackEvidence,
-        isFactCheckHit: false,
-      };
-    }
-  });
+  const claimPromises = extractedClaims.map((claim, index) =>
+    verifyClaim({
+      claim,
+      index,
+      llm,
+      factCheck,
+      jev,
+      search,
+      fetchProvider,
+    })
+  );
 
   const resolved = await Promise.all(claimPromises);
 

@@ -67,8 +67,9 @@ export async function runStylePipeline(
       }
     }
   } catch (err) {
-    console.warn("Style evaluation encountered an error, falling back gracefully:", err);
-    return [];
+    // An inspection that could not run is not an article without AI-tells.
+    // The run stops and says which service could not answer.
+    throw err;
   }
 
   // Sort by severity (high -> medium -> low)

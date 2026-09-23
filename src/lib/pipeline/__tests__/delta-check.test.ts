@@ -36,6 +36,12 @@ function jevSaying(result: Partial<JEVDeltaMeaningResult>): JEVClient {
 /** A JEV that reaches no conclusion, so the local checks stand alone. */
 const SILENT_JEV = jevSaying({ hasUnauthorizedChange: false });
 
+/**
+ * A rewriter with no repair of its own — what the production adapters are.
+ * The Delta Check restores the reader's figure itself.
+ */
+const LLM_WITHOUT_REPAIR = {} as unknown as LLMProvider;
+
 /** A rewriter whose repair never takes. */
 const LLM_THAT_CANNOT_FIX = {
   surgicalFix: async (input: { text: string }) => input.text,
@@ -62,6 +68,7 @@ describe("Delta Check", () => {
 
     const delta = await runDeltaCheck(original, revised, EMPTY_PLAN, {
       jev: SILENT_JEV,
+      llm: LLM_WITHOUT_REPAIR,
     });
 
     expect(delta.unauthorizedChangeDetected).toBe(true);
@@ -85,6 +92,7 @@ describe("Delta Check", () => {
 
     const delta = await runDeltaCheck(original, revised, plan, {
       jev: SILENT_JEV,
+      llm: LLM_WITHOUT_REPAIR,
     });
 
     expect(delta.unauthorizedChangeDetected).toBe(true);

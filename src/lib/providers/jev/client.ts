@@ -21,29 +21,13 @@ export interface JEVClientOptions {
  * Connects directly to POST https://api.typesafe.ai/v1/systemone
  * Evaluates atomic judgments, parallel choice/noul questions over state.
  */
-/** No verdict, stated as no verdict. */
-const UNDECIDED: JEVAtomicJudgmentResult = {
-  choice: "says_nothing",
-  match: "says_nothing",
-  relation: "says_nothing",
-  noul: 0,
-  confidence: 0,
-  explanation: "JEVの判定を取得できませんでした。",
-};
-
-/** A batch that never ran detected nothing, rather than guessing at rules. */
-function undetected(
-  reqOrText: any,
-  maybeRules?: any
-): Record<string, { detected: boolean; confidence: number; explanation: string }> {
-  const rules = Array.isArray(maybeRules)
-    ? maybeRules
-    : reqOrText?.questions ?? reqOrText?.rules ?? [];
-  const entries = (rules as Array<{ id?: string; ruleId?: string }>).map((rule) => [
-    rule.id || rule.ruleId || "",
-    { detected: false, confidence: 0, explanation: "JEVの判定を取得できませんでした。" },
-  ]);
-  return Object.fromEntries(entries.filter(([id]) => id));
+/**
+ * Choice names as the API takes them: a mapping of name to description, where
+ * a name with no description stands on its own.
+ */
+function asCriteria(criteria: string[] | Record<string, unknown>): Record<string, unknown> {
+  if (!Array.isArray(criteria)) return criteria;
+  return Object.fromEntries(criteria.map((name) => [name, null]));
 }
 
 export class HTTPJEVClient implements JEVClient {
@@ -80,10 +64,12 @@ export class HTTPJEVClient implements JEVClient {
       const headers: Record<string, string> = {
         "Content-Type": "application/json",
       };
-      if (this.apiKey) {
-        headers["Authorization"] = `Bearer ${this.apiKey}`;
-        headers["X-API-Key"] = this.apiKey;
+      if (!this.apiKey) {
+        throw new Error(
+          "JEV API key is not configured (JEV_API_KEY / TYPESAFE_API_KEY)."
+        );
       }
+      headers["Authorization"] = `Bearer ${this.apiKey}`;
 
       // If apiUrl is a base URL without /systemone, append /v1/systemone
       let targetUrl = this.apiUrl;
@@ -91,7 +77,9 @@ export class HTTPJEVClient implements JEVClient {
         targetUrl = targetUrl.replace(/\/$/, "") + "/v1/systemone";
       }
 
-      const statePayload = typeof state === "string" ? state : JSON.stringify(state);
+      // The API takes the state as a string, an object or an array; it is sent
+      // as written rather than flattened into a string.
+      const statePayload = state;
 
       const response = await fetch(targetUrl, {
         method: "POST",
@@ -126,45 +114,50 @@ export class HTTPJEVClient implements JEVClient {
    * Evaluates a single atomic judgment (Choice or Noul) on state
    */
   async evaluateAtomicJudgment(req: JEVAtomicJudgmentRequest): Promise<JEVAtomicJudgmentResult> {
+    const isNoul = req.mode === "noul";
+    const questionsPayload: Record<string, unknown> = {
+      q1: isNoul
+        ? { type: "noul", instructions: req.instructions }
+        : {
+            type: "choice",
+            instructions: req.instructions,
+            // The API takes the choices as a mapping of name to description.
+            // A choice with no description is read by its name alone.
+            criteria: asCriteria(
+              req.criteria || ["supports", "contradicts", "says_nothing", "ambiguous"]
+            ),
+          },
+    };
+
     try {
-      const qType = req.mode === "noul" ? "noul" : "choice";
-      const questionsPayload: Record<string, any> = {
-        q1: {
-          type: qType,
-          instructions: req.instructions,
-          ...(qType === "choice" ? { criteria: req.criteria || ["supports", "contradicts", "says_nothing", "ambiguous"] } : {}),
-        },
-      };
-
       const data = await this.callSystemOne(req.state, questionsPayload);
-      const resultItem = data?.answers?.q1 || data?.results?.q1 || data?.q1 || data;
+      const answer = data?.answers?.q1;
 
-      const value = resultItem?.value || resultItem?.choice || resultItem?.selected;
-      let noulVal: number | undefined;
-      if (typeof resultItem?.noul === "number") {
-        noulVal = resultItem.noul;
-      } else if (typeof resultItem?.noul === "boolean") {
-        noulVal = resultItem.noul ? 1 : 0;
-      } else if (typeof value === "boolean") {
-        noulVal = value ? 1 : 0;
+      if (!answer) {
+        throw new Error("JEV returned no answer for the question that was asked.");
       }
-      const confidence = typeof resultItem?.confidence === "number" ? resultItem.confidence : 0.95;
 
+      if (answer.type === "noul" || typeof answer.noul === "number") {
+        const noul = Number(answer.noul);
+        return {
+          noul,
+          // A yes/no answer carries no confidence of its own: how sure it is
+          // is how far from undecided it landed.
+          confidence: noul >= 0.5 ? noul : 1 - noul,
+        };
+      }
+
+      const choice = typeof answer.choice === "string" ? answer.choice : undefined;
       return {
-        choice: typeof value === "string" ? value : undefined,
-        match: typeof value === "string" ? value : undefined,
-        relation: typeof value === "string" ? value : undefined,
-        verdict: typeof value === "string" ? (value as any) : undefined,
-        noul: noulVal,
-        confidence,
-        explanation: resultItem?.explanation,
+        choice,
+        match: choice,
+        relation: choice,
+        verdict: choice as JEVAtomicJudgmentResult["verdict"],
+        confidence: typeof answer.confidence === "number" ? answer.confidence : 0,
       };
     } catch (err) {
-      // ADR-0003: a judgment that could not be obtained leaves the claim
-      // unverified. It does not borrow a verdict from somewhere else.
-      console.warn("HTTPJEVClient evaluateAtomicJudgment failed:", err);
       recordFailure(this, err);
-      return UNDECIDED;
+      throw err;
     }
   }
 
@@ -202,19 +195,15 @@ export class HTTPJEVClient implements JEVClient {
 
     try {
       const data = await this.callSystemOne(text, questionsPayload);
-      const resultsMap = data?.answers || data?.results || data || {};
+      const answers = data?.answers || {};
 
       const formattedResults: Record<string, any> = {};
       for (const r of rulesList) {
-        const item = resultsMap[r.id] || {};
-        const noulValue = typeof item.noul === "number" ? item.noul : item.noul === true ? 1 : 0;
-        const detected = item.value === true || noulValue > 0.5 || item.detected === true;
-        const confidence = typeof item.confidence === "number" ? item.confidence : 0.9;
+        const item = answers[r.id] || {};
+        const noulValue = typeof item.noul === "number" ? item.noul : 0;
         formattedResults[r.id] = {
-          detected,
-          confidence,
-          explanation: item.explanation,
-          targetSnippet: item.targetSnippet || item.targetText,
+          detected: noulValue > 0.5,
+          confidence: noulValue >= 0.5 ? noulValue : 1 - noulValue,
         };
       }
 
@@ -235,9 +224,8 @@ export class HTTPJEVClient implements JEVClient {
 
       return { results: formattedResults };
     } catch (err) {
-      console.warn("HTTPJEVClient evaluateBatchRules failed:", err);
       recordFailure(this, err);
-      return { results: undetected(reqOrText, maybeRules) };
+      throw err;
     }
   }
 

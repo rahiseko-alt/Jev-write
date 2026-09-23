@@ -1,12 +1,10 @@
 import { LLMProvider } from "./types";
 import { OpenAILLMProvider, OpenAILLMOptions } from "./openai";
 import { AnthropicLLMProvider, AnthropicLLMOptions } from "./anthropic";
-import { MockLLMProvider } from "./mock";
 
 export * from "./types";
 export * from "./openai";
 export * from "./anthropic";
-export * from "./mock";
 
 export type LLMOptions = (OpenAILLMOptions | AnthropicLLMOptions) & {
   provider?: "openai" | "anthropic" | "mock";
@@ -16,7 +14,7 @@ export type LLMOptions = (OpenAILLMOptions | AnthropicLLMOptions) & {
  * Returns an Anthropic or OpenAI LLMProvider based on available environment variables or options.
  * Prioritizes Anthropic if ANTHROPIC_API_KEY or CLAUDE_API_KEY is present,
  * or OpenAI if OPENAI_API_KEY is present,
- * otherwise falls back gracefully to MockLLMProvider for offline testing and development.
+ * Without a credential it reports that, rather than answering with a stand-in.
  */
 export function getLLMProvider(options: LLMOptions = {}): LLMProvider {
   // Explicit option
@@ -28,10 +26,6 @@ export function getLLMProvider(options: LLMOptions = {}): LLMProvider {
       return new AnthropicLLMProvider(options);
     }
     return new OpenAILLMProvider(options);
-  }
-
-  if (process.env.NODE_ENV === "test" || process.env.USE_MOCK_LLM === "true") {
-    return new MockLLMProvider();
   }
 
   // Check Anthropic Claude environment variables
@@ -50,5 +44,7 @@ export function getLLMProvider(options: LLMOptions = {}): LLMProvider {
     return new OpenAILLMProvider({ apiKey: openAiKey, ...options });
   }
 
-  return new MockLLMProvider();
+  throw new Error(
+    "文章の生成に使う提供元が設定されていません（ANTHROPIC_API_KEY または OPENAI_API_KEY）。"
+  );
 }

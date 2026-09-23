@@ -118,12 +118,6 @@ export type AnalysisResult = {
   sources: Evidence[];
   timings: StageTiming[];
   /**
-   * True when some part of this run was answered by a stub rather than the
-   * configured provider. The reader is told, rather than shown a result that
-   * looks like a full check.
-   */
-  servedByFallback?: boolean;
-  /**
    * True when the Delta Check found the rewrite had changed something it was
    * not authorised to change. The change itself is repaired or taken back;
    * the reader is told it happened.
@@ -145,8 +139,6 @@ export type AnalysisResult = {
 export type ProviderStatus = {
   /** What this service does, in the reader's words. */
   service: string;
-  /** True when a stand-in answered in its place. */
-  stoodIn: boolean;
   /** How many calls to it failed during this run. */
   failureCount: number;
   /** The first failure's message, with anything credential-shaped removed. */

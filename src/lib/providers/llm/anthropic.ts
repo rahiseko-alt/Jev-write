@@ -1,6 +1,5 @@
 import { Claim, Importance } from "@/types";
 import { LLMProvider, RewriteInput, SurgicalFixInput } from "./types";
-import { MockLLMProvider } from "./mock";
 import { recordFailure } from "../diagnostics";
 
 export interface AnthropicLLMOptions {
@@ -13,13 +12,11 @@ export class AnthropicLLMProvider implements LLMProvider {
   private apiKey: string;
   private model: string;
   private baseUrl: string;
-  private fallback: MockLLMProvider;
   /** What went wrong with the real service during this run, for the reader. */
   failureCount = 0;
   lastError?: string;
 
   /** Whether any call in this run was answered by the mock instead. */
-  servedByFallback = false;
 
   constructor(options: AnthropicLLMOptions = {}) {
     this.apiKey =
@@ -36,7 +33,6 @@ export class AnthropicLLMProvider implements LLMProvider {
       process.env.ANTHROPIC_BASE_URL ||
       "https://api.anthropic.com/v1"
     ).replace(/\/$/, "");
-    this.fallback = new MockLLMProvider();
   }
 
   private async callMessages(
@@ -52,7 +48,6 @@ export class AnthropicLLMProvider implements LLMProvider {
     const body: Record<string, any> = {
       model: this.model,
       max_tokens: 4096,
-      temperature: 0.1,
       system: systemPrompt,
       messages: [{ role: "user", content: userPrompt }],
     };
@@ -145,10 +140,8 @@ Return ONLY a valid JSON object with this exact structure, nothing else:
         };
       });
     } catch (err) {
-      console.warn("Anthropic extractClaims failed, falling back to mock LLM:", err);
-      this.servedByFallback = true;
       recordFailure(this, err);
-      return await this.fallback.extractClaims(text);
+      throw err;
     }
   }
 
@@ -176,10 +169,8 @@ Entities: ${claim.entities?.join(", ") || "N/A"}`;
       }
       return [claim.normalizedText];
     } catch (err) {
-      console.warn("Anthropic generateSearchQueries failed, falling back to mock LLM:", err);
-      this.servedByFallback = true;
       recordFailure(this, err);
-      return await this.fallback.generateSearchQueries(claim);
+      throw err;
     }
   }
 
@@ -225,16 +216,9 @@ Entities: ${claim.entities?.join(", ") || "N/A"}`;
       const result = await this.callMessages(instructions, userPrompt);
       return result.trim();
     } catch (err) {
-      console.warn("Anthropic rewrite failed, falling back to mock LLM:", err);
-      this.servedByFallback = true;
       recordFailure(this, err);
-      return await this.fallback.rewrite(input);
+      throw err;
     }
   }
 
-  async surgicalFix(input: SurgicalFixInput): Promise<string> {
-    // A capability this adapter does not implement, not a service that failed:
-    // the local repair restores the reader's own figure, inventing nothing.
-    return await this.fallback.surgicalFix(input);
-  }
 }

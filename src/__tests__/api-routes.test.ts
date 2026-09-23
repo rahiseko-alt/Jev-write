@@ -15,15 +15,18 @@ describe("API Routes & Job Store Integration", () => {
     const resEmpty = await analyzeHandler(reqEmpty);
     expect(resEmpty.status).toBe(400);
 
-    // 2. Valid input
+    // 2. Valid input. With no credentials configured there is nothing to
+    // stand in for them, so the run reports the failure and names it — it
+    // never comes back as a finished check.
     const reqValid = new NextRequest("http://localhost:3000/api/analyze", {
       method: "POST",
       body: JSON.stringify({ text: "これはテスト記事です。OpenAIが新しいモデルを発表しました。" }),
     });
     const resValid = await analyzeHandler(reqValid);
-    expect(resValid.status).toBe(201);
+    expect(resValid.status).toBe(500);
     const data = await resValid.json();
     expect(data.jobId).toBeTruthy();
+    expect(`${data.details}`).toContain("設定されていません");
 
     // 3. GET /api/analyze/[jobId]
     const reqGet = new NextRequest(`http://localhost:3000/api/analyze/${data.jobId}`);
