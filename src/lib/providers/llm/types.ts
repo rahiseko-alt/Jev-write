@@ -2,7 +2,11 @@ import { Claim } from "@/types";
 
 export interface LLMProvider {
   extractClaims(text: string): Promise<Claim[]>;
-  generateSearchQueries(claim: Claim): Promise<string[]>;
+  /**
+   * For every claim, the 1–2 queries that ask what would settle it, primary
+   * source first (ADR-0015). One generation for all claims, keyed by claim id.
+   */
+  generateClaimQueries?(claims: Claim[]): Promise<Map<string, string[]>>;
   /**
    * The queries that gather the reference pages for a whole text, written
    * once instead of per claim.

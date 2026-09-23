@@ -51,8 +51,8 @@ function fakes(pages: Page[], answer: Answerer) {
     async extractClaims() {
       return [CLAIM];
     },
-    async generateSearchQueries() {
-      return ["フリノバ 会員数"];
+    async generateClaimQueries(claims: Claim[]) {
+      return new Map(claims.map((c) => [c.id, ["フリノバ 会員数"]]));
     },
     async generateDocumentQueries() {
       return ["フリノバ"];

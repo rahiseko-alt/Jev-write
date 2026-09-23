@@ -12,9 +12,12 @@ export interface PooledSource {
 }
 
 export interface SourcePool {
-  /** Search these, keep what comes back, and read each page once. */
+  /**
+   * Search these, keep what comes back, and read each page once. Safe to
+   * call again while an earlier call is still running.
+   */
   seed(queries: string[]): Promise<void>;
-  /** One more search, for a claim the pool has nothing for. */
+  /** One more search. */
   addQuery(query: string): Promise<void>;
   /** The pages that mention this claim's subject, most on-point first. */
   candidatesFor(claim: Claim, limit: number): PooledSource[];
@@ -54,8 +57,20 @@ export function createSourcePool(deps: {
   let failed = false;
   let failureMessage: string | undefined;
 
-  async function read(result: SearchResultItem): Promise<void> {
-    if (pages.has(result.url)) return;
+  // Searches for the article and for each claim run side by side (ADR-0015),
+  // so the same page can turn up in two of them at once: it is read once.
+  const reading = new Map<string, Promise<void>>();
+
+  function read(result: SearchResultItem): Promise<void> {
+    if (pages.has(result.url)) return Promise.resolve();
+    const pending = reading.get(result.url);
+    if (pending) return pending;
+    const started = readPage(result);
+    reading.set(result.url, started);
+    return started;
+  }
+
+  async function readPage(result: SearchResultItem): Promise<void> {
 
     let fetched: any = { url: result.url, title: result.title };
     try {

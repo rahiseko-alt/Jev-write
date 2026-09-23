@@ -3,10 +3,11 @@ import { LLMProvider } from "./types";
 import { recordFailure, recordRetry } from "../diagnostics";
 import { sendWithRetry } from "../retry";
 import {
+  CLAIM_QUERY_SYSTEM_PROMPT,
   DOCUMENT_QUERY_SYSTEM_PROMPT,
-  SEARCH_QUERY_SYSTEM_PROMPT,
+  buildClaimQueryUserPrompt,
   buildDocumentQueryUserPrompt,
-  buildSearchQueryUserPrompt,
+  readClaimQueries,
 } from "./search-queries";
 
 export interface AnthropicLLMOptions {
@@ -186,21 +187,14 @@ Return ONLY a valid JSON object with this exact structure, nothing else:
     }
   }
 
-  async generateSearchQueries(claim: Claim): Promise<string[]> {
+  async generateClaimQueries(claims: Claim[]): Promise<Map<string, string[]>> {
+    if (claims.length === 0) return new Map();
     try {
-      const systemPrompt = SEARCH_QUERY_SYSTEM_PROMPT;
-      const userPrompt = buildSearchQueryUserPrompt(claim);
-
-      const rawContent = await this.callMessages(systemPrompt, userPrompt);
-      const parsed = this.parseJson(rawContent, "検索クエリの作成");
-
-      if (Array.isArray(parsed)) {
-        return parsed.map(String);
-      }
-      if (Array.isArray(parsed.queries)) {
-        return parsed.queries.map(String);
-      }
-      return [claim.normalizedText];
+      const rawContent = await this.callMessages(
+        CLAIM_QUERY_SYSTEM_PROMPT,
+        buildClaimQueryUserPrompt(claims)
+      );
+      return readClaimQueries(this.parseJson(rawContent, "検索の問いの作成"), claims);
     } catch (err) {
       recordFailure(this, err);
       throw err;
