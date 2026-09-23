@@ -21,6 +21,12 @@ Single-context: `CONTEXT.md` at the repo root, ADRs in `docs/adr/`. Both are cre
 
 上から順に確認する。下の層を疑う前に、上の層が白であることを示す。
 
+## JEVの扱い
+
+判定はJEVが行う。実装の前に `docs/adr/0007-jev-is-the-principal.md` を読む。
+仕様はJEV公式（`https://api.typesafe.ai/openapi.json` と `https://docs.typesafe.ai`）を一次情報とし、
+この置き場所の要約や記憶を一次情報としない。
+
 ## Navigation (repo-local)
 
 This repo may be driven by a non-engineer. Never assume the user knows which slash command to run.
