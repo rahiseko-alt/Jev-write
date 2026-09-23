@@ -14,6 +14,7 @@ import {
   getSearchProvider,
 } from "../providers";
 import { runFactPipeline } from "./fact-pipeline";
+import { Clock, JevLimits, TimeBudget, createTimeBudget, systemClock } from "./time-budget";
 import {
   FetchProvider,
   GoogleFactCheckClient,
@@ -31,6 +32,12 @@ export interface OrchestratorOptions {
   search?: SearchProvider;
   fetch?: FetchProvider;
   onProgress?: (event: JobProgressEvent) => void;
+  /** Where the time comes from. A test hands in a clock it moves itself. */
+  clock?: Clock;
+  /** The run's time budget (time-budget.ts); by default one that starts now. */
+  budget?: TimeBudget;
+  /** JEV's limits, when a test narrows them; by default the official ones. */
+  jevLimits?: Partial<JevLimits>;
 }
 
 /**
@@ -44,6 +51,11 @@ export async function runOrchestrator(
   const store = options?.jobStore ?? defaultJobStore;
   const jobId = options?.jobId ?? `job-${Date.now()}`;
   const onProgress = options?.onProgress;
+
+  // The run's clock starts here, as early as the run itself (ADR-0021): every
+  // deadline of the budget is counted from this moment.
+  const clock = options?.budget?.clock ?? options?.clock ?? systemClock;
+  const budget = options?.budget ?? createTimeBudget(clock);
 
   const timings: StageTiming[] = [];
 
@@ -78,13 +90,15 @@ export async function runOrchestrator(
   try {
     emit("ANALYZING", 5, "文章の構造解析と主張（Claim）の抽出を開始...");
 
-    const factStart = Date.now();
+    const factStart = clock.now();
     const factResult = await runFactPipeline(text, {
       llm,
       factCheck,
       jev,
       search,
       fetch: fetchProvider,
+      budget,
+      jevLimits: options?.jevLimits,
       onProgress: (p) => {
         if (p.stage === "FACTCHECK_DB") {
           emit("FACTCHECK_DATABASE", p.percent, p.message, {
@@ -102,9 +116,16 @@ export async function runOrchestrator(
         }
       },
     });
+    // Each stage on its own (extraction, query generation, search, page
+    // fetch, fact-check lookup, relevance and 信頼度 judgments), with the JEV
+    // requests it sent; then the whole of it. Observability only (ADR-0021).
+    const factEnd = clock.now();
+    timings.push(...factResult.timings);
     timings.push({
       stage: "FactVerification",
-      durationMs: Date.now() - factStart,
+      durationMs: factEnd - factStart,
+      startMs: factStart - budget.startedAt,
+      endMs: factEnd - budget.startedAt,
     });
 
     // No rewriting. This tool reports how well each sentence is held up and

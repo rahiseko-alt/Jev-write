@@ -649,10 +649,11 @@ describe("資料の探し方（パイプライン、ADR-0015・0019）", () => {
     );
   });
 
-  it("点検で直した主張の問いも、③の上限の順（この主張の検索→記事全体の検索、各検索の順位）の先頭に来る（ADR-0016）", async () => {
+  it("点検で直した主張の問いも、③の候補の順（この主張の検索→記事全体の検索、各検索の順位）の先頭に来る（ADR-0021）", async () => {
     vi.spyOn(console, "info").mockImplementation(() => {});
     vi.spyOn(console, "warn").mockImplementation(() => {});
-    // About 45,000 estimated tokens each: two fit in the 120,000 budget, the rest do not.
+    // About 45,000 estimated tokens each: the ceiling that used to stand before
+    // JEV (ADR-0016) kept four of these six out; now every one is asked about.
     const long = (n: string) => `${n}。` + "い".repeat(30000);
     const own: Page = { url: "https://z-own.example/p", title: "own", body: long("own") };
     const article: Page[] = [0, 1, 2, 3, 4].map((i) => ({
@@ -680,7 +681,11 @@ describe("資料の探し方（パイプライン、ADR-0015・0019）", () => {
       pages: (query) => (query === "フリノバ 会員数" ? [own] : article),
     });
 
-    const { claims } = await runFactPipeline("本文", options as any);
+    // No rate limit in the way of the test: the order is what is looked at.
+    const { claims } = await runFactPipeline("本文", {
+      ...options,
+      jevLimits: { requestsPerMinute: 1e9, tokensPerSecond: 1e12 },
+    } as any);
 
     const trace = claims[0].evidenceTrace!;
     expect(trace.query).toBe("フリノバ 会員数 / 記事の検索語");
@@ -692,12 +697,14 @@ describe("資料の探し方（パイプライン、ADR-0015・0019）", () => {
         searched: "フリノバ 会員数",
       },
     ]);
-    // Asked about in the relevance question: the claim's own page first, then
-    // the article's first. In address order the article's pages would come first.
+    // Asked about in the relevance question in this order: the claim's own
+    // page first, then the article's, each by rank. In address order the
+    // article's pages would come first.
     const relevance = asked.filter((call) => !("support" in call.questions));
-    const read = [...new Set(relevance.flatMap((call) => call.state.sources.map((s: any) => s.url)))].sort();
-    expect(read).toEqual([own.url, article[0].url].sort());
-    expect(trace).toMatchObject({ found: 6, overCap: 4 });
+    const read = [...new Set(relevance.map((call) => call.state.section.url))];
+    expect(read).toEqual([own.url, ...article.map((page) => page.url)]);
+    expect(trace).toMatchObject({ found: 6, overCap: 0 });
+    expect(trace.judged).toBe(trace.sections);
   });
 });
 

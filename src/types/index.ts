@@ -131,24 +131,71 @@ export type EvidenceTrace = {
   offSubject: number;
   /** How many could not be read (fetch failed, or the page was empty). */
   unreadable: number;
-  /** How many were read and judged to say nothing about the claim. */
+  /**
+   * How many were read and judged, every section of them, to say nothing
+   * about the claim. A page with a section left unjudged is under `unjudged`.
+   */
   saidNothing: number;
   /** How many gave a relation JEV was too unsure of to act on. */
   weak: number;
   /** How many became Evidence. */
   used: number;
   /**
-   * How many candidates were over JEV's input ceiling and not asked about
-   * (ADR-0016). Counted so none is dropped without saying so.
+   * No longer used: nothing is dropped before JEV judges it (ADR-0021). It
+   * stays 0 so records before and after the change read the same way.
    */
   overCap?: number;
   /** How many independent origins (a site, or sites carrying the same text) the Evidence came from. */
   origins?: number;
+  /** How many sections the candidate pages were cut into: all asked about, or listed as unjudged (ADR-0021). */
+  sections?: number;
+  /** How many of them JEV answered the relevance question for, for this claim. */
+  judged?: number;
+  /** How many of those JEV judged to speak to the point this claim makes (at or above the line). */
+  relevant?: number;
+  /**
+   * The candidates JEV never judged for this claim, by reason: the time ran
+   * out, or JEV gave no answer. Listed, never dropped without a word (ADR-0021).
+   */
+  unjudged?: UnjudgedCandidates[];
+  /**
+   * Sections JEV judged related that did not go into the 信頼度 question:
+   * more than its per-claim limit of requests holds (ADR-0021). Listed too.
+   */
+  heldBack?: UnjudgedCandidates;
 };
 
+/** Candidate pages left unjudged for one reason, with how many of their sections were. */
+export type UnjudgedCandidates = {
+  /** Why, in the reader's words: 時間切れ (the clock), or 判定の失敗 (no answer from JEV). */
+  reason: string;
+  /** How many sections were left unjudged for this reason. */
+  sections: number;
+  /** The pages holding them, in the order they were due to be judged. */
+  urls: string[];
+};
+
+/**
+ * How long one stage of the run took, for observability only (ADR-0021).
+ * Stages can overlap (the article's searches run while the claims' queries
+ * are written), so `durationMs` is the time the stage had work in flight.
+ */
 export type StageTiming = {
   stage: string;
   durationMs: number;
+  /** When the stage first started and last ended, in ms from the start of the run. */
+  startMs?: number;
+  endMs?: number;
+  /** JEV requests sent in this stage (a retry counts in `jevRetries`, not here). */
+  jevCalls?: number;
+  /** How many times a busy JEV (429/5xx) was sent the same request again. */
+  jevRetries?: number;
+  /** Requests that got no answer from JEV (after any retries). */
+  jevFailures?: number;
+  /** Requests stopped in flight because the time for their stage ran out (時間切れ). */
+  jevCutOff?: number;
+  /** Requests never sent, because the time for them had run out (時間切れ). */
+  jevNotStarted?: number;
 };
 
 export type AnalysisResult = {

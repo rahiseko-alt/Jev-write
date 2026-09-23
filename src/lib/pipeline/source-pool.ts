@@ -27,6 +27,12 @@ export interface SourcePool {
    * page happened to come back first.
    */
   candidatesFor(queries: string[]): PooledSource[];
+  /**
+   * Every search made, in the order made, with the pages it found in its own
+   * ranked order (each page once). What the candidates are ordered by
+   * (ADR-0021); nothing about completion order is in it.
+   */
+  searches(): PoolSearch[];
   /** The queries that built this pool, in the order they were made. */
   queries(): string[];
   /** True when a search could not be made at all (ADR-0003, ADR-0006 layer 3). */
@@ -35,6 +41,17 @@ export interface SourcePool {
   failure(): string | undefined;
   /** How many pages the pool holds. */
   size(): number;
+}
+
+/** One search and the pages it found, in its own ranked order. */
+export interface PoolSearch {
+  query: string;
+  pages: PooledSource[];
+}
+
+/** Marks the searches and the page reads as they run, for the run's timings. */
+export interface PoolTimer {
+  begin(stage: "search" | "pageFetch"): () => void;
 }
 
 /**
@@ -49,8 +66,9 @@ export function createSourcePool(deps: {
   search: SearchProvider;
   fetchProvider: FetchProvider;
   resultsPerQuery: number;
+  timer?: PoolTimer;
 }): SourcePool {
-  const { search, fetchProvider, resultsPerQuery } = deps;
+  const { search, fetchProvider, resultsPerQuery, timer } = deps;
 
   const asked: string[] = [];
   const pages = new Map<string, PooledSource>();
@@ -75,6 +93,7 @@ export function createSourcePool(deps: {
   async function readPage(result: SearchResultItem): Promise<void> {
 
     let fetched: any = { url: result.url, title: result.title };
+    const fetchEnded = timer?.begin("pageFetch");
     try {
       fetched =
         typeof fetchProvider.fetchUrl === "function"
@@ -82,6 +101,8 @@ export function createSourcePool(deps: {
           : await (fetchProvider as any).fetch(result.url);
     } catch (err) {
       console.warn(`Fetch failed for ${result.url}:`, err);
+    } finally {
+      fetchEnded?.();
     }
 
     const pageText: string = fetched.content || fetched.text || "";
@@ -107,6 +128,7 @@ export function createSourcePool(deps: {
     const found: SearchResultItem[] = [];
     await Promise.all(
       fresh.map(async (query) => {
+        const searchEnded = timer?.begin("search");
         try {
           const response = await search.search(query, { maxResults: resultsPerQuery });
           // Kept per search, in the search's own order: which search came
@@ -121,6 +143,8 @@ export function createSourcePool(deps: {
           failed = true;
           failureMessage = failureMessage ?? (err instanceof Error ? err.message : String(err));
           console.warn(`Web search failed for "${query}":`, err);
+        } finally {
+          searchEnded?.();
         }
       })
     );
@@ -139,6 +163,20 @@ export function createSourcePool(deps: {
     searchFailed: () => failed,
     failure: () => failureMessage,
     size: () => pages.size,
+    searches() {
+      return asked.map((query) => {
+        const found: PooledSource[] = [];
+        const seen = new Set<string>();
+        for (const url of resultsOf.get(query) ?? []) {
+          const page = pages.get(url);
+          // Two addresses that led to the same page are one page, at its first rank.
+          if (!page || seen.has(page.url)) continue;
+          seen.add(page.url);
+          found.push(page);
+        }
+        return { query, pages: found };
+      });
+    },
     candidatesFor(queries) {
       const ordered: PooledSource[] = [];
       const seen = new Set<string>();

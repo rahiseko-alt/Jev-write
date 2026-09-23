@@ -56,14 +56,23 @@ export interface JEVDeltaMeaningResult {
 }
 
 /**
+ * What a question says. The API takes a string, or structure: an object that
+ * holds the question in one field and the data it refers to in the others
+ * (openapi.json NoulQuestion.instructions; docs.typesafe.ai/primitives/noul,
+ * "Structured instructions").
+ */
+export type JEVInstructions = string | Record<string, unknown>;
+
+/**
  * A question, in the shapes the API takes (see ADR-0007: the spec is JEV's,
  * https://api.typesafe.ai/openapi.json).
  */
 export type JEVQuestion =
   | {
       type: "noul";
-      instructions: string;
-      criteria?: { true?: string; false?: string };
+      instructions: JEVInstructions;
+      /** What a yes and a no mean (NoulCriteria). */
+      criteria?: { true?: JEVInstructions; false?: JEVInstructions };
     }
   | {
       type: "choice";
@@ -95,21 +104,59 @@ export type JEVAnswer =
       probabilities: number[];
     };
 
+/** How one request to JEV is to be sent. */
+export interface JEVAskOptions {
+  /**
+   * How long this one attempt may take, reply included. The caller sets it
+   * from its own clock budget (ADR-0021); without it, the client's default.
+   */
+  timeoutMs?: number;
+}
+
+/**
+ * A request JEV did not answer, with what the caller needs to decide whether
+ * to send it again: the HTTP status, the wait the reply asked for, and
+ * whether the attempt ran out of time.
+ */
+export class JEVRequestError extends Error {
+  readonly status?: number;
+  /** The wait the reply asked for (retry-after-ms or retry-after), in ms. */
+  readonly retryAfterMs?: number;
+  /** True when the attempt ran out of its time rather than being refused. */
+  readonly timedOut: boolean;
+
+  constructor(
+    message: string,
+    details: { status?: number; retryAfterMs?: number; timedOut?: boolean } = {}
+  ) {
+    super(message);
+    this.name = "JEVRequestError";
+    this.status = details.status;
+    this.retryAfterMs = details.retryAfterMs;
+    this.timedOut = details.timedOut ?? false;
+  }
+}
+
 export interface JEVClient {
   /**
-   * Ask JEV several questions about one state, in one request.
+   * Ask JEV several questions about one state, in one request: one attempt.
    *
    * Questions are answered in parallel and named, so asking more of them
    * costs little beyond their tokens. Nothing here reduces the answers: the
-   * caller receives the probabilities and confidence as they came.
+   * caller receives the probabilities and confidence as they came. Whether a
+   * refused request is sent again, and when, is the caller's to decide
+   * (the dispatcher, ADR-0021), and so is recording the failure.
    */
   ask?(
     state: unknown,
-    questions: Record<string, JEVQuestion>
+    questions: Record<string, JEVQuestion>,
+    options?: JEVAskOptions
   ): Promise<Record<string, JEVAnswer>>;
   /** How many calls to the real service failed during this run. */
   failureCount?: number;
   /** The first failure's message, with anything credential-shaped removed. */
   lastError?: string;
+  /** How many times a busy JEV (429/5xx) was sent the same request again. */
+  retryCount?: number;
   evaluateAtomicJudgment(req: JEVAtomicJudgmentRequest): Promise<JEVAtomicJudgmentResult>;
 }

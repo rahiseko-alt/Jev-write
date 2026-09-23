@@ -1,5 +1,8 @@
 import { describe, it, expect, afterEach, vi } from "vitest";
 import { HTTPJEVClient } from "@/lib/providers/jev/client";
+import { JEVRequestError } from "@/lib/providers/jev/types";
+
+const fetchCount = () => (globalThis.fetch as unknown as { mock: { calls: unknown[] } }).mock.calls.length;
 
 /**
  * Where a real JEV is configured, its Atomic Judgment is the judgment.
@@ -111,6 +114,58 @@ describe("HTTPJEVClient", () => {
     // An array here is what the API rejects with 422.
     expect(Array.isArray(body.questions.q1.criteria)).toBe(false);
     expect(Object.keys(body.questions.q1.criteria)).toContain("contradicts");
+  });
+
+  it("sends one attempt, within the time the caller gives it", async () => {
+    let aborted = false;
+    globalThis.fetch = vi.fn(
+      (_url: unknown, init: { signal?: AbortSignal } = {}) =>
+        new Promise((_resolve, reject) => {
+          init.signal?.addEventListener("abort", () => {
+            aborted = true;
+            const error = new Error("aborted");
+            error.name = "AbortError";
+            reject(error);
+          });
+        })
+    ) as unknown as typeof fetch;
+
+    const error = await client()
+      .ask({ section: {} }, { q: { type: "noul", instructions: "?" } }, { timeoutMs: 20 })
+      .catch((err) => err);
+
+    expect(aborted).toBe(true);
+    expect(error).toBeInstanceOf(JEVRequestError);
+    expect(error.timedOut).toBe(true);
+    expect(fetchCount()).toBe(1);
+  });
+
+  it("hands back a refusal with its status and the wait it asked for, for the caller to decide on", async () => {
+    const refusal = (status: number, headers: Record<string, string>) =>
+      vi.fn(async () => ({
+        ok: false,
+        status,
+        statusText: String(status),
+        headers: { get: (name: string) => headers[name.toLowerCase()] ?? null },
+        json: async () => ({}),
+        text: async () => "busy",
+      })) as unknown as typeof fetch;
+    const ask = (c: HTTPJEVClient) => c.ask("state", { q: { type: "noul", instructions: "?" } }).catch((err) => err);
+
+    globalThis.fetch = refusal(429, { "retry-after": "2" });
+    const tooMany = await ask(client());
+    expect(tooMany).toBeInstanceOf(JEVRequestError);
+    expect(tooMany).toMatchObject({ status: 429, retryAfterMs: 2000, timedOut: false });
+
+    globalThis.fetch = refusal(529, { "retry-after-ms": "1500" });
+    const overloaded = await ask(client());
+    expect(overloaded).toMatchObject({ status: 529, retryAfterMs: 1500 });
+
+    // Whether it is sent again, and recorded as a failure, is the dispatcher's
+    // to decide: a refusal answered on the retry is not a failure.
+    const fresh = client();
+    await ask(fresh);
+    expect(fresh.failureCount).toBe(0);
   });
 
   it("reads a yes/no answer as the probability the API returns", async () => {
