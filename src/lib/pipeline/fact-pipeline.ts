@@ -1,4 +1,5 @@
 import { correctionFromEvidence } from "./correction";
+import { isAboutSubject } from "./relevance";
 import {
   Claim,
   ClaimResult,
@@ -255,12 +256,7 @@ async function verifyClaim(params: {
     }
 
     // Sort by source priority
-    const effectiveEntities = (claim.entities && claim.entities.length > 0)
-      ? claim.entities
-      : [claim.subject || "", claim.normalizedText].filter(Boolean);
-
-    let sortedResults = [...searchResults]
-      .filter((res) => passesEntityGate(res.url, effectiveEntities))
+    const sortedResults = [...searchResults]
       .sort(
       (a, b) => {
         const typeA = mapDomainToSourceType(a.url);
@@ -298,6 +294,13 @@ async function verifyClaim(params: {
           content = rawContent;
         } else if (!content) {
           content = rawContent;
+        }
+
+        // A page that never names what the claim is about cannot answer for
+        // it. Asking JEV anyway produces a confident verdict about the wrong
+        // company (ADR-0006, layer 2).
+        if (!isAboutSubject(content, claim)) {
+          continue;
         }
 
         const relevantEvidence = extractRelevantExcerpt(content, claim, 2500);
@@ -448,10 +451,9 @@ function buildFactCheckQuery(claim: Claim): string {
 function buildWebSearchQuery(claim: Claim): string {
   const parts: string[] = [];
 
-  // 1. Primary product / organization entity from entities
-  const primaryEntity = claim.entities?.find(e => 
-    /iPhone|Apple|Nintendo|Switch|任天堂|Sony|PlayStation|Google|Microsoft|OpenAI/i.test(e)
-  );
+  // 1. The name the claim is about. Whatever it is: a list of brands the demo
+  // articles happened to use left every other subject out of its own query.
+  const primaryEntity = claim.entities?.[0];
   if (primaryEntity) {
     parts.push(primaryEntity);
   }
@@ -553,17 +555,15 @@ function extractRelevantExcerpt(content: string, claim: Claim, maxLength = 2500)
   return content.slice(bestIndex, bestIndex + maxLength);
 }
 
+/**
+ * What kind of source a URL is, from what can be told about the address
+ * itself. A named company's own site cannot be recognised this way without
+ * knowing every company, so only the kinds that are recognisable are named.
+ */
 function mapDomainToSourceType(url: string): SourceType {
   try {
     const hostname = new URL(url).hostname.toLowerCase();
-    if (
-      hostname.includes("apple.com") ||
-      hostname.includes("nintendo.co.jp") ||
-      hostname.includes("nintendo.com") ||
-      hostname.includes("sony.com") ||
-      hostname.includes("go.jp") ||
-      hostname.includes(".gov")
-    ) {
+    if (hostname.endsWith(".go.jp") || hostname.endsWith(".gov") || hostname.endsWith(".lg.jp")) {
       return "official";
     }
     if (hostname.includes("factcheck") || hostname.includes("reuters.com")) {
@@ -576,57 +576,3 @@ function mapDomainToSourceType(url: string): SourceType {
   return "unknown";
 }
 
-export function passesEntityGate(url: string, entities: string[]): boolean {
-  if (!entities || entities.length === 0) return true;
-  try {
-    const hostname = new URL(url).hostname.toLowerCase();
-    
-    // Always allow government, wikipedia, major news, and factcheck/test domains
-    if (
-      hostname.endsWith(".go.jp") ||
-      hostname.endsWith(".gov") ||
-      hostname.includes("wikipedia.org") ||
-      hostname.includes("nhk.or.jp") ||
-      hostname.includes("nytimes.com") ||
-      hostname.includes("reuters.com") ||
-      hostname.includes("itmedia.co.jp") ||
-      hostname.includes("macrumors.com") ||
-      hostname.includes("factcheck")
-    ) {
-      return true;
-    }
-
-    const domainMap: Record<string, string[]> = {
-      nintendo: ["nintendo.co.jp", "nintendo.com"],
-      apple: ["apple.com"],
-      iphone: ["apple.com"],
-      sony: ["sony.com", "sony.co.jp", "playstation.com"],
-      google: ["google.com", "abc.xyz"],
-      microsoft: ["microsoft.com"],
-      openai: ["openai.com"],
-    };
-
-    let needsSpecificDomain = false;
-    let domainMatched = false;
-
-    for (const entity of entities) {
-      const e = entity.toLowerCase();
-      for (const [key, domains] of Object.entries(domainMap)) {
-        if (e.includes(key)) {
-          needsSpecificDomain = true;
-          if (domains.some(d => hostname.includes(d))) {
-            domainMatched = true;
-          }
-        }
-      }
-    }
-
-    if (needsSpecificDomain && !domainMatched) {
-      return false; // has target entity but domain does not match
-    }
-
-    return true;
-  } catch {
-    return false; // invalid url
-  }
-}
