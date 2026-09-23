@@ -1,4 +1,5 @@
 import { correctionFromEvidence } from "./correction";
+import { ACT_THRESHOLD, CAUTION_THRESHOLD, bandOf } from "@/lib/jev/bands";
 import { describeFailure } from "@/lib/providers/diagnostics";
 import {
   Claim,
@@ -56,11 +57,10 @@ const QUERIES_PER_CLAIM = 2;
 const RESULTS_PER_QUERY = 4;
 
 /**
- * A relation JEV is less sure of than this is not acted on. The scale is
- * JEV's own: confidence is how concentrated its answer is
- * (docs.typesafe.ai/confidence).
+ * A relation JEV is less sure of than this is not acted on: below it the
+ * answer belongs to a person, not to the pipeline (ADR-0008).
  */
-const RELATION_CONFIDENCE_THRESHOLD = 0.5;
+const RELATION_CONFIDENCE_THRESHOLD = CAUTION_THRESHOLD;
 
 const SOURCE_PRIORITY: Record<SourceType, number> = {
   primary: 1,
@@ -112,6 +112,7 @@ export async function runFactPipeline(
     try {
       return await verifyClaim({
         claim,
+        articleText: text,
         index,
         llm,
         factCheck,
@@ -179,6 +180,8 @@ export async function runFactPipeline(
 
 async function verifyClaim(params: {
   claim: Claim;
+  /** The whole block being checked: what the claim has to hold together with. */
+  articleText: string;
   index: number;
   llm: LLMProvider;
   factCheck: GoogleFactCheckClient;
@@ -191,7 +194,10 @@ async function verifyClaim(params: {
   evidences: Evidence[];
   isFactCheckHit: boolean;
 }> {
-  const { claim, index, llm, factCheck, jev, search, fetchProvider } = params;
+  const { claim, articleText, index, llm, factCheck, jev, search, fetchProvider } =
+    params;
+  /** JEV's reading of whether the claim holds up, kept whatever the sources said. */
+  let consistency: ClaimResult["consistency"];
   const claimEvidences: Evidence[] = [];
   // A lookup that could not be made at all, as opposed to one that ran and
   // found nothing. The reader is told which of the two happened.
@@ -405,8 +411,18 @@ async function verifyClaim(params: {
     const readable = candidates.filter((candidate) => candidate.text.trim().length > 0);
     trace.unreadable = candidates.length - readable.length;
 
-    if (readable.length > 0 && typeof jev.ask === "function") {
+    if (typeof jev.ask === "function") {
       const questions: Record<string, JEVQuestion> = {};
+
+      // Asked whatever the search turned up. A figure nobody published has no
+      // page to contradict it, but the article itself is state JEV can read,
+      // and it answers with a number instead of silence (ADR-0008).
+      questions.holdsUp = {
+        type: "noul",
+        instructions:
+          "claim.text は、article（この文章の全体）および sources に書かれていることと、" +
+          "矛盾なく成り立つか。article や sources の記述から無理が生じる場合は成り立たないとする。",
+      };
 
       readable.forEach((candidate, index) => {
         questions[`relation${index}`] = {
@@ -424,6 +440,7 @@ async function verifyClaim(params: {
 
       const answers = await jev.ask(
         {
+          article: articleText,
           claim: {
             text: claim.normalizedText || claim.originalText,
             subject: claim.subject || claim.entities?.[0] || "",
@@ -436,6 +453,17 @@ async function verifyClaim(params: {
         },
         questions
       );
+
+      const holdsUp = answers.holdsUp;
+      if (holdsUp && holdsUp.type === "noul") {
+        // A noul answer carries the probability alone. Its confidence is how
+        // far that probability sits from a coin toss, which is the same
+        // reading the client uses elsewhere (docs.typesafe.ai/confidence).
+        consistency = {
+          probabilityTrue: holdsUp.noul,
+          confidence: holdsUp.noul >= 0.5 ? holdsUp.noul : 1 - holdsUp.noul,
+        };
+      }
 
       for (let index = 0; index < readable.length; index++) {
         const candidate = readable[index];
@@ -497,11 +525,28 @@ async function verifyClaim(params: {
       );
 
     if (claimEvidences.length === 0) {
-      verdict = "INSUFFICIENT";
-      confidence = 0.6;
-      reason = lookupFailed
-        ? "外部の確認サービスに接続できなかったため、確認できませんでした。"
-        : "検証に足る明確な裏付け情報が確認できませんでした（証拠0件）。";
+      // No page carried the figure. That is not the same as nothing being
+      // known: JEV was still asked whether the claim holds together with the
+      // article, and its answer is used rather than a number chosen here
+      // (ADR-0008).
+      const held = consistency;
+      if (held && held.probabilityTrue < 0.5 && held.confidence >= ACT_THRESHOLD) {
+        verdict = "CONTRADICTED";
+        confidence = held.confidence;
+        reason = `裏付けとなるページは見つかりませんでしたが、JEVは記事内の他の記述と噛み合わないと判定しました（成り立つ確率 ${(held.probabilityTrue * 100).toFixed(0)}%、確信度 ${(held.confidence * 100).toFixed(0)}%）。`;
+      } else if (held) {
+        verdict = "INSUFFICIENT";
+        confidence = held.confidence;
+        reason = lookupFailed
+          ? "外部の確認サービスに接続できなかったため、確認できませんでした。"
+          : `裏付けとなるページが見つかりませんでした。JEVの読みは、成り立つ確率 ${(held.probabilityTrue * 100).toFixed(0)}%、確信度 ${(held.confidence * 100).toFixed(0)}% です。`;
+      } else {
+        verdict = "INSUFFICIENT";
+        confidence = 0.6;
+        reason = lookupFailed
+          ? "外部の確認サービスに接続できなかったため、確認できませんでした。"
+          : "検証に足る明確な裏付け情報が確認できませんでした（証拠0件）。";
+      }
     } else if (relationCounts.contradicts > 0 && relationCounts.supports === 0) {
       verdict = "CONTRADICTED";
       confidence = strongest("contradicts") || 0.9;
@@ -516,7 +561,7 @@ async function verifyClaim(params: {
       reason = bestExplanation || "信頼できる外部ソースによって事実の裏付けが得られました。";
     } else {
       verdict = "INSUFFICIENT";
-      confidence = 0.6;
+      confidence = consistency?.confidence ?? 0.6;
       reason = lookupFailed
         ? "外部の確認サービスに接続できなかったため、確認できませんでした。"
         : "検証に足る明確な裏付け情報が確認できませんでした。";
@@ -553,6 +598,8 @@ async function verifyClaim(params: {
     reason,
     evidence: claimEvidences,
     confidence,
+    band: bandOf(confidence),
+    consistency,
     lookupFailed,
     evidenceTrace: trace,
   };

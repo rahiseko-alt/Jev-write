@@ -1,3 +1,5 @@
+import type { ConfidenceBand } from "@/lib/jev/bands";
+
 // Domain Types for Document QA System (Jev-write)
 
 export type Importance = "critical" | "high" | "normal" | "low";
@@ -104,6 +106,23 @@ export type ClaimResult = {
   lookupFailed?: boolean;
   /** Where this claim's evidence went: what was found, and what was dropped. */
   evidenceTrace?: EvidenceTrace;
+  /**
+   * Which of ADR-0008's three bands `confidence` falls in. Carried so the
+   * screen can show the band beside the number rather than instead of it.
+   */
+  band?: ConfidenceBand;
+  /**
+   * JEV's reading of whether this claim holds together with the rest of the
+   * article and the sources that were read. Asked in the same request as the
+   * relations, and kept even when no source could be used — a claim nobody
+   * published a figure for still gets a number here.
+   */
+  consistency?: {
+    /** JEV's probability that the claim is true, 0 to 1. */
+    probabilityTrue: number;
+    /** How concentrated that answer was. */
+    confidence: number;
+  };
 };
 
 /**

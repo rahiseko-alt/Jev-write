@@ -1,6 +1,7 @@
 import type { AnalysisResult, ClaimResult, ClaimVerdict, StyleIssue,
   EvidenceTrace,
 } from "@/types";
+import { BAND_LABEL, ConfidenceBand, bandOf } from "@/lib/jev/bands";
 
 /**
  * The Revised Document and everything derived from it, built in one place.
@@ -78,6 +79,22 @@ export type Finding = {
    * what was found was thrown away, and at which step.
    */
   evidenceTrace?: EvidenceTrace;
+  /**
+   * Which of ADR-0008's bands the confidence falls in, and what to call it.
+   * Shown beside the number, never instead of it: the reader decides with the
+   * number in front of them.
+   */
+  band?: ConfidenceBand;
+  bandLabel?: string;
+  /** JEV's reading of whether the claim holds together, as percentages. */
+  consistency?: { probabilityTrue: number; confidence: number };
+  /** Every source JEV judged, with its answer and how sure it was. */
+  evidence?: Array<{
+    url: string;
+    title: string;
+    relation?: "supports" | "contradicts";
+    confidence?: number;
+  }>;
 };
 
 /** Everything that follows from a Finding's kind, in one place. */
@@ -248,6 +265,8 @@ function factFinding(
   const firstEvidence = result.evidence?.[0];
   const corrected = result.correctedClaim || text;
   const at = sentenceIndexOf(sentences, text);
+  const ratio = result.confidence ?? shape.confidence;
+  const band = result.band ?? bandOf(ratio <= 1 ? ratio : ratio / 100);
 
   return {
     id,
@@ -271,6 +290,15 @@ function factFinding(
     sentenceBefore: "",
     sentenceAfter: "",
     evidenceTrace: result.evidenceTrace,
+    band,
+    bandLabel: BAND_LABEL[band],
+    consistency: result.consistency,
+    evidence: (result.evidence ?? []).map((item) => ({
+      url: item.sourceUrl,
+      title: item.sourceTitle,
+      relation: item.relation,
+      confidence: item.confidence,
+    })),
   };
 }
 

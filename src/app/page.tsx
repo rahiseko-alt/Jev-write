@@ -445,7 +445,22 @@ export default function HomePage() {
                     <div className="py-1 border-b border-slate-50 space-y-1">
                       <div className="flex items-center justify-between">
                         <span className="text-slate-400 font-medium">信頼度</span>
-                        <span className="font-bold text-slate-900 text-sm">{currentFinding.confidence}%</span>
+                        <span className="flex items-center gap-2">
+                          {currentFinding.bandLabel && (
+                            <span
+                              className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${
+                                currentFinding.band === "act"
+                                  ? "bg-emerald-100 text-emerald-700"
+                                  : currentFinding.band === "caution"
+                                  ? "bg-amber-100 text-amber-700"
+                                  : "bg-slate-200 text-slate-600"
+                              }`}
+                            >
+                              {currentFinding.bandLabel}
+                            </span>
+                          )}
+                          <span className="font-bold text-slate-900 text-sm">{currentFinding.confidence}%</span>
+                        </span>
                       </div>
                       <div className="w-full h-1.5 bg-slate-100 rounded-full overflow-hidden">
                         <div
@@ -459,8 +474,16 @@ export default function HomePage() {
                           style={{ width: `${currentFinding.confidence}%` }}
                         />
                       </div>
+                      {currentFinding.consistency && (
+                        <p className="text-[10px] text-slate-500 leading-tight pt-0.5">
+                          記事の中での筋の通り方（JEVの判定）: 成り立つ確率{" "}
+                          {Math.round(currentFinding.consistency.probabilityTrue * 100)}% ／ 確信度{" "}
+                          {Math.round(currentFinding.consistency.confidence * 100)}%
+                        </p>
+                      )}
                       <p className="text-[10px] text-slate-400 leading-tight pt-0.5">
-                        各指摘にはJEVの信頼度を表示 - AIの判定根拠に基づく信頼度(JEV)を確認できます。
+                        数値はすべてJEVが返したものをそのまま表示しています。80%以上＝確信あり、
+                        50〜80%＝要確認、50%未満＝人が見て判断してください。
                       </p>
                     </div>
 
@@ -526,6 +549,24 @@ export default function HomePage() {
                             {currentFinding.evidenceTrace.weak ?? 0} 件 ／ 根拠に採用{" "}
                             {currentFinding.evidenceTrace.used} 件
                           </p>
+                          {currentFinding.evidence && currentFinding.evidence.length > 0 && (
+                            <ul className="space-y-0.5 pt-1">
+                              {currentFinding.evidence.map((item, i) => (
+                                <li key={`${item.url}-${i}`} className="break-all">
+                                  <span className="font-medium">
+                                    {item.relation === "contradicts"
+                                      ? "食い違い"
+                                      : item.relation === "supports"
+                                      ? "裏付け"
+                                      : "参考"}
+                                    {typeof item.confidence === "number" &&
+                                      `（確信度 ${Math.round(item.confidence * 100)}%）`}
+                                  </span>
+                                  : {item.title || item.url}
+                                </li>
+                              ))}
+                            </ul>
+                          )}
                         </div>
                       </details>
                     )}
