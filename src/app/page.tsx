@@ -867,6 +867,45 @@ export default function HomePage() {
                       </div>
                     )}
 
+                    {(analysisResult?.servedByFallback ||
+                      analysisResult?.providerStatuses?.some((s) => s.failureCount > 0)) && (
+                      <details className="rounded-xl border border-slate-200 bg-slate-50 text-xs text-slate-700">
+                        <summary className="px-4 py-3 cursor-pointer font-bold select-none">
+                          各サービスの状態を見る
+                        </summary>
+                        <div className="px-4 pb-3 space-y-2">
+                          {analysisResult?.providerStatuses?.map((status) => (
+                            <div key={status.service} className="space-y-0.5">
+                              <div className="flex items-center gap-2">
+                                <span
+                                  className={
+                                    status.stoodIn || status.failureCount > 0
+                                      ? "text-amber-600 font-bold"
+                                      : "text-emerald-600 font-bold"
+                                  }
+                                >
+                                  {status.stoodIn || status.failureCount > 0 ? "✕" : "✓"}
+                                </span>
+                                <span className="font-bold">{status.service}</span>
+                                <span className="text-slate-500">
+                                  {status.stoodIn
+                                    ? "簡易処理で代用しました"
+                                    : status.failureCount > 0
+                                      ? `${status.failureCount}件の呼び出しが失敗しました`
+                                      : "本来のサービスが応答しました"}
+                                </span>
+                              </div>
+                              {status.lastError && (
+                                <p className="pl-6 text-[11px] text-slate-500 break-all">
+                                  {status.lastError}
+                                </p>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      </details>
+                    )}
+
                     {analysisResult?.unauthorizedChangeDetected && (
                       <div className="flex items-start gap-2 px-4 py-3 rounded-xl border border-amber-200 bg-amber-50 text-xs text-amber-900">
                         <AlertTriangle className="w-4 h-4 shrink-0 text-amber-600 mt-0.5" />

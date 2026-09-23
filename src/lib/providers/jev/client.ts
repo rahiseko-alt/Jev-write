@@ -7,6 +7,7 @@ import {
   JEVDeltaMeaningParams,
   JEVDeltaMeaningResult,
 } from "./types";
+import { recordFailure } from "../diagnostics";
 
 
 export interface JEVClientOptions {
@@ -46,6 +47,9 @@ function undetected(
 }
 
 export class HTTPJEVClient implements JEVClient {
+  /** What went wrong with the real service during this run, for the reader. */
+  failureCount = 0;
+  lastError?: string;
   private apiUrl: string;
   private apiKey: string;
   private timeoutMs: number;
@@ -159,6 +163,7 @@ export class HTTPJEVClient implements JEVClient {
       // ADR-0003: a judgment that could not be obtained leaves the claim
       // unverified. It does not borrow a verdict from somewhere else.
       console.warn("HTTPJEVClient evaluateAtomicJudgment failed:", err);
+      recordFailure(this, err);
       return UNDECIDED;
     }
   }
@@ -231,6 +236,7 @@ export class HTTPJEVClient implements JEVClient {
       return { results: formattedResults };
     } catch (err) {
       console.warn("HTTPJEVClient evaluateBatchRules failed:", err);
+      recordFailure(this, err);
       return { results: undetected(reqOrText, maybeRules) };
     }
   }
