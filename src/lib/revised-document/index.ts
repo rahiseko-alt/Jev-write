@@ -1,7 +1,7 @@
-import type { AnalysisResult, ClaimResult, ClaimVerdict, StyleIssue,
+import type { AnalysisResult, ClaimResult, StyleIssue,
   EvidenceTrace,
 } from "@/types";
-import { BAND_LABEL, ConfidenceBand, bandOf } from "@/lib/jev/bands";
+import { isFlagged } from "@/lib/jev/bands";
 
 /**
  * The Revised Document and everything derived from it, built in one place.
@@ -11,7 +11,7 @@ import { BAND_LABEL, ConfidenceBand, bandOf } from "@/lib/jev/bands";
  */
 
 /** What a mark says about the text it covers. */
-export type MarkKind = "fact" | "style" | "unverified";
+export type MarkKind = "fact" | "style";
 
 export type Mark = {
   /** Every Finding covering this text; more than one can share a span. */
@@ -40,10 +40,11 @@ export type SentencePair = {
 };
 
 /**
- * What a Finding says about its text. Kept apart from the pipeline's
- * ClaimVerdict, which answers a different question.
+ * What a Finding is about: a sentence and its 信頼度, or a wording. There is
+ * no kind for "agrees" or "disagrees" with the sources: the number is all
+ * that is said (ADR-0011).
  */
-export type FindingKind = "corrected" | "unverified" | "ai-tell" | "confirmed";
+export type FindingKind = "claim" | "ai-tell";
 
 /** One judgement tied to one place in the document. */
 export type Finding = {
@@ -53,9 +54,10 @@ export type Finding = {
   categoryLabel: string;
   kind: FindingKind;
   /**
-   * JEV's confidence as a percentage, or null when no judgement produced a
-   * number. Null is shown as "数値なし": a made-up percentage next to a
-   * judgement is exactly the thing this product replaces (ADR-0008).
+   * The 信頼度 as a percentage: JEV's probability that the sentence is backed
+   * by the sources, as returned (ADR-0011). Null when no answer came back,
+   * shown as "数値なし": a made-up percentage is exactly the thing this
+   * product replaces (ADR-0008).
    */
   confidence: number | null;
   originalText: string;
@@ -85,15 +87,6 @@ export type Finding = {
    */
   evidenceTrace?: EvidenceTrace;
   /**
-   * Which of ADR-0008's bands the confidence falls in, and what to call it.
-   * Shown beside the number, never instead of it: the reader decides with the
-   * number in front of them.
-   */
-  band?: ConfidenceBand;
-  bandLabel?: string;
-  /** JEV's reading of whether the claim holds together, as percentages. */
-  consistency?: { probabilityTrue: number; confidence: number };
-  /**
    * True when the web lookup could not be made at all. The leading number then
    * stands on the article alone, so the screen has to say so: otherwise a run
    * that never searched reads like one that searched and found nothing.
@@ -114,8 +107,8 @@ export type Finding = {
 };
 
 /**
- * The number that decides where a reader should look first: how well the
- * sentence is held up, on JEV's scale of 0 to 1.
+ * The number that decides where a reader should look first: the 信頼度, on
+ * JEV's scale of 0 to 1.
  *
  * This tool does not rule on true and false. It shows how well each sentence
  * is backed and lets the reader decide, so the list is ordered by that number
@@ -123,15 +116,13 @@ export type Finding = {
  * all: nothing was measured, so nobody has looked at it yet.
  */
 export function attentionOf(finding: Finding): number | null {
-  if (finding.consistency) return finding.consistency.probabilityTrue;
-  if (finding.confidence !== null) return finding.confidence / 100;
-  return null;
+  return finding.confidence === null ? null : finding.confidence / 100;
 }
 
 /**
  * A Finding that should mark the document but found no sentence to mark.
  * Without saying so, it would drop out of the document silently: the reader
- * counts the marks, not the list. A confirmed claim leaves no mark anyway.
+ * counts the marks, not the list. A sentence above the line leaves no mark anyway.
  */
 export function isUnplaced(finding: Finding): boolean {
   return finding.lineIndex < 0 && finding.markKind !== null;
@@ -154,53 +145,19 @@ export function sortByAttention(findings: Finding[]): Finding[] {
   });
 }
 
-/** Everything that follows from a Finding's kind, in one place. */
-const FINDING_KINDS: Record<
-  FindingKind,
-  {
-    label: string;
-    heading: string;
-    markKind: MarkKind | null;
-    explanation: string;
-  }
-> = {
-  corrected: {
-    label: "資料と食い違い",
-    heading: "資料と食い違い",
-    markKind: "fact",
-    explanation:
-      "集めた資料の中に、この記述と違うことを書いているページがありました。" +
-      "どちらが正しいかは、この道具では決められません。根拠のページを見て判断してください。",
-  },
-  unverified: {
-    label: "裏付けなし",
-    heading: "裏付けが見つかりません",
-    markKind: "unverified",
-    explanation:
-      "集めた資料の中に、この記述を裏付けるページも、否定するページもありませんでした。" +
-      "誤りという意味ではありません。ご自身で一次情報をお確かめください。",
-  },
-  "ai-tell": {
-    label: "文章表現",
-    heading: "AIっぽい言い回し",
-    markKind: "style",
-    explanation: "AI特有の紋切り型表現または重複が検出されました。",
-  },
-  confirmed: {
-    label: "資料と一致",
-    heading: "資料と一致",
-    markKind: null,
-    explanation:
-      "集めた資料の記述と一致していました。資料そのものが正しいかどうかまでは分かりません。",
-  },
-};
+/** What a fact Finding is called: the number, and nothing else (ADR-0011). */
+const CONFIDENCE_LABEL = "信頼度";
 
-/** A MIXED claim is not confirmed: it still needs a person to look at it. */
-const KIND_BY_VERDICT: Record<ClaimVerdict, FindingKind> = {
-  CONTRADICTED: "corrected",
-  INSUFFICIENT: "unverified",
-  MIXED: "unverified",
-  SUPPORTED: "confirmed",
+/** "信頼度 62%", or "信頼度 数値なし" when no answer came back. */
+export function confidenceLabel(percent: number | null): string {
+  return `${CONFIDENCE_LABEL} ${percent === null ? "数値なし" : `${percent}%`}`;
+}
+
+/** A wording finding's own heading and hint. */
+const AI_TELL = {
+  label: "文章表現",
+  heading: "AIっぽい言い回し",
+  explanation: "AI特有の紋切り型表現または重複が検出されました。",
 };
 
 export type RevisedDocumentView = {
@@ -390,8 +347,6 @@ function factFinding(
   adoption: Record<string, boolean>
 ): Finding {
   const text = claimText(result);
-  const kind = KIND_BY_VERDICT[result.verdict];
-  const shape = FINDING_KINDS[kind];
   const id = factFindingId(index);
   const firstEvidence = result.evidence?.[0];
   // Nothing is rewritten, so the sentence the Finding points at is the
@@ -399,35 +354,31 @@ function factFinding(
   const corrected = text;
   const at = placeOf(sentences, result);
   const ratio = result.confidence;
-  const band =
-    result.band ?? (ratio === undefined ? undefined : bandOf(ratio <= 1 ? ratio : ratio / 100));
+  const percent = ratio === undefined ? null : toPercent(ratio);
+  // Every sentence at or below the line gets a ▶, and so does one with no
+  // number: nothing was measured, so it has not been looked at (ADR-0011).
+  const flagged = ratio === undefined || isFlagged(ratio <= 1 ? ratio : ratio / 100);
 
   return {
     id,
     type: "fact",
-    title: compose(
-      shape.heading,
-      kind === "corrected" ? changedWording(corrected, text) || text : text
-    ),
-    categoryLabel: shape.label,
-    kind,
-    confidence: ratio === undefined ? null : toPercent(ratio),
+    title: compose(confidenceLabel(percent), text),
+    categoryLabel: CONFIDENCE_LABEL,
+    kind: "claim",
+    confidence: percent,
     originalText: text,
     revisedText: corrected,
     sourceTitle: firstEvidence?.sourceTitle || "",
     sourceUrl: firstEvidence?.sourceUrl || "",
-    explanation: result.reason || shape.explanation,
+    explanation: result.reason || "",
     lineIndex: at,
     adopted: isAdopted(adoption, id, false),
-    markKind: shape.markKind,
+    markKind: flagged ? "fact" : null,
     adoptable: false,
     sentenceBefore: "",
     sentenceAfter: "",
     evidenceTrace: result.evidenceTrace,
     checkQueries: [],
-    band,
-    bandLabel: band === undefined ? undefined : BAND_LABEL[band],
-    consistency: result.consistency,
     lookupFailed: result.lookupFailed,
     evidence: (result.evidence ?? []).map((item) => ({
       url: item.sourceUrl,
@@ -446,7 +397,7 @@ function styleFinding(
   adoption: Record<string, boolean>
 ): Finding {
   const id = styleFindingId(index);
-  const shape = FINDING_KINDS["ai-tell"];
+  const shape = AI_TELL;
   const at = sentenceIndexOf(sentences, styleIssue.targetText ?? "");
   const before = at >= 0 ? sentences[at] : styleIssue.targetText || "";
   const after = at >= 0 ? revised[at] ?? before : before;
@@ -466,7 +417,7 @@ function styleFinding(
     explanation: styleIssue.repairInstruction || shape.explanation,
     lineIndex: at,
     adopted: isAdopted(adoption, id, true),
-    markKind: isRaised(styleIssue) ? shape.markKind : null,
+    markKind: isRaised(styleIssue) ? "style" : null,
     adoptable: isRaised(styleIssue) && at >= 0 && after !== before,
     sentenceBefore: "",
     sentenceAfter: "",
@@ -611,7 +562,7 @@ type Span = {
 };
 
 /** Which mark wins where two cover the same text. */
-const MARK_PRECEDENCE: MarkKind[] = ["fact", "unverified", "style"];
+const MARK_PRECEDENCE: MarkKind[] = ["fact", "style"];
 
 function strongest(kinds: MarkKind[]): MarkKind {
   return MARK_PRECEDENCE.find((kind) => kinds.includes(kind)) ?? kinds[0];
@@ -725,31 +676,10 @@ function markSentence(
     (finding) => finding.lineIndex === sentenceIndex && finding.markKind !== null
   );
 
+  // Nothing is rewritten, and the question is asked of the sentence as
+  // written, so every mark covers the whole sentence (ADR-0010, ADR-0011).
   const spans: Span[] = [];
-  const wholeSentence: Finding[] = [];
-
-  for (const finding of onThisSentence) {
-    // A refused correction leaves the sentence as it was written, so the mark
-    // follows the reader's own wording rather than the one they turned down.
-    const located =
-      finding.markKind === "fact"
-        ? finding.adopted
-          ? locateChange(text, finding.originalText, finding.revisedText)
-          : locateChange(text, finding.revisedText, finding.originalText)
-        : null;
-
-    if (located) {
-      spans.push({
-        start: located[0],
-        end: located[1],
-        findingIds: [finding.id],
-        kind: finding.markKind!,
-        rejected: isRefused(finding),
-      });
-    } else {
-      wholeSentence.push(finding);
-    }
-  }
+  const wholeSentence: Finding[] = onThisSentence;
 
   spans.sort((a, b) => a.start - b.start);
   const merged = mergeOverlaps(spans);
@@ -816,7 +746,7 @@ function gap(text: string, background?: Mark): Segment {
 
 const SPAN_LENGTH = 20;
 
-/** "資料と食い違い: 12万円" — the kind, then what it points at. */
+/** "信頼度 62%: 価格は10万円" — the number, then what it points at. */
 function compose(heading: string, span: string): string {
   const target = span.trim();
   if (!target) return heading;

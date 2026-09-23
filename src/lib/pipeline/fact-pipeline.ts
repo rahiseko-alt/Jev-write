@@ -1,6 +1,7 @@
 import { SourcePool, createSourcePool } from "./source-pool";
 import { readEvidence } from "./evidence-reading";
-import { CAUTION_THRESHOLD, bandOf } from "@/lib/jev/bands";
+import { CAUTION_THRESHOLD } from "@/lib/jev/bands";
+import { SUPPORT_QUESTION, SourcePage, planSupportRequests } from "./support-question";
 import { describeFailure } from "@/lib/providers/diagnostics";
 import {
   Claim,
@@ -18,7 +19,6 @@ import {
   JEVQuestion,
   LLMProvider,
   SearchProvider,
-  SearchResultItem,
   getFetchProvider,
   getGoogleFactCheckClient,
   getJEVClient,
@@ -80,6 +80,25 @@ const SOURCE_PRIORITY: Record<SourceType, number> = {
   ugc: 5,
   unknown: 6,
 };
+
+/**
+ * What one page says about the sentence. Asked beside the support question in
+ * the same request (ADR-0007), and used only to choose which pages are listed
+ * as the grounds — never for the 信頼度 on screen (ADR-0011).
+ */
+function relationQuestion(index: number): JEVQuestion {
+  return {
+    type: "choice",
+    instructions: `sources[${index}] の内容は、claim.original をどう扱っているか。`,
+    criteria: {
+      supports: "claim.original と同じ事実を述べている",
+      contradicts:
+        "claim.original と異なる事実を述べている（数値・日付・名称の食い違いを含む）",
+      says_nothing:
+        "claim.original については何も述べていない。別の組織・製品・出来事についての記述である場合もこれにあたる",
+    },
+  };
+}
 
 /**
  * Execute Fact Verification Pipeline (Sections 7-17 of specification)
@@ -230,8 +249,6 @@ async function verifyClaim(params: {
   isFactCheckHit: boolean;
 }> {
   const { claim, articleText, pool, index, llm, factCheck, jev, fetchProvider } = params;
-  /** JEV's reading of whether the claim holds up, kept whatever the sources said. */
-  let consistency: ClaimResult["consistency"];
   const claimEvidences: Evidence[] = [];
   // A lookup that could not be made at all, as opposed to one that ran and
   // found nothing. The reader is told which of the two happened.
@@ -305,12 +322,9 @@ async function verifyClaim(params: {
 
           if (isFalse) {
             verdict = "CONTRADICTED";
-            // A published rating decided this, not JEV. There is no number.
-            confidence = undefined;
             reason = `FactCheck評価: ${ratingText} (${review.publisher?.name || "検証機関"})`;
           } else if (isTrue) {
             verdict = "SUPPORTED";
-            confidence = undefined;
             reason = `FactCheck評価: ${ratingText} (${review.publisher?.name || "検証機関"})`;
           } else {
             const normResult = await jev.evaluateAtomicJudgment({
@@ -319,7 +333,6 @@ async function verifyClaim(params: {
               criteria: ["supports", "contradicts", "mixed", "insufficient"],
             });
             verdict = mapChoiceToClaimVerdict(normResult.choice);
-            confidence = normResult.confidence;
             reason = normResult.explanation || `FactCheck評価: ${ratingText}`;
           }
 
@@ -341,260 +354,183 @@ async function verifyClaim(params: {
     }
   }
 
-  // Step 3: Fallback to Web Search if no usable Google Fact Check hit
-  if (!isFactCheckHit) {
-    // The pages were gathered for the whole text before any claim was looked
-    // at, so most claims cost no search at all. Only a claim the pool has
-    // nothing for pays for one of its own (ADR-0007: ask once, not per claim).
-    let pooled = pool.candidatesFor(claim, MAX_SOURCES_PER_CLAIM);
+  // Step 3: the pages. Gathered for every claim, whatever the fact-check
+  // lookup found: the one question below is asked of every sentence, and it
+  // is asked of everything that was collected (ADR-0011).
+  //
+  // The pages were gathered for the whole text before any claim was looked
+  // at, so most claims cost no search at all. Only a claim the pool has
+  // nothing for pays for one of its own (ADR-0007: ask once, not per claim).
+  let pooled = pool.candidatesFor(claim, MAX_SOURCES_PER_CLAIM);
 
-    if (pooled.length === 0) {
-      let queries: string[] = [];
-      try {
-        queries = (await llm.generateSearchQueries(claim))
-          .map((query) => query.trim())
-          .filter(Boolean)
-          .slice(0, QUERIES_PER_CLAIM);
-      } catch (err) {
-        console.warn(`Search queries could not be written for claim ${claim.id}:`, err);
-      }
-
-      const query = queries[0] || claim.normalizedText || claim.originalText;
-      await pool.addQuery(query);
-      pooled = pool.candidatesFor(claim, MAX_SOURCES_PER_CLAIM);
+  if (pooled.length === 0) {
+    let queries: string[] = [];
+    try {
+      queries = (await llm.generateSearchQueries(claim))
+        .map((query) => query.trim())
+        .filter(Boolean)
+        .slice(0, QUERIES_PER_CLAIM);
+    } catch (err) {
+      console.warn(`Search queries could not be written for claim ${claim.id}:`, err);
     }
 
-    // No page names the claim's subject word for word — the subject can come
-    // back paraphrased or in another language. The pages are still read, and
-    // JEV says which of them speak to the claim (ADR-0007: nothing is dropped
-    // on this side before JEV is asked).
-    if (pooled.length === 0) {
-      pooled = pool.closestFor(claim, MAX_SOURCES_PER_CLAIM);
-    }
+    const query = queries[0] || claim.normalizedText || claim.originalText;
+    await pool.addQuery(query);
+    pooled = pool.candidatesFor(claim, MAX_SOURCES_PER_CLAIM);
+  }
 
-    trace.query = pool.queries().join(" / ");
-    trace.found = pooled.length;
-    lookupFailed = pool.searchFailed() && pooled.length === 0;
+  // No page names the claim's subject word for word — the subject can come
+  // back paraphrased or in another language. The pages are still read, and
+  // JEV says which of them speak to the claim (ADR-0007: nothing is dropped
+  // on this side before JEV is asked).
+  if (pooled.length === 0) {
+    pooled = pool.closestFor(claim, MAX_SOURCES_PER_CLAIM);
+  }
 
-    const candidates = pooled
-      .slice()
-      .sort((a, b) => {
-        const typeA = mapDomainToSourceType(a.url);
-        const typeB = mapDomainToSourceType(b.url);
-        return (SOURCE_PRIORITY[typeA] || 6) - (SOURCE_PRIORITY[typeB] || 6);
-      })
-      .map((page) => ({
-        res: { url: page.url, title: page.title } as SearchResultItem,
-        fetched: page,
-        text: page.text,
-        excerpt: extractRelevantExcerpt(page.text, claim, 2500),
-      }));
+  trace.query = pool.queries().join(" / ");
+  trace.found = pooled.length;
+  // What the reader is told about is the web search: the fact-check lookup
+  // failing on its own leaves the pages to ask with.
+  lookupFailed = pool.searchFailed() && pooled.length === 0;
 
-    const relationCounts = {
-      supports: 0,
-      contradicts: 0,
-      says_nothing: 0,
-      ambiguous: 0,
-    };
+  const readable = pooled
+    .slice()
+    .sort(
+      (a, b) =>
+        (SOURCE_PRIORITY[mapDomainToSourceType(a.url)] || 6) -
+        (SOURCE_PRIORITY[mapDomainToSourceType(b.url)] || 6)
+    )
+    .filter((page) => page.text.trim().length > 0);
+  trace.unreadable = pooled.length - readable.length;
 
-    /**
-     * Which sites said what. One site saying otherwise is a lead, not a
-     * finding: a rental-space listing names the subject a dozen times and
-     * still got a fact about it wrong, and two of its pages agreed with each
-     * other because they are the same site. A conflict is reported as one
-     * when two different sites arrive at it independently.
-     */
-    const contradictingSites = new Set<string>();
-    const supportingSites = new Set<string>();
+  // Everything collected goes into the state whole: the fact-check reviews
+  // first, then every page's full text. Nothing is cut to an excerpt.
+  const factCheckPages: SourcePage[] = claimEvidences.map((item) => ({
+    title: item.sourceTitle,
+    url: item.sourceUrl,
+    text: item.excerpt,
+  }));
+  const pages: SourcePage[] = [
+    ...factCheckPages,
+    ...readable.map((page) => ({ title: page.title, url: page.url, text: page.text })),
+  ];
 
-    let bestExplanation: string | undefined;
+  if (typeof jev.ask !== "function") {
+    throw new Error("JEVに問いを送る手段がありません（ask が未実装）。");
+  }
 
-    const readable = candidates.filter((candidate) => candidate.text.trim().length > 0);
-    trace.unreadable = candidates.length - readable.length;
+  // Per page, JEV is also asked what the page says about the sentence, in the
+  // same request. Those answers only decide which pages are listed as the
+  // grounds; the 信頼度 is the support question's answer alone.
+  const requests = planSupportRequests({
+    original: claim.originalText,
+    article: articleText,
+    pages,
+    questionFor: relationQuestion,
+  });
 
-    if (typeof jev.ask === "function") {
-      const questions: Record<string, JEVQuestion> = {};
-
-      // Asked whatever the search turned up. A figure nobody published has no
-      // page to contradict it, but the rest of the article is state JEV can
-      // read, and it answers with a number instead of silence (ADR-0008).
-      //
-      // The claim's own sentence is taken out of that state first. Left in,
-      // the question answers itself: a fabricated figure always agrees with
-      // the article that carries it, and JEV rightly said so.
-      questions.holdsUp = {
-        type: "noul",
-        instructions:
-          "claim.text の数値や事実関係は、others（この主張の文を取り除いた記事の残り）および " +
-          "sources の記述と突き合わせたとき、辻褄が合うか。" +
-          "数値の辻褄が合わない場合は合わないとする。" +
-          "どちらにも関連する記述が無く判断材料が無い場合は、どちらとも言えない側に寄せること。",
-      };
-
-      readable.forEach((candidate, index) => {
-        questions[`relation${index}`] = {
-          type: "choice",
-          instructions: `sources[${index}] の内容は、claim.text をどう扱っているか。`,
-          criteria: {
-            supports: "claim.text と同じ事実を述べている",
-            contradicts:
-              "claim.text と異なる事実を述べている（数値・日付・名称の食い違いを含む）",
-            says_nothing:
-              "claim.text については何も述べていない。別の組織・製品・出来事についての記述である場合もこれにあたる",
-          },
-        };
+  const ask = jev.ask.bind(jev);
+  const replies = await Promise.all(
+    requests.map((request) => {
+      const questions: Record<string, JEVQuestion> = { support: SUPPORT_QUESTION };
+      request.pages.forEach((_, index) => {
+        questions[`relation${index}`] = relationQuestion(index);
       });
+      return ask(request.state, questions);
+    })
+  );
 
-      const answers = await jev.ask(
-        {
-          others: articleWithoutClaim(articleText, claim),
-          claim: {
-            text: claim.normalizedText || claim.originalText,
-            subject: claim.subject || claim.entities?.[0] || "",
-          },
-          sources: readable.map((candidate) => ({
-            title: candidate.fetched.title || candidate.res.title || "",
-            url: candidate.res.url,
-            text: candidate.excerpt,
-          })),
-        },
-        questions
-      );
+  // The 信頼度 is a number JEV returned, as it returned it (ADR-0008,
+  // ADR-0011). When the pages had to be spread over several requests, each
+  // answer says whether the sentence is backed by the pages in that request;
+  // backed by some of the pages is backed by the pages, so the highest of
+  // those answers is the one shown. Nothing is averaged or adjusted.
+  const supportAnswers: number[] = [];
+  for (const answers of replies) {
+    const answer = answers.support;
+    if (answer && answer.type === "noul" && typeof answer.noul === "number") {
+      supportAnswers.push(answer.noul);
+    }
+  }
+  confidence = supportAnswers.length > 0 ? Math.max(...supportAnswers) : undefined;
 
-      const holdsUp = answers.holdsUp;
-      if (holdsUp && holdsUp.type === "noul") {
-        // A noul answer carries the probability alone. Its confidence is how
-        // far that probability sits from a coin toss, which is the same
-        // reading the client uses elsewhere (docs.typesafe.ai/confidence).
-        consistency = {
-          probabilityTrue: holdsUp.noul,
-          confidence: holdsUp.noul >= 0.5 ? holdsUp.noul : 1 - holdsUp.noul,
-        };
-      }
+  // Which pages speak to the sentence, and how: one reading per page, the
+  // surest of its parts when it was long enough to be cut.
+  const reading = new Map<
+    number,
+    { relation: "supports" | "contradicts"; certainty: number; text: string }
+  >();
+  const heard = new Set<number>();
 
-      for (let index = 0; index < readable.length; index++) {
-        const candidate = readable[index];
-        const relationAnswer = answers[`relation${index}`];
-
-        if (!relationAnswer || relationAnswer.type !== "choice") {
-          trace.saidNothing++;
-          continue;
-        }
-
-        const relation = relationAnswer.choice as keyof typeof relationCounts;
-        const certainty = relationAnswer.confidence ?? 0;
-
-        if (relation !== "supports" && relation !== "contradicts") {
-          trace.saidNothing++;
-          continue;
-        }
-
-        // An answer JEV is unsure of is not a verdict. It is counted as a
-        // weak reading rather than acted on (docs.typesafe.ai/confidence).
-        if (certainty < RELATION_CONFIDENCE_THRESHOLD) {
-          trace.weak++;
-          continue;
-        }
-
-        relationCounts[relation]++;
-        trace.used++;
-        (relation === "contradicts" ? contradictingSites : supportingSites).add(
-          siteOf(candidate.res.url)
-        );
-
-        claimEvidences.push({
-          id: `ev-${claim.id}-web-${index}`,
-          claimId: claim.id,
-          sourceUrl: candidate.fetched.url || candidate.res.url,
-          sourceTitle: candidate.fetched.title || candidate.res.title,
-          publisher: candidate.fetched.siteName || candidate.fetched.author,
-          publishedAt: candidate.fetched.publishedAt,
-          excerpt: candidate.excerpt.slice(0, 350),
-          sourceType: mapDomainToSourceType(candidate.res.url),
-          confidence: certainty,
-          relation,
+  replies.forEach((answers, r) => {
+    requests[r].pages.forEach((page, index) => {
+      const answer = answers[`relation${index}`];
+      if (!answer || answer.type !== "choice") return;
+      if (answer.choice !== "supports" && answer.choice !== "contradicts") return;
+      heard.add(page);
+      const certainty = answer.confidence ?? 0;
+      // An answer JEV is unsure of is not acted on (docs.typesafe.ai/confidence).
+      if (certainty < RELATION_CONFIDENCE_THRESHOLD) return;
+      const previous = reading.get(page);
+      if (!previous || certainty > previous.certainty) {
+        reading.set(page, {
+          relation: answer.choice,
+          certainty,
+          text: requests[r].state.sources[index].text,
         });
-
-        if (!bestExplanation) {
-          bestExplanation =
-            relation === "contradicts"
-              ? `このページは違うことを書いています（JEVの確信度 ${(certainty * 100).toFixed(0)}%）。どちらが正しいかはページを見てお確かめください。`
-              : `このページは同じことを書いています（JEVの確信度 ${(certainty * 100).toFixed(0)}%）。`;
-        }
       }
+    });
+  });
+
+  const relationCounts = { supports: 0, contradicts: 0 };
+  const contradictingSites = new Set<string>();
+
+  readable.forEach((page, i) => {
+    const at = factCheckPages.length + i;
+    const read = reading.get(at);
+    if (!read) {
+      if (heard.has(at)) trace.weak++;
+      else trace.saidNothing++;
+      return;
     }
 
-    // The verdict's strength is JEV's, not a number chosen here (ADR-0007).
-    const strongest = (kind: "supports" | "contradicts") =>
-      Math.max(
-        0,
-        ...claimEvidences
-          .filter((item) => (item.confidence ?? 0) > 0 && item.relation === kind)
-          .map((item) => item.confidence ?? 0)
-      );
+    relationCounts[read.relation]++;
+    trace.used++;
+    if (read.relation === "contradicts") contradictingSites.add(siteOf(page.url));
 
-    if (claimEvidences.length === 0) {
-      // No page carried the figure. JEV was still asked whether the claim
-      // holds together with the rest of the article, and that number is
-      // shown rather than one chosen here (ADR-0008).
-      //
-      // A low reading here means the article does not carry what the claim
-      // needs — not that the claim is false. Measured: run it as a verdict and
-      // true sentences whose support simply is not in the article ("4月時点で
-      // 約50人", "年間1500円") come back as errors at 92% and 96%. So the
-      // number is shown and the claim stays unverified; only a source that
-      // actually says otherwise makes it CONTRADICTED.
-      const held = consistency;
-      if (held) {
-        verdict = "INSUFFICIENT";
-        confidence = held.confidence;
-        reason = lookupFailed
-          ? "外部の確認サービスに接続できなかったため、確認できませんでした。"
-          : `裏付けとなるページが見つかりませんでした。記事の残りと突き合わせたJEVの読みは、辻褄が合う確率 ${(held.probabilityTrue * 100).toFixed(0)}%（確信度 ${(held.confidence * 100).toFixed(0)}%）です。低い場合も「誤り」ではなく、記事の中に裏付けが無いことを示します。`;
-      } else {
-        verdict = "INSUFFICIENT";
-        confidence = undefined;
-        reason = lookupFailed
-          ? "外部の確認サービスに接続できなかったため、確認できませんでした。"
-          : "検証に足る明確な裏付け情報が確認できませんでした（証拠0件）。";
-      }
-    } else if (
-      readEvidence({
-        supports: relationCounts.supports,
-        contradicts: relationCounts.contradicts,
-        contradictingSites: contradictingSites.size,
-      }) === "conflict"
-    ) {
-      verdict = "CONTRADICTED";
-      confidence = strongest("contradicts");
-      reason = bestExplanation || "外部ソースの情報と矛盾する内容が確認されました。";
-    } else if (
-      readEvidence({
-        supports: relationCounts.supports,
-        contradicts: relationCounts.contradicts,
-        contradictingSites: contradictingSites.size,
-      }) === "single-site-conflict"
-    ) {
-      // Shown, with its pages attached, but not called a conflict between the
-      // article and the record: nobody else has said it.
-      verdict = "INSUFFICIENT";
-      confidence = strongest("contradicts");
-      reason = `違うことを書いているページが1つのサイトにだけ見つかりました（JEVの確信度 ${(strongest("contradicts") * 100).toFixed(0)}%）。裏を取れていないので、根拠のページをご自身でお確かめください。`;
-    } else if (relationCounts.contradicts > 0 && relationCounts.supports > 0) {
-      verdict = "MIXED";
-      confidence = Math.max(strongest("contradicts"), strongest("supports"));
-      reason = bestExplanation || "裏付け情報と矛盾する情報の双方が存在します。";
-    } else if (relationCounts.supports > 0) {
-      verdict = "SUPPORTED";
-      confidence = strongest("supports");
-      reason = bestExplanation || "信頼できる外部ソースによって事実の裏付けが得られました。";
-    } else {
-      verdict = "INSUFFICIENT";
-      confidence = consistency?.confidence;
-      reason = lookupFailed
-        ? "外部の確認サービスに接続できなかったため、確認できませんでした。"
-        : "検証に足る明確な裏付け情報が確認できませんでした。";
-    }
+    claimEvidences.push({
+      id: `ev-${claim.id}-web-${i}`,
+      claimId: claim.id,
+      sourceUrl: page.url,
+      sourceTitle: page.title,
+      publisher: page.siteName || page.author,
+      publishedAt: page.publishedAt,
+      excerpt: read.text.slice(0, 350),
+      sourceType: mapDomainToSourceType(page.url),
+      confidence: read.certainty,
+      relation: read.relation,
+    });
+  });
+
+  // What the pages add up to, kept for the run's summary counts only. The
+  // screen shows the 信頼度 and nothing else (ADR-0011).
+  if (!isFactCheckHit) {
+    const summary = readEvidence({
+      supports: relationCounts.supports,
+      contradicts: relationCounts.contradicts,
+      contradictingSites: contradictingSites.size,
+    });
+    verdict =
+      summary === "conflict"
+        ? "CONTRADICTED"
+        : summary === "mixed"
+          ? "MIXED"
+          : summary === "supported"
+            ? "SUPPORTED"
+            : "INSUFFICIENT";
+    reason = lookupFailed
+      ? "外部の確認サービスに接続できなかったため、渡せた資料だけで問いました。"
+      : undefined;
   }
 
   const claimResult: ClaimResult = {
@@ -603,8 +539,6 @@ async function verifyClaim(params: {
     reason,
     evidence: claimEvidences,
     confidence,
-    band: confidence === undefined ? undefined : bandOf(confidence),
-    consistency,
     lookupFailed,
     evidenceTrace: trace,
   };
@@ -614,18 +548,6 @@ async function verifyClaim(params: {
     evidences: claimEvidences,
     isFactCheckHit,
   };
-}
-
-/**
- * The article with the claim's own sentence taken out, so that asking whether
- * the claim fits the article is not asking whether it fits itself.
- */
-function articleWithoutClaim(articleText: string, claim: Claim): string {
-  const sentence = claim.originalText?.trim();
-  if (!sentence) return articleText;
-  const at = articleText.indexOf(sentence);
-  if (at === -1) return articleText;
-  return articleText.slice(0, at) + articleText.slice(at + sentence.length);
 }
 
 /** The site a page belongs to. Two pages of one site are one voice. */
@@ -663,42 +585,6 @@ function mapChoiceToClaimVerdict(choice?: string): ClaimVerdict {
     default:
       return "INSUFFICIENT";
   }
-}
-
-function extractRelevantExcerpt(content: string, claim: Claim, maxLength = 2500): string {
-  if (content.length <= maxLength) return content;
-
-  // Collect keywords from claim
-  const keywords: string[] = [];
-  if (claim.subject) keywords.push(claim.subject);
-  if (claim.entities) keywords.push(...claim.entities);
-  if (claim.numbers) keywords.push(...claim.numbers);
-  if (claim.dates) keywords.push(...claim.dates);
-
-  const textTokens = (claim.normalizedText || claim.originalText)
-    .replace(/[、。！？\s\(\)（）「」『』]/g, " ")
-    .split(" ")
-    .filter((w) => w.length >= 2);
-  keywords.push(...textTokens);
-
-  let bestIndex = 0;
-  let maxMatches = 0;
-
-  for (let i = 0; i < content.length; i += 200) {
-    const chunk = content.slice(i, i + maxLength).toLowerCase();
-    let matches = 0;
-    for (const kw of keywords) {
-      if (kw && chunk.includes(kw.toLowerCase())) {
-        matches++;
-      }
-    }
-    if (matches > maxMatches) {
-      maxMatches = matches;
-      bestIndex = i;
-    }
-  }
-
-  return content.slice(bestIndex, bestIndex + maxLength);
 }
 
 /**

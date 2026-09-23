@@ -1,6 +1,5 @@
 import { describe, it, expect } from "vitest";
 import { buildRevisedDocument, isUnplaced, sortByAttention } from "@/lib/revised-document";
-import { BAND_LABEL } from "@/lib/jev/bands";
 import type { AnalysisResult, ClaimResult, StyleIssue } from "@/types";
 
 function claim(originalText: string, verdict: ClaimResult["verdict"]): ClaimResult {
@@ -16,6 +15,11 @@ function claim(originalText: string, verdict: ClaimResult["verdict"]): ClaimResu
     reason: "テスト用の理由。",
     evidence: [],
   };
+}
+
+/** The same claim with a 信頼度 above the ▶ line (ADR-0011). */
+function above(result: ClaimResult): ClaimResult {
+  return { ...result, confidence: 0.95 };
 }
 
 function styleIssue(targetText: string): StyleIssue {
@@ -359,11 +363,11 @@ describe("buildRevisedDocument", () => {
       expect(view.hasFindings).toBe(false);
     });
 
-    it("reports nothing found when every claim is supported and no style issue was raised", () => {
+    it("reports nothing found when every sentence is above the line and no style issue was raised", () => {
       const original = "一文目。";
 
       const view = buildRevisedDocument({
-        analysis: analysis(original, original, [claim("一文目", "SUPPORTED")]),
+        analysis: analysis(original, original, [above(claim("一文目", "SUPPORTED"))]),
         adoption: { ...ACCEPTED },
       });
 
@@ -441,15 +445,15 @@ describe("inline marks", () => {
     });
 
     expect(marks(view)).toEqual([
-      { text: "価格は10万円である。", kind: "unverified", findingId: "fact-0" },
+      { text: "価格は10万円である。", kind: "fact", findingId: "fact-0" },
     ]);
   });
 
-  it("leaves a supported claim unmarked", () => {
+  it("leaves a sentence above the line unmarked", () => {
     const original = "価格は10万円である。";
 
     const view = buildRevisedDocument({
-      analysis: analysis(original, original, [claim("価格は10万円である。", "SUPPORTED")]),
+      analysis: analysis(original, original, [above(claim("価格は10万円である。", "SUPPORTED"))]),
       adoption: { ...ACCEPTED },
     });
 
@@ -480,17 +484,19 @@ describe("locating the changed wording", () => {
       .map((s) => ({ text: s.text, ids: s.mark!.findingIds, kind: s.mark!.kind }));
   }
 
-  it("treats a MIXED claim as needing a person, not as confirmed", () => {
+  it("marks a sentence at or below the line whatever the pages added up to", () => {
     const original = "価格は10万円である。";
+    const mixed = claim("価格は10万円である。", "MIXED");
+    mixed.confidence = 0.42;
 
     const view = buildRevisedDocument({
-      analysis: analysis(original, original, [claim("価格は10万円である。", "MIXED")]),
+      analysis: analysis(original, original, [mixed]),
       adoption: { ...ACCEPTED },
     });
 
-    expect(view.findings[0].kind).toBe("unverified");
-    expect(view.findings[0].categoryLabel).toBe("裏付けなし");
-    expect(marked(view).map((m) => m.kind)).toEqual(["unverified"]);
+    expect(view.findings[0].kind).toBe("claim");
+    expect(view.findings[0].categoryLabel).toBe("信頼度");
+    expect(marked(view).map((m) => m.kind)).toEqual(["fact"]);
     expect(view.hasFindings).toBe(true);
   });
 
@@ -507,7 +513,7 @@ describe("locating the changed wording", () => {
 });
 
 describe("Finding headings", () => {
-  it("names the kind and the claim for an unverified one", () => {
+  it("names the 信頼度 and the claim, and nothing else", () => {
     const original = "価格は10万円である。";
 
     const view = buildRevisedDocument({
@@ -515,7 +521,7 @@ describe("Finding headings", () => {
       adoption: { ...ACCEPTED },
     });
 
-    expect(view.findings[0].title).toBe("裏付けが見つかりません: 価格は10万円である。");
+    expect(view.findings[0].title).toBe("信頼度 数値なし: 価格は10万円である。");
   });
 
   it("names the rule and its target for an AI-tell", () => {
@@ -616,12 +622,10 @@ describe("where a Finding's evidence went", () => {
   });
 });
 
-describe("JEVの数値を画面まで運ぶ", () => {
-  it("確信度の帯と、記事内の整合性の数値を Finding に残す", () => {
+describe("信頼度（ADR-0011）", () => {
+  it("JEVが返した確率を、そのまま信頼度として運ぶ", () => {
     const result = claim("9月には142人に到達した", "CONTRADICTED");
-    result.confidence = 0.86;
-    result.band = "act";
-    result.consistency = { probabilityTrue: 0.11, confidence: 0.89 };
+    result.confidence = 0.16;
     result.evidence = [
       {
         id: "ev-1",
@@ -631,7 +635,7 @@ describe("JEVの数値を画面まで運ぶ", () => {
         excerpt: "……",
         sourceType: "official",
         relation: "contradicts",
-        confidence: 0.86,
+        confidence: 0.97,
       },
     ];
 
@@ -639,21 +643,62 @@ describe("JEVの数値を画面まで運ぶ", () => {
       analysis: analysis("9月には142人に到達した。", "9月には142人に到達した。", [result]),
       adoption: { ...ACCEPTED },
     });
-    const finding = doc.findings.find((item) => item.type === "fact");
+    const finding = doc.findings.find((item) => item.type === "fact")!;
 
-    expect(finding?.confidence).toBe(86);
-    expect(finding?.band).toBe("act");
-    expect(finding?.bandLabel).toBe(BAND_LABEL.act);
-    expect(finding?.consistency).toEqual({ probabilityTrue: 0.11, confidence: 0.89 });
-    expect(finding?.evidence?.[0]).toMatchObject({
-      relation: "contradicts",
-      confidence: 0.86,
-    });
+    // The page's own relation number is not the 信頼度.
+    expect(finding.confidence).toBe(16);
+    expect(finding.title).toBe("信頼度 16%: 9月には142人に到達した");
+    expect(finding.categoryLabel).toBe("信頼度");
+    // The page is still listed as grounds.
+    expect(finding.evidence?.[0]).toMatchObject({ url: "https://example.com/a" });
   });
-});
 
-describe("数字を作らない", () => {
-  it("JEVが数値を返さなかった判定は「数値なし」として運ぶ", () => {
+  it("札も正誤の言葉も付けない: 見出しは信頼度だけ", () => {
+    const verdicts: ClaimResult["verdict"][] = ["CONTRADICTED", "INSUFFICIENT", "MIXED", "SUPPORTED"];
+    const original = "会費は月額1万円です。";
+    const claims = verdicts.map((verdict, i) => {
+      const result = claim("会費は月額1万円です。", verdict);
+      result.claim.id = `claim-${i}`;
+      result.confidence = 0.4;
+      return result;
+    });
+
+    const doc = buildRevisedDocument({ analysis: analysis(original, original, claims), adoption: {} });
+
+    for (const finding of doc.findings) {
+      expect(finding.title).toBe("信頼度 40%: 会費は月額1万円です。");
+      expect(finding.kind).toBe("claim");
+      expect(`${finding.title}${finding.categoryLabel}`).not.toMatch(
+        /食い違い|裏付けなし|裏付けが見つかりません|資料と一致|正しい|誤り/
+      );
+    }
+  });
+
+  it("80%以下の文にはすべて▶を付け、80%を超える文には付けない", () => {
+    const original = "一文目です。二文目です。三文目です。四文目です。";
+    const at = (text: string, confidence: number, verdict: ClaimResult["verdict"]) => {
+      const result = claim(text, verdict);
+      result.claim.id = `claim-${text}`;
+      result.confidence = confidence;
+      return result;
+    };
+
+    const doc = buildRevisedDocument({
+      analysis: analysis(original, original, [
+        at("一文目です。", 0.8, "SUPPORTED"),
+        at("二文目です。", 0.804, "SUPPORTED"),
+        at("三文目です。", 0.81, "CONTRADICTED"),
+        at("四文目です。", 0.05, "SUPPORTED"),
+      ]),
+      adoption: {},
+    });
+
+    const flagged = doc.findings.filter((f) => f.markKind !== null).map((f) => f.originalText);
+    // 0.804 is shown as 80%, so it is marked like 80%. The verdict plays no part.
+    expect(flagged).toEqual(["一文目です。", "二文目です。", "四文目です。"]);
+  });
+
+  it("JEVが数値を返さなかった文は「数値なし」とし、▶を付ける", () => {
     const result = claim("裏付けの見つからなかった文。", "INSUFFICIENT");
     result.confidence = undefined;
 
@@ -661,31 +706,29 @@ describe("数字を作らない", () => {
       analysis: analysis("裏付けの見つからなかった文。", "裏付けの見つからなかった文。", [result]),
       adoption: { ...ACCEPTED },
     });
-    const finding = doc.findings.find((item) => item.type === "fact");
+    const finding = doc.findings.find((item) => item.type === "fact")!;
 
-    expect(finding?.confidence).toBeNull();
-    expect(finding?.band).toBeUndefined();
-    expect(finding?.bandLabel).toBeUndefined();
+    expect(finding.confidence).toBeNull();
+    expect(finding.title).toContain("信頼度 数値なし");
+    expect(finding.markKind).toBe("fact");
   });
 });
 
 describe("弱い順に並べる", () => {
-  it("数値の無いものを先頭に、その後は辻褄の低い順に並べる", () => {
-    const weak = claim("辻褄13%の文。", "INSUFFICIENT");
-    weak.confidence = 0.87;
-    weak.consistency = { probabilityTrue: 0.13, confidence: 0.87 };
+  it("数値の無いものを先頭に、その後は信頼度の低い順に並べる", () => {
+    const weak = claim("信頼度13%の文。", "INSUFFICIENT");
+    weak.confidence = 0.13;
 
-    const strong = claim("辻褄95%の文。", "SUPPORTED");
-    strong.confidence = 1;
-    strong.consistency = { probabilityTrue: 0.95, confidence: 0.95 };
+    const strong = claim("信頼度95%の文。", "INSUFFICIENT");
+    strong.confidence = 0.95;
 
     const noNumber = claim("数値の無い文。", "INSUFFICIENT");
     noNumber.confidence = undefined;
 
     const doc = buildRevisedDocument({
       analysis: analysis(
-        "辻褄13%の文。辻褄95%の文。数値の無い文。",
-        "辻褄13%の文。辻褄95%の文。数値の無い文。",
+        "信頼度13%の文。信頼度95%の文。数値の無い文。",
+        "信頼度13%の文。信頼度95%の文。数値の無い文。",
         [strong, weak, noNumber]
       ),
       adoption: { ...ACCEPTED },
@@ -696,8 +739,8 @@ describe("弱い順に並べる", () => {
     );
 
     expect(order[0]).toContain("数値の無い文");
-    expect(order[1]).toContain("辻褄13%");
-    expect(order[2]).toContain("辻褄95%");
+    expect(order[1]).toContain("信頼度13%");
+    expect(order[2]).toContain("信頼度95%");
   });
 });
 
@@ -803,7 +846,7 @@ describe("指摘を黙って落とさない", () => {
       claim("会費は月額1万円です。", "INSUFFICIENT"),
       claim("入会金は無料です。", "MIXED"),
       claim("どこにも無い話題についての主張である。", "INSUFFICIENT"),
-      claim("入会金は無料です。", "SUPPORTED"),
+      above(claim("入会金は無料です。", "SUPPORTED")),
     ];
     claims.forEach((c, i) => (c.claim.id = `claim-${i}`));
 
@@ -854,7 +897,7 @@ describe("本文のどこにも結びつかない指摘", () => {
     const placed = claim("名古屋駅から徒歩8分である。", "INSUFFICIENT");
     placed.confidence = 0.1;
     const lost = claim("まったく別の話題についての記述である。", "INSUFFICIENT");
-    lost.confidence = 0.9;
+    lost.confidence = 0.7;
 
     const view = buildRevisedDocument({
       analysis: analysis(original, original, [placed, lost]),
@@ -867,9 +910,9 @@ describe("本文のどこにも結びつかない指摘", () => {
     expect(isUnplaced(order[1])).toBe(false);
   });
 
-  it("資料と一致して印を付けない指摘は、場所不明に数えない", () => {
+  it("信頼度が線を超えて印を付けない指摘は、場所不明に数えない", () => {
     const original = "名古屋駅から徒歩8分。";
-    const lost = claim("まったく別の話題についての記述である。", "SUPPORTED");
+    const lost = above(claim("まったく別の話題についての記述である。", "SUPPORTED"));
 
     const view = buildRevisedDocument({
       analysis: analysis(original, original, [lost]),

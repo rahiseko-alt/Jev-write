@@ -37,10 +37,6 @@ const ARROW_STRIP_PX = { wide: 76, narrow: 40 };
 
 const TONE: Record<MarkKind, { idle: string; open: string }> = {
   fact: {
-    idle: "border-red-300 bg-white text-red-700 hover:bg-red-50",
-    open: "border-red-600 bg-red-600 text-white",
-  },
-  unverified: {
     idle: "border-amber-300 bg-white text-amber-700 hover:bg-amber-50",
     open: "border-amber-500 bg-amber-500 text-white",
   },
@@ -50,9 +46,11 @@ const TONE: Record<MarkKind, { idle: string; open: string }> = {
   },
 };
 
-function percentOf(finding: Finding): string {
+/** What the arrow says: the 信頼度 alone (ADR-0011), shortened to the number where space is short. */
+function percentOf(finding: Finding, narrow: boolean): string {
   const attention = attentionOf(finding);
-  return attention === null ? "—" : `${Math.round(attention * 100)}%`;
+  const number = attention === null ? "—" : `${Math.round(attention * 100)}%`;
+  return narrow || finding.type !== "fact" ? number : `信頼度${number}`;
 }
 
 function findMark(body: HTMLElement, id: string): HTMLElement | null {
@@ -167,7 +165,7 @@ export function MarginNotes({
 
   const renderButton = (finding: Finding, ref?: (el: HTMLButtonElement | null) => void) => {
     const open = openIds.includes(finding.id);
-    const tone = TONE[finding.markKind ?? "unverified"];
+    const tone = TONE[finding.markKind ?? "fact"];
     return (
       <button
         key={finding.id}
@@ -182,7 +180,7 @@ export function MarginNotes({
         } ${open ? tone.open : tone.idle}`}
       >
         <span aria-hidden="true">▶</span>
-        <span className={narrow ? "text-[8px]" : ""}>{percentOf(finding)}</span>
+        <span className={narrow ? "text-[8px]" : ""}>{percentOf(finding, narrow)}</span>
       </button>
     );
   };

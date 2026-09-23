@@ -25,6 +25,7 @@ import {
   type Segment,
 } from "@/lib/revised-document";
 import { MarginNotes } from "@/components/margin-notes";
+import { FLAG_THRESHOLD } from "@/lib/jev/bands";
 import { FindingCard } from "@/components/finding-card";
 import {
   noticeForError,
@@ -39,13 +40,15 @@ const MARK_STYLES: Record<
   MarkKind,
   { className: string; rejectedClassName: string; glyph: string; label: string }
 > = {
+  // A sentence at or below the line (ADR-0011). One look for all of them:
+  // the number on the arrow says how low, not a label.
   fact: {
     className:
-      "bg-red-50 text-red-900 underline decoration-red-400 decoration-2 underline-offset-4",
+      "bg-amber-50 text-amber-900 underline decoration-amber-500 decoration-dotted decoration-2 underline-offset-4",
     rejectedClassName:
-      "bg-slate-50 text-red-800/70 underline decoration-red-300 decoration-dashed underline-offset-4",
-    glyph: "✎",
-    label: "資料と食い違い",
+      "bg-slate-50 text-amber-800/70 underline decoration-amber-400 decoration-dashed underline-offset-4",
+    glyph: "▶",
+    label: `信頼度${Math.round(FLAG_THRESHOLD * 100)}%以下`,
   },
   style: {
     className:
@@ -54,14 +57,6 @@ const MARK_STYLES: Record<
       "bg-slate-50 text-purple-800/70 underline decoration-purple-300 decoration-dashed underline-offset-4",
     glyph: "✦",
     label: "AIっぽい表現",
-  },
-  unverified: {
-    className:
-      "bg-amber-50 text-amber-900 underline decoration-amber-500 decoration-dotted decoration-2 underline-offset-4",
-    rejectedClassName:
-      "bg-slate-50 text-amber-800/70 underline decoration-amber-400 decoration-dashed underline-offset-4",
-    glyph: "?",
-    label: "裏付けが見つかりません",
   },
 };
 

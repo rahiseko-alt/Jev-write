@@ -1,17 +1,5 @@
 import { ExternalLink, HelpCircle, Search } from "lucide-react";
-import { Finding, FindingKind, isUnplaced } from "@/lib/revised-document";
-
-const KIND_LABEL: Record<FindingKind, { text: string; className: string }> = {
-  corrected: { text: "資料と食い違い", className: "bg-red-100 text-red-700" },
-  unverified: { text: "裏付けなし", className: "bg-amber-100 text-amber-700" },
-  "ai-tell": { text: "AIっぽい表現", className: "bg-purple-100 text-purple-700" },
-  confirmed: { text: "資料と一致", className: "bg-emerald-100 text-emerald-700" },
-};
-
-const RELATION_LABEL = {
-  contradicts: "食い違い",
-  supports: "裏付け",
-} as const;
+import { Finding, confidenceLabel, isUnplaced } from "@/lib/revised-document";
 
 function searchUrl(query: string): string {
   return `https://www.google.com/search?q=${encodeURIComponent(query)}`;
@@ -19,12 +7,14 @@ function searchUrl(query: string): string {
 
 /**
  * One Finding, sized for a popover. Only what the reader acts on next: the
- * sentence is already marked and the number already sits on the arrow, so
- * neither is repeated here. What is left is where to go to check it.
+ * sentence is already marked, so it is not repeated here. A sentence is
+ * described by its 信頼度 and nothing else (ADR-0011): no label saying it
+ * agrees or disagrees with the sources, and no word for right or wrong.
+ * What is left is where to go to check it.
  */
 export function FindingCard({ finding }: { finding: Finding }): JSX.Element {
   const unplaced = isUnplaced(finding);
-  const kind = KIND_LABEL[finding.kind];
+  const isFact = finding.type === "fact";
 
   const sources =
     finding.evidence && finding.evidence.length > 0
@@ -35,11 +25,22 @@ export function FindingCard({ finding }: { finding: Finding }): JSX.Element {
 
   return (
     <div className="space-y-2.5 text-xs text-slate-700">
-      <span className={`inline-block font-bold px-2 py-0.5 rounded ${kind.className}`}>
-        {kind.text}
-      </span>
+      {isFact ? (
+        <span className="inline-block font-bold px-2 py-0.5 rounded bg-slate-100 text-slate-800">
+          {confidenceLabel(finding.confidence)}
+        </span>
+      ) : (
+        <span className="inline-block font-bold px-2 py-0.5 rounded bg-purple-100 text-purple-700">
+          AIっぽい表現
+        </span>
+      )}
 
-      {finding.lookupFailed && (
+      {/* No number came back: what happened instead is all there is to say. */}
+      {isFact && finding.confidence === null && finding.explanation && (
+        <p className="text-[11px] font-bold text-red-600 leading-snug">{finding.explanation}</p>
+      )}
+
+      {isFact && finding.confidence !== null && finding.lookupFailed && (
         <p className="text-[11px] font-bold text-red-600 leading-snug">
           ウェブ検索ができませんでした。数値は記事の中だけを見たものです。
         </p>
@@ -62,27 +63,19 @@ export function FindingCard({ finding }: { finding: Finding }): JSX.Element {
         <div className="space-y-1">
           <span className="text-slate-400 font-medium">根拠のページ</span>
           <ul className="space-y-1">
-            {sources.map((item, i) => {
-              const relation = "relation" in item ? item.relation : undefined;
-              const confidence = "confidence" in item ? item.confidence : undefined;
-              return (
-                <li key={`${item.url}-${i}`} className="leading-snug">
-                  <span className="font-medium text-slate-500">
-                    {relation ? RELATION_LABEL[relation] : "参考"}
-                    {typeof confidence === "number" && ` ${Math.round(confidence * 100)}%`}
-                  </span>{" "}
-                  <a
-                    href={item.url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-blue-600 hover:underline break-all"
-                  >
-                    {item.title || item.url}
-                    <ExternalLink className="inline w-3 h-3 ml-0.5 align-[-2px]" />
-                  </a>
-                </li>
-              );
-            })}
+            {sources.map((item, i) => (
+              <li key={`${item.url}-${i}`} className="leading-snug">
+                <a
+                  href={item.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-blue-600 hover:underline break-all"
+                >
+                  {item.title || item.url}
+                  <ExternalLink className="inline w-3 h-3 ml-0.5 align-[-2px]" />
+                </a>
+              </li>
+            ))}
           </ul>
         </div>
       )}
