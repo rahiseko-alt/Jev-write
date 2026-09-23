@@ -1,8 +1,8 @@
-import { Claim } from "@/types";
+import { Claim, ExtractionTrace } from "@/types";
 import { LLMProvider } from "./types";
 import { recordFailure, recordRetry } from "../diagnostics";
 import { sendWithRetry } from "../retry";
-import { CLAIM_EXTRACTION_SYSTEM_PROMPT, readExtractedClaims } from "./claim-extraction";
+import { extractClaimsFrom } from "./claim-extraction";
 import {
   CLAIM_QUERY_SYSTEM_PROMPT,
   ClaimQueryPlan,
@@ -31,6 +31,8 @@ export class AnthropicLLMProvider implements LLMProvider {
   lastError?: string;
   /** How many times a busy Anthropic (429/529) was asked the same thing again. */
   retryCount = 0;
+  /** What the last extraction made of every sentence (ADR-0020). */
+  lastExtraction?: ExtractionTrace;
 
   constructor(options: AnthropicLLMOptions = {}) {
     this.apiKey =
@@ -132,9 +134,13 @@ export class AnthropicLLMProvider implements LLMProvider {
   }
 
   async extractClaims(text: string): Promise<Claim[]> {
+    this.lastExtraction = undefined;
     try {
-      const rawContent = await this.callMessages(CLAIM_EXTRACTION_SYSTEM_PROMPT, text);
-      return readExtractedClaims(this.parseJson(rawContent, "主張の抽出"));
+      const { claims, trace } = await extractClaimsFrom(text, async (system, user) =>
+        this.parseJson(await this.callMessages(system, user), "主張の抽出")
+      );
+      this.lastExtraction = trace;
+      return claims;
     } catch (err) {
       recordFailure(this, err);
       throw err;

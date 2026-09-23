@@ -1,8 +1,8 @@
-import { Claim } from "@/types";
+import { Claim, ExtractionTrace } from "@/types";
 import { LLMProvider } from "./types";
 import { recordFailure, recordRetry } from "../diagnostics";
 import { sendWithRetry } from "../retry";
-import { CLAIM_EXTRACTION_SYSTEM_PROMPT, readExtractedClaims } from "./claim-extraction";
+import { extractClaimsFrom } from "./claim-extraction";
 import {
   CLAIM_QUERY_SYSTEM_PROMPT,
   ClaimQueryPlan,
@@ -43,6 +43,8 @@ export class OpenAILLMProvider implements LLMProvider {
   lastError?: string;
   /** How many times a rate-limited OpenAI (429) was asked the same thing again. */
   retryCount = 0;
+  /** What the last extraction made of every sentence (ADR-0020). */
+  lastExtraction?: ExtractionTrace;
 
   constructor(options: OpenAILLMOptions = {}) {
     this.apiKey = options.apiKey || process.env.OPENAI_API_KEY || "";
@@ -104,15 +106,22 @@ export class OpenAILLMProvider implements LLMProvider {
   }
 
   async extractClaims(text: string): Promise<Claim[]> {
+    this.lastExtraction = undefined;
     try {
-      const rawContent = await this.callChatCompletion(
-        [
-          { role: "system", content: CLAIM_EXTRACTION_SYSTEM_PROMPT },
-          { role: "user", content: text },
-        ],
-        true
+      const { claims, trace } = await extractClaimsFrom(text, async (system, user) =>
+        parseJson(
+          await this.callChatCompletion(
+            [
+              { role: "system", content: system },
+              { role: "user", content: user },
+            ],
+            true
+          ),
+          "主張の抽出"
+        )
       );
-      return readExtractedClaims(parseJson(rawContent, "主張の抽出"));
+      this.lastExtraction = trace;
+      return claims;
     } catch (err) {
       recordFailure(this, err);
       throw err;
