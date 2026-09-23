@@ -46,6 +46,13 @@ export function FindingCard({ finding }: { finding: Finding }): JSX.Element {
         </p>
       )}
 
+      {/* Some pages were left unjudged for time (ADR-0021): the number stands on the rest. */}
+      {isFact && finding.confidence !== null && finding.evidenceTrace?.unjudged && (
+        <p className="text-[11px] font-bold text-amber-700 leading-snug">
+          時間内に読みきれなかった資料があります。数値は、読めた資料だけで出したものです。
+        </p>
+      )}
+
       {/* With no mark in the document, the claim's own wording is all there is to go on. */}
       {unplaced && (
         <div className="space-y-1">

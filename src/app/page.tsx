@@ -28,6 +28,7 @@ import { MarginNotes } from "@/components/margin-notes";
 import { FLAG_THRESHOLD } from "@/lib/jev/bands";
 import { FindingCard } from "@/components/finding-card";
 import {
+  noticeForCutShort,
   noticeForError,
   noticeForResponse,
   type FailureNotice,
@@ -155,6 +156,10 @@ export default function HomePage() {
     () => revisedDocument?.findings ?? [],
     [revisedDocument]
   );
+
+  // A run the time limit cut short says so (ADR-0021), and is never read as
+  // one that found nothing.
+  const cutShortNotice = analysisResult ? noticeForCutShort(analysisResult) : null;
 
   // Copy reports on the button itself rather than behind a dialog, and
   // reports failure there too: the error banner lives on the input screen.
@@ -488,7 +493,14 @@ export default function HomePage() {
                       </div>
                     )}
 
-                    {revisedDocument && !revisedDocument.hasFindings && (
+                    {cutShortNotice && (
+                      <div className="flex items-start gap-2 px-4 py-3 rounded-xl border border-amber-200 bg-amber-50 text-xs text-amber-900">
+                        <AlertTriangle className="w-4 h-4 shrink-0 text-amber-600 mt-0.5" />
+                        <FailureNoticeBody notice={cutShortNotice} />
+                      </div>
+                    )}
+
+                    {revisedDocument && !revisedDocument.hasFindings && !cutShortNotice && (
                       <div className="flex items-center gap-2 px-4 py-3 rounded-xl border border-emerald-200 bg-emerald-50 text-xs text-emerald-800">
                         <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-600" />
                         <span>気になる箇所は見つかりませんでした。</span>

@@ -132,3 +132,36 @@ export function noticeForError(err: unknown): FailureNotice {
     details: raw || undefined,
   };
 }
+
+/** 段の名前（ADR-0021 の `result.timings` と `cutShort` の名前）を、書き手の言葉で。 */
+const STAGE_NAMES: Record<string, string> = {
+  extraction: "文の取り出し",
+  queryGeneration: "検索の問いの作成",
+  search: "ウェブ検索",
+  pageFetch: "ページの取得",
+  factCheck: "ファクトチェック照会",
+  relevanceJudging: "資料の関連の判定（JEV）",
+  supportJudging: "信頼度の判定（JEV）",
+};
+
+/**
+ * 時間の上限で途中までになった結果の知らせ（ADR-0021）。途中までにならなかった結果には何も出さない。
+ * 文の取り出しが終わらなかったときは、どの文も確かめていないことを主文で言う（何も印が無いことを
+ * 「気になる箇所が無い」と読ませない）。それ以外は、数値の無い文が確かめきれていない文であることを言う。
+ */
+export function noticeForCutShort(result: {
+  cutShort?: { stages: Array<{ stage: string; notStarted: number; stopped: number; cutoffMs: number }> };
+}): FailureNotice | null {
+  const stages = result.cutShort?.stages ?? [];
+  if (stages.length === 0) return null;
+  const headline = stages.some((stage) => stage.stage === "extraction")
+    ? "時間内に文の取り出しが終わらなかったため、どの文もまだ確かめていません。記事が長いときは、いくつかに分けてから、もう一度お試しください。"
+    : "時間の上限に近づいたため、途中までの結果をお見せしています。時間内に確かめきれなかった文は「数値なし」になっています。";
+  const details = stages
+    .map(
+      (stage) =>
+        `${STAGE_NAMES[stage.stage] ?? stage.stage}：始めなかったもの ${stage.notStarted}件・途中で止めたもの ${stage.stopped}件（開始から${Math.round(stage.cutoffMs / 1000)}秒で締め切り）`
+    )
+    .join("\n");
+  return { headline, details };
+}

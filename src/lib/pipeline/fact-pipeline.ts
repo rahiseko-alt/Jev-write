@@ -1,4 +1,5 @@
 import { PooledSource, SourcePool, createSourcePool } from "./source-pool";
+import { TIME_UP, TimeBudget, createTimeBudget } from "./time-budget";
 import { RELEVANCE_THRESHOLD } from "@/lib/jev/bands";
 import {
   OriginPage,
@@ -42,6 +43,11 @@ export interface FactPipelineOptions {
   jev?: JEVClient;
   search?: SearchProvider;
   fetch?: FetchProvider;
+  /**
+   * The run's time (ADR-0021): every call to an outside service keeps to its
+   * stage's cut-off. Without one, a budget starting now.
+   */
+  budget?: TimeBudget;
   onProgress?: (progress: {
     stage: "EXTRACTING" | "FACTCHECK_DB" | "WEB_SEARCH" | "SYNTHESIZING";
     percent: number;
@@ -73,6 +79,21 @@ export async function runFactPipeline(
   text: string,
   options?: FactPipelineOptions
 ): Promise<FactPipelineOutput> {
+  if (options?.budget) return checkText(text, options, options.budget);
+  // A run's time made here is this run's to end (ADR-0021).
+  const budget = createTimeBudget();
+  try {
+    return await checkText(text, options, budget);
+  } finally {
+    budget.dispose();
+  }
+}
+
+async function checkText(
+  text: string,
+  options: FactPipelineOptions | undefined,
+  budget: TimeBudget
+): Promise<FactPipelineOutput> {
   const llm = options?.llm ?? getLLMProvider();
   const factCheck = options?.factCheck ?? getGoogleFactCheckClient();
   const jev = options?.jev ?? getJEVClient();
@@ -89,10 +110,21 @@ export async function runFactPipeline(
 
   // The article's own queries need only the text, so they are written while
   // the claims are being extracted rather than after.
-  const documentQueriesPending = writeDocumentQueries(llm, text);
+  const documentQueriesPending = writeDocumentQueries(llm, text, budget);
 
   // No stand-in: a generation that failed is the run failing, said out loud.
-  const extractedClaims: Claim[] = await llm.extractClaims(text);
+  // One that the clock stopped leaves no claims to check: the run returns
+  // with none, and the budget says the extraction was cut short (ADR-0021).
+  const extraction = await budget.within("extraction", (signal) =>
+    llm.extractClaims(text, { signal })
+  );
+  if (extraction.status !== "done") {
+    console.warn(
+      `${TIME_UP}（ADR-0021）: 主張の取り出しが締め切り（開始から ${budget.cutoffAt("extraction") - budget.startedAt} ms）までに終わらなかったため、どの文も確かめていない。`
+    );
+    return { claims: [], evidences: [] };
+  }
+  const extractedClaims: Claim[] = extraction.value;
 
   onProgress?.({
     stage: "FACTCHECK_DB",
@@ -107,6 +139,7 @@ export async function runFactPipeline(
     search,
     fetchProvider,
     resultsPerQuery: RESULTS_PER_QUERY,
+    budget,
   });
 
   // The article's searches start as soon as their queries exist, while the
@@ -119,7 +152,8 @@ export async function runFactPipeline(
   // (ADR-0019). One generation for all claims; all their searches at once.
   const { queries: claimQueries, violations: claimViolations } = await writeClaimQueries(
     llm,
-    extractedClaims
+    extractedClaims,
+    budget
   );
   await Promise.all([
     documentSeeded,
@@ -139,6 +173,7 @@ export async function runFactPipeline(
         queries: [...(claimQueries.get(claim.id) ?? []), ...documentQueries],
         factCheck,
         jev,
+        budget,
       });
     } catch (err) {
       // ADR-0003: one claim that could not be checked leaves that claim
@@ -214,12 +249,14 @@ async function verifyClaim(params: {
   queries: string[];
   factCheck: GoogleFactCheckClient;
   jev: JEVClient;
+  /** The run's time: each call keeps to its stage's cut-off (ADR-0021). */
+  budget: TimeBudget;
 }): Promise<{
   claimResult: ClaimResult;
   evidences: Evidence[];
   isFactCheckHit: boolean;
 }> {
-  const { claim, pool, queries, factCheck, jev } = params;
+  const { claim, pool, queries, factCheck, jev, budget } = params;
   const claimEvidences: Evidence[] = [];
   // A lookup that could not be made at all, as opposed to one that ran and
   // found nothing. The reader is told which of the two happened.
@@ -251,13 +288,18 @@ async function verifyClaim(params: {
   const query = buildFactCheckQuery(claim);
   let factHits: GoogleFactCheckClaim[] = [];
 
+  const lookUp: ((signal: AbortSignal) => Promise<GoogleFactCheckClaim[]>) | undefined =
+    typeof (factCheck as any).search === "function"
+      ? (signal) => (factCheck as any).search(query, undefined, { signal })
+      : typeof factCheck.searchClaims === "function"
+      ? async (signal) => (await factCheck.searchClaims(query, undefined, { signal })).claims || []
+      : undefined;
+
   try {
-    if (typeof (factCheck as any).search === "function") {
-      factHits = await (factCheck as any).search(query);
-    } else if (typeof factCheck.searchClaims === "function") {
-      const res = await factCheck.searchClaims(query);
-      factHits = res.claims || [];
-    }
+    // Not looked up by the fact-check cut-off (時間切れ, counted by the
+    // budget): the claim goes on without it, as with no hits.
+    const lookup = lookUp ? await budget.within("factCheck", lookUp) : undefined;
+    if (lookup?.status === "done") factHits = lookup.value;
   } catch (err) {
     // ADR-0003: the lookup failed, so the claim stays unverified and the run
     // carries on to the web search. Nothing is filled in for it.
@@ -269,12 +311,23 @@ async function verifyClaim(params: {
     for (const hit of factHits) {
       const hitClaimText = hit.text || (hit as any).claim || "";
 
-      // JEV Atomic Judgment: claim matching
-      const matchResult = await jev.evaluateAtomicJudgment({
-        state: { claimA: claim.normalizedText || claim.originalText, claimB: hitClaimText },
-        instructions: "主張Aと主張Bは同じ対象・事象についての事実主張ですか？",
-        criteria: ["same", "close_but_different", "different"],
-      });
+      // JEV Atomic Judgment: claim matching. The hits not matched by the
+      // cut-off are left unmatched (時間切れ, counted by the budget).
+      const matched = await budget.within(
+        "factCheck",
+        (signal) =>
+          jev.evaluateAtomicJudgment(
+            {
+              state: { claimA: claim.normalizedText || claim.originalText, claimB: hitClaimText },
+              instructions: "主張Aと主張Bは同じ対象・事象についての事実主張ですか？",
+              criteria: ["same", "close_but_different", "different"],
+            },
+            { signal }
+          ),
+        { jev: true }
+      );
+      if (matched.status !== "done") break;
+      const matchResult = matched.value;
 
       const isMatch =
         matchResult.choice === "same" ||
@@ -300,13 +353,26 @@ async function verifyClaim(params: {
             verdict = "SUPPORTED";
             reason = `FactCheck評価: ${ratingText} (${review.publisher?.name || "検証機関"})`;
           } else {
-            const normResult = await jev.evaluateAtomicJudgment({
-              state: { rating: ratingText },
-              instructions: "この検証判定は主張を肯定していますか、否定していますか？",
-              criteria: ["supports", "contradicts", "mixed", "insufficient"],
-            });
-            verdict = mapChoiceToClaimVerdict(normResult.choice);
-            reason = normResult.explanation || `FactCheck評価: ${ratingText}`;
+            const normalized = await budget.within(
+              "factCheck",
+              (signal) =>
+                jev.evaluateAtomicJudgment(
+                  {
+                    state: { rating: ratingText },
+                    instructions: "この検証判定は主張を肯定していますか、否定していますか？",
+                    criteria: ["supports", "contradicts", "mixed", "insufficient"],
+                  },
+                  { signal }
+                ),
+              { jev: true }
+            );
+            if (normalized.status === "done") {
+              verdict = mapChoiceToClaimVerdict(normalized.value.choice);
+              reason = normalized.value.explanation || `FactCheck評価: ${ratingText}`;
+            } else {
+              // Not read by the cut-off (時間切れ): the rating is kept as written.
+              reason = `FactCheck評価: ${ratingText}`;
+            }
           }
 
           const evidence: Evidence = {
@@ -388,23 +454,46 @@ async function verifyClaim(params: {
 
   //  6. JEV says, section by section, which ones speak to the sentence.
   //     Every section is asked; none is dropped on this side (ADR-0007).
+  //     Each request keeps to the relevance cut-off (ADR-0021): a request
+  //     not started, or stopped, by then leaves its sections unjudged, and
+  //     they are recorded with the reason 時間切れ.
   const relevanceRequests = planRelevanceRequests({
     original: claim.originalText,
     sections,
   });
   const relevanceReplies = await Promise.all(
-    relevanceRequests.map((request) => ask(request.state, request.questions))
+    relevanceRequests.map((request) =>
+      budget.within(
+        "relevanceJudging",
+        (signal) => ask(request.state, request.questions, { signal }),
+        { jev: true }
+      )
+    )
   );
 
   const relevance = new Map<number, number>();
-  relevanceReplies.forEach((answers, r) => {
+  const unjudged: number[] = [];
+  relevanceReplies.forEach((reply, r) => {
+    if (reply.status !== "done") {
+      unjudged.push(...relevanceRequests[r].sections);
+      return;
+    }
     relevanceRequests[r].sections.forEach((section, i) => {
-      const answer = answers[`relevant${i}`];
+      const answer = reply.value[`relevant${i}`];
       if (answer && answer.type === "noul" && typeof answer.noul === "number") {
         relevance.set(section, answer.noul);
       }
     });
   });
+  // The pages holding the unjudged sections, in the order they were due to be judged.
+  const unjudgedPages = [...new Set(unjudged.map((index) => sections[index].page))];
+  if (unjudged.length > 0) {
+    const urls = unjudgedPages.map((page) => ordered[page].page.url);
+    trace.unjudged = { reason: TIME_UP, sections: unjudged.length, urls };
+    console.warn(
+      `Claim ${claim.id}: ${TIME_UP} — ${unjudged.length} of ${sections.length} sections, on ${urls.length} pages, were not judged for relevance by the cut-off (ADR-0021): ${urls.join(" ")}`
+    );
+  }
 
   //  7. Only the sections JEV judged related go on, in the fixed order of
   //     step 4. Unrelated material costs the next answer accuracy
@@ -420,27 +509,53 @@ async function verifyClaim(params: {
   //     sections as the sources, grouped by origin and each saying whether
   //     it is a primary source. Whether that matters is JEV's to weigh. None
   //     related: the same question with no sources.
-  const supportRequests = planSupportRequests({
-    original: claim.originalText,
-    sections: related.map(({ section }) => section),
-  });
-  const supportReplies = await Promise.all(
-    supportRequests.map((request) => ask(request.state, request.questions))
-  );
+  //
+  //     It keeps to the support cut-off (ADR-0021). When the time left no
+  //     section judged at all, it is not asked: sources emptied for want of
+  //     time would put the question to the clock, not to the pages.
+  /** Why the time left this claim without a number, in the reader's words. */
+  let timedOut: string | undefined;
+  if (sections.length > 0 && unjudged.length === sections.length) {
+    timedOut = `時間内に資料を判定できなかったため、確認できませんでした（${TIME_UP}）。`;
+  } else {
+    const supportRequests = planSupportRequests({
+      original: claim.originalText,
+      sections: related.map(({ section }) => section),
+    });
+    const supportReplies = await Promise.all(
+      supportRequests.map((request) =>
+        budget.within(
+          "supportJudging",
+          (signal) => ask(request.state, request.questions, { signal }),
+          { jev: true }
+        )
+      )
+    );
 
-  // The 信頼度 is a number JEV returned, as it returned it (ADR-0008,
-  // ADR-0011). When the sections had to be spread over several requests,
-  // each answer says whether the sentence is backed by the sections in that
-  // request; backed by some of them is backed by them, so the highest of
-  // those answers is the one shown. Nothing is averaged or adjusted.
-  const supportAnswers: number[] = [];
-  for (const answers of supportReplies) {
-    const answer = answers.support;
-    if (answer && answer.type === "noul" && typeof answer.noul === "number") {
-      supportAnswers.push(answer.noul);
+    // The 信頼度 is a number JEV returned, as it returned it (ADR-0008,
+    // ADR-0011). When the sections had to be spread over several requests,
+    // each answer says whether the sentence is backed by the sections in that
+    // request; backed by some of them is backed by them, so the highest of
+    // those answers is the one shown. Nothing is averaged or adjusted. With
+    // any of those requests unanswered for time, there is no number: the
+    // highest of the rest could be lower than the answer that did not come.
+    const supportAnswers: number[] = [];
+    for (const reply of supportReplies) {
+      if (reply.status !== "done") {
+        timedOut = `時間内に信頼度の判定が終わらなかったため、確認できませんでした（${TIME_UP}）。`;
+        continue;
+      }
+      const answer = reply.value.support;
+      if (answer && answer.type === "noul" && typeof answer.noul === "number") {
+        supportAnswers.push(answer.noul);
+      }
     }
+    confidence =
+      !timedOut && supportAnswers.length > 0 ? Math.max(...supportAnswers) : undefined;
   }
-  confidence = supportAnswers.length > 0 ? Math.max(...supportAnswers) : undefined;
+  if (timedOut) {
+    console.warn(`Claim ${claim.id}: ${TIME_UP} — no number is shown (ADR-0021): ${timedOut}`);
+  }
 
   // The grounds in the bubble: the pages that hold a section judged related,
   // each with its most related section.
@@ -455,6 +570,7 @@ async function verifyClaim(params: {
 
   claimEvidences.splice(0, claimEvidences.length);
   const usedOrigins = new Set<string>();
+  const notHeardOut = new Set(unjudgedPages);
   ordered.forEach(({ page: collectedPage, factCheck: review, web: page }, at) => {
     const read = best.get(at);
     if (read) usedOrigins.add(collectedPage.origin ?? collectedPage.url);
@@ -464,7 +580,9 @@ async function verifyClaim(params: {
     }
     if (!page) return;
     if (!read) {
-      trace.saidNothing++;
+      // A page with sections left unjudged for time did not say nothing:
+      // it is counted under `unjudged` instead (ADR-0021).
+      if (!notHeardOut.has(at)) trace.saidNothing++;
       return;
     }
     trace.used++;
@@ -490,6 +608,9 @@ async function verifyClaim(params: {
       ? "外部の確認サービスに接続できなかったため、渡せた資料だけで問いました。"
       : undefined;
   }
+  // No number for want of time: the claim stays, said to be unconfirmed and
+  // why, as a claim that could not be checked is (ADR-0021, ADR-0008).
+  if (timedOut) reason = timedOut;
 
   const claimResult: ClaimResult = {
     claim,
@@ -510,12 +631,24 @@ async function verifyClaim(params: {
 
 /**
  * The article's queries, held to the rules (ADR-0019), or none when they
- * could not be written.
+ * could not be written, by the query-generation cut-off among other things.
  */
-async function writeDocumentQueries(llm: LLMProvider, text: string): Promise<CheckedQueries> {
+async function writeDocumentQueries(
+  llm: LLMProvider,
+  text: string,
+  budget: TimeBudget
+): Promise<CheckedQueries> {
   if (typeof llm.generateDocumentQueries !== "function") return { queries: [], violations: [] };
+  const generate = llm.generateDocumentQueries.bind(llm);
   try {
-    const checked = checkDocumentQueries(await llm.generateDocumentQueries(text), QUERIES_PER_DOCUMENT);
+    const written = await budget.within("queryGeneration", (signal) => generate(text, { signal }));
+    if (written.status !== "done") {
+      console.warn(
+        `${TIME_UP}（ADR-0021）: 記事全体の検索語が締め切りまでに書けなかった。主張ごとの問いで集めた資料だけで確かめる。`
+      );
+      return { queries: [], violations: [] };
+    }
+    const checked = checkDocumentQueries(written.value, QUERIES_PER_DOCUMENT);
     reportViolations("The article", checked.violations);
     return checked;
   } catch (err) {
@@ -528,19 +661,29 @@ async function writeDocumentQueries(llm: LLMProvider, text: string): Promise<Che
  * Each claim's questions, held to the rules (ADR-0019), and the record of
  * those that broke them, by claim id. When they could not be written the
  * claims are still checked, against the pages the article's queries found;
- * the claim's sentence is never searched in their place.
+ * the claim's sentence is never searched in their place. Not written by the
+ * query-generation cut-off is the same (ADR-0021).
  */
 async function writeClaimQueries(
   llm: LLMProvider,
-  claims: Claim[]
+  claims: Claim[],
+  budget: TimeBudget
 ): Promise<{ queries: Map<string, string[]>; violations: Map<string, CheckedQueries["violations"]> }> {
   const queries = new Map<string, string[]>();
   const violations = new Map<string, CheckedQueries["violations"]>();
   if (claims.length === 0 || typeof llm.generateClaimQueries !== "function") {
     return { queries, violations };
   }
+  const generate = llm.generateClaimQueries.bind(llm);
   try {
-    const written = await llm.generateClaimQueries(claims);
+    const outcome = await budget.within("queryGeneration", (signal) => generate(claims, { signal }));
+    if (outcome.status !== "done") {
+      console.warn(
+        `${TIME_UP}（ADR-0021）: 主張ごとの検索の問いが締め切りまでに書けなかった。記事全体の検索語で集めた資料だけで確かめる。`
+      );
+      return { queries, violations };
+    }
+    const written = outcome.value;
     for (const claim of claims) {
       const checked = checkClaimQueries(claim, written.get(claim.id) ?? []);
       queries.set(claim.id, checked.queries);

@@ -8,6 +8,7 @@ import {
   JEVQuestion,
 } from "./types";
 import { recordFailure } from "../diagnostics";
+import { CallLimit, attemptSignal, stoppedByCaller } from "../call-limit";
 
 
 export interface JEVClientOptions {
@@ -54,11 +55,16 @@ export class HTTPJEVClient implements JEVClient {
   }
 
   /**
-   * Send a systemone request to TypeSafe AI Jev
+   * Send a systemone request to TypeSafe AI Jev. It ends after the client's
+   * own time for one request, or when the caller's stage runs out of time
+   * (ADR-0021), whichever comes first.
    */
-  private async callSystemOne(state: any, questions: Record<string, any>): Promise<any> {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), this.timeoutMs);
+  private async callSystemOne(
+    state: any,
+    questions: Record<string, any>,
+    limit: CallLimit = {}
+  ): Promise<any> {
+    const attempt = attemptSignal(this.timeoutMs, limit.signal);
 
     try {
       const headers: Record<string, string> = {
@@ -89,7 +95,7 @@ export class HTTPJEVClient implements JEVClient {
           state: statePayload,
           questions,
         }),
-        signal: controller.signal,
+        signal: attempt.signal,
       });
 
       if (!response.ok) {
@@ -101,12 +107,14 @@ export class HTTPJEVClient implements JEVClient {
 
       return await response.json();
     } catch (err) {
+      // The caller's time ran out: said as such, not as JEV timing out.
+      if (stoppedByCaller(limit)) throw err;
       if (err instanceof Error && err.name === "AbortError") {
         throw new Error(`TypeSafe AI Jev request timed out after ${this.timeoutMs}ms`);
       }
       throw err;
     } finally {
-      clearTimeout(timer);
+      attempt.release();
     }
   }
 
@@ -118,10 +126,11 @@ export class HTTPJEVClient implements JEVClient {
    */
   async ask(
     state: unknown,
-    questions: Record<string, JEVQuestion>
+    questions: Record<string, JEVQuestion>,
+    limit?: CallLimit
   ): Promise<Record<string, JEVAnswer>> {
     try {
-      const data = await this.callSystemOne(state, questions);
+      const data = await this.callSystemOne(state, questions, limit);
       const answers = data?.answers;
 
       if (!answers) {
@@ -130,7 +139,8 @@ export class HTTPJEVClient implements JEVClient {
 
       return answers as Record<string, JEVAnswer>;
     } catch (err) {
-      recordFailure(this, err);
+      // Stopped at its stage's cut-off, JEV did not fail (ADR-0021).
+      if (!stoppedByCaller(limit)) recordFailure(this, err);
       throw err;
     }
   }
@@ -138,7 +148,10 @@ export class HTTPJEVClient implements JEVClient {
   /**
    * Evaluates a single atomic judgment (Choice or Noul) on state
    */
-  async evaluateAtomicJudgment(req: JEVAtomicJudgmentRequest): Promise<JEVAtomicJudgmentResult> {
+  async evaluateAtomicJudgment(
+    req: JEVAtomicJudgmentRequest,
+    limit?: CallLimit
+  ): Promise<JEVAtomicJudgmentResult> {
     const isNoul = req.mode === "noul";
     const questionsPayload: Record<string, unknown> = {
       q1: isNoul
@@ -155,7 +168,7 @@ export class HTTPJEVClient implements JEVClient {
     };
 
     try {
-      const data = await this.callSystemOne(req.state, questionsPayload);
+      const data = await this.callSystemOne(req.state, questionsPayload, limit);
       const answer = data?.answers?.q1;
 
       if (!answer) {
@@ -181,7 +194,8 @@ export class HTTPJEVClient implements JEVClient {
         confidence: typeof answer.confidence === "number" ? answer.confidence : 0,
       };
     } catch (err) {
-      recordFailure(this, err);
+      // Stopped at its stage's cut-off, JEV did not fail (ADR-0021).
+      if (!stoppedByCaller(limit)) recordFailure(this, err);
       throw err;
     }
   }

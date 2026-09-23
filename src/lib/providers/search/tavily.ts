@@ -1,5 +1,6 @@
 import { SearchOptions, SearchProvider, SearchResponse, SearchResultItem } from "./types";
 import { recordFailure } from "../diagnostics";
+import { attemptSignal, stoppedByCaller } from "../call-limit";
 
 export interface TavilySearchOptions {
   apiKey?: string;
@@ -60,9 +61,9 @@ export class TavilySearchProvider implements SearchProvider {
       return createSearchResponse("", []);
     }
 
+    // Its own time limit, or the search stage's cut-off, whichever comes first (ADR-0021).
     const timeout = options.timeoutMs || this.timeoutMs;
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeout);
+    const attempt = attemptSignal(timeout, options.signal);
 
     try {
       const payload: Record<string, any> = {
@@ -85,7 +86,7 @@ export class TavilySearchProvider implements SearchProvider {
           "Content-Type": "application/json",
         },
         body: JSON.stringify(payload),
-        signal: controller.signal,
+        signal: attempt.signal,
       });
 
       if (!response.ok) {
@@ -111,11 +112,14 @@ export class TavilySearchProvider implements SearchProvider {
 
       return createSearchResponse(trimmedQuery, results);
     } catch (err) {
+      // Stopped at the stage's cut-off, the search did not fail: the run
+      // records it as 時間切れ (ADR-0021).
+      if (stoppedByCaller(options)) throw err;
       console.warn("Tavily search failed:", err);
       recordFailure(this, err);
       throw err;
     } finally {
-      clearTimeout(timer);
+      attempt.release();
     }
   }
 }

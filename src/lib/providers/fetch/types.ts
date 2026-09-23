@@ -13,6 +13,12 @@ export interface FetchOptions {
   timeoutMs?: number;
   maxContentLength?: number;
   headers?: Record<string, string>;
+  /**
+   * Aborted at the page-fetch stage's cut-off (ADR-0021). The fetch then
+   * throws what the signal was aborted with, rather than coming back as a
+   * page that could not be read: the page did not fail, the time ran out.
+   */
+  signal?: AbortSignal;
 }
 
 export interface FetchProvider {

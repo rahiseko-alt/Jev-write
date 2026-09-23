@@ -144,11 +144,68 @@ export type EvidenceTrace = {
   overCap?: number;
   /** How many independent origins (a site, or sites carrying the same text) the Evidence came from. */
   origins?: number;
+  /**
+   * The candidates whose relevance JEV never judged for this claim because
+   * the time ran out (ADR-0021): the reason, how many sections, and the
+   * pages holding them in the order they were due to be judged. Absent when
+   * every candidate was judged.
+   */
+  unjudged?: UnjudgedCandidates;
 };
 
+/** Sections of candidate pages left unjudged for one reason (ADR-0021). */
+export type UnjudgedCandidates = {
+  /** Why, in the reader's words: 時間切れ. */
+  reason: string;
+  /** How many sections were left unjudged. */
+  sections: number;
+  /** The pages holding them, in the order they were due to be judged. */
+  urls: string[];
+};
+
+/**
+ * How long one stage of the run took, for observability only (ADR-0021).
+ * Stages overlap (the article's queries are written while the claims are
+ * extracted), so `durationMs` is the time the stage had work in flight.
+ */
 export type StageTiming = {
   stage: string;
   durationMs: number;
+  /** When the stage first started and last ended, in ms from the request's start. */
+  startMs?: number;
+  endMs?: number;
+  /** The stage's cut-off, in ms from the request's start. */
+  cutoffMs?: number;
+  /** Calls to outside services the stage started. */
+  calls?: number;
+  /** Of those, the requests sent to JEV. */
+  jevCalls?: number;
+  /** Calls not started because the stage's cut-off had come (時間切れ). */
+  notStarted?: number;
+  /** Calls still running at the stage's cut-off, and stopped there (時間切れ). */
+  stopped?: number;
+};
+
+/** One stage whose cut-off left work undone (ADR-0021). */
+export type StageCut = {
+  stage: string;
+  /** Calls not started because the cut-off had come. */
+  notStarted: number;
+  /** Calls still running at the cut-off, and stopped. */
+  stopped: number;
+  /** The cut-off, in ms from the request's start. */
+  cutoffMs: number;
+};
+
+/**
+ * What the run's time budget left undone (ADR-0021). The result is still
+ * returned, with what was done: the reader is told it is partial.
+ */
+export type CutShort = {
+  /** Why, in the reader's words: 時間切れ. */
+  reason: string;
+  /** The stages whose cut-off left work undone, in run order. */
+  stages: StageCut[];
 };
 
 export type AnalysisResult = {
@@ -188,6 +245,11 @@ export type AnalysisResult = {
    * the code cut, and what became of it. Absent when no extraction ran.
    */
   extraction?: ExtractionTrace;
+  /**
+   * Present when the time budget cut the run short (ADR-0021): which stages
+   * left work undone. The result holds what was done by then.
+   */
+  cutShort?: CutShort;
 };
 
 export type ProviderStatus = {

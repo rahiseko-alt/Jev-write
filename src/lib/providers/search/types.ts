@@ -22,6 +22,11 @@ export interface SearchOptions {
   includeDomains?: string[];
   excludeDomains?: string[];
   timeoutMs?: number;
+  /**
+   * Aborted at the search stage's cut-off (ADR-0021): the search ends there
+   * at the latest, and is then not counted as the service failing.
+   */
+  signal?: AbortSignal;
 }
 
 export interface SearchProvider {
