@@ -364,6 +364,14 @@ async function verifyClaim(params: {
       pooled = pool.candidatesFor(claim, MAX_SOURCES_PER_CLAIM);
     }
 
+    // No page names the claim's subject word for word — the subject can come
+    // back paraphrased or in another language. The pages are still read, and
+    // JEV says which of them speak to the claim (ADR-0007: nothing is dropped
+    // on this side before JEV is asked).
+    if (pooled.length === 0) {
+      pooled = pool.closestFor(claim, MAX_SOURCES_PER_CLAIM);
+    }
+
     trace.query = pool.queries().join(" / ");
     trace.found = pooled.length;
     lookupFailed = pool.searchFailed() && pooled.length === 0;

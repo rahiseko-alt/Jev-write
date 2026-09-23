@@ -132,3 +132,26 @@ describe("ページの選び方", () => {
     expect(ordered[0].url).toBe("https://example.com/official");
   });
 });
+
+describe("a claim no page names by its subject", () => {
+  it("still gets the pages closest to its wording, so JEV judges them (ADR-0007)", async () => {
+    const { search, fetchProvider } = providers({
+      q: [
+        { url: "https://example.com/near", title: "口コミの効果", body: "少数の悪評は購買意欲を減退させることがある。" },
+        { url: "https://example.com/far", title: "天気", body: "明日は晴れる。" },
+      ],
+    });
+    const pool = createSourcePool({ search, fetchProvider, resultsPerQuery: 4 });
+    await pool.seed(["q"]);
+
+    const english: Claim = {
+      ...claim("A few negative reviews"),
+      originalText: "少数の悪評が購買意欲を急激に減退させる",
+      normalizedText: "A few negative reviews sharply reduce purchase intent.",
+    };
+
+    expect(pool.candidatesFor(english, 5)).toHaveLength(0);
+    const closest = pool.closestFor(english, 5);
+    expect(closest.map((p) => p.url)).toEqual(["https://example.com/near", "https://example.com/far"]);
+  });
+});
