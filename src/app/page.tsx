@@ -72,7 +72,7 @@ const MARK_STYLES: Record<
     rejectedClassName:
       "bg-slate-50 text-amber-800/70 underline decoration-amber-400 decoration-dashed underline-offset-4",
     glyph: "?",
-    label: "根拠が見つかりません",
+    label: "裏付けが見つかりません",
   },
 };
 
