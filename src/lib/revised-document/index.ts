@@ -337,14 +337,21 @@ function claimText(result: ClaimResult): string {
  * first: the normalised statement is a paraphrase and can share too few words
  * with the sentence to find it.
  */
+const SEARCH_TERM_LENGTH = 80;
+
 /**
- * What the reader can search to check a claim: the query the check itself
- * ran. It names the subject and the attribute rather than the figure under
- * scrutiny, so it reaches the page that would publish the true value.
+ * What the reader can search to check a claim: the sentence as written, with
+ * the markup taken out. The queries the check itself ran were written for the
+ * whole article, so they say nothing about this sentence in particular.
  */
-function checkQueriesOf(result: ClaimResult): string[] {
-  const ran = result.evidenceTrace?.query?.trim();
-  return ran ? [ran] : [];
+function searchTermOf(sentence: string): string {
+  return sentence
+    .replace(/[#*_`>]+/g, " ")
+    .replace(/-{3,}/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/[。．.]$/, "")
+    .slice(0, SEARCH_TERM_LENGTH);
 }
 
 function placeOf(sentences: string[], result: ClaimResult): number {
@@ -417,7 +424,7 @@ function factFinding(
     sentenceBefore: "",
     sentenceAfter: "",
     evidenceTrace: result.evidenceTrace,
-    checkQueries: checkQueriesOf(result),
+    checkQueries: [],
     band,
     bandLabel: band === undefined ? undefined : BAND_LABEL[band],
     consistency: result.consistency,
@@ -549,6 +556,10 @@ export function buildRevisedDocument(
     const pair = comparison[finding.lineIndex];
     finding.sentenceBefore = pair?.original ?? finding.originalText;
     finding.sentenceAfter = pair?.revised ?? finding.revisedText;
+    if (finding.type === "fact") {
+      const term = searchTermOf(finding.sentenceBefore);
+      finding.checkQueries = term ? [term] : [];
+    }
   }
 
   let cursor = 0;
