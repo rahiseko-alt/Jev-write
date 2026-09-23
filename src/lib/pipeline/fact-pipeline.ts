@@ -47,16 +47,13 @@ export interface FactPipelineOutput {
 }
 
 /** How many candidates one claim asks JEV about. They ride in one request. */
-const MAX_SOURCES_PER_CLAIM = 6;
+const MAX_SOURCES_PER_CLAIM = 5;
 
 /** How many ways of asking the web about one claim. */
 const QUERIES_PER_CLAIM = 2;
 
 /** How many pages each of those asks for. */
 const RESULTS_PER_QUERY = 4;
-
-/** Below an even chance, JEV says the page is about something else. */
-const SAME_SUBJECT_THRESHOLD = 0.5;
 
 /**
  * A relation JEV is less sure of than this is not acted on. The scale is
@@ -208,6 +205,7 @@ async function verifyClaim(params: {
     offSubject: 0,
     unreadable: 0,
     saidNothing: 0,
+    weak: 0,
     used: 0,
   };
   let verdict: ClaimVerdict = "INSUFFICIENT";
@@ -411,17 +409,15 @@ async function verifyClaim(params: {
       const questions: Record<string, JEVQuestion> = {};
 
       readable.forEach((candidate, index) => {
-        questions[`subject${index}`] = {
-          type: "noul",
-          instructions: `sources[${index}] は、claim.text の真偽を確かめる材料になりうるか。claim.text が述べている対象そのもの、その運営者、またはその下位のサービスや制度について書かれていれば真。略称・正式名称・下位の名称の違いは問わない。まったく別の組織・製品・出来事についての記述であれば偽。`,
-        };
         questions[`relation${index}`] = {
           type: "choice",
           instructions: `sources[${index}] の内容は、claim.text をどう扱っているか。`,
           criteria: {
-            supports: "主張と同じ事実を述べている",
-            contradicts: "主張と異なる事実を述べている（数値・日付・名称の食い違いを含む）",
-            says_nothing: "主張について何も述べていない",
+            supports: "claim.text と同じ事実を述べている",
+            contradicts:
+              "claim.text と異なる事実を述べている（数値・日付・名称の食い違いを含む）",
+            says_nothing:
+              "claim.text については何も述べていない。別の組織・製品・出来事についての記述である場合もこれにあたる",
           },
         };
       });
@@ -443,19 +439,7 @@ async function verifyClaim(params: {
 
       for (let index = 0; index < readable.length; index++) {
         const candidate = readable[index];
-        const subjectAnswer = answers[`subject${index}`];
         const relationAnswer = answers[`relation${index}`];
-
-        const sameSubject =
-          subjectAnswer && subjectAnswer.type === "noul" ? subjectAnswer.noul : 0;
-
-        // JEV decides whether the page can answer for this claim at all.
-        // Below an even chance it is about something else, and its figures
-        // say nothing here.
-        if (sameSubject < SAME_SUBJECT_THRESHOLD) {
-          trace.offSubject++;
-          continue;
-        }
 
         if (!relationAnswer || relationAnswer.type !== "choice") {
           trace.saidNothing++;
@@ -465,14 +449,15 @@ async function verifyClaim(params: {
         const relation = relationAnswer.choice as keyof typeof relationCounts;
         const certainty = relationAnswer.confidence ?? 0;
 
-        // An answer JEV is unsure of is not a verdict. It is reported as a
-        // weak reading rather than acted on (docs.typesafe.ai/confidence).
-        const decided =
-          (relation === "supports" || relation === "contradicts") &&
-          certainty >= RELATION_CONFIDENCE_THRESHOLD;
-
-        if (!decided) {
+        if (relation !== "supports" && relation !== "contradicts") {
           trace.saidNothing++;
+          continue;
+        }
+
+        // An answer JEV is unsure of is not a verdict. It is counted as a
+        // weak reading rather than acted on (docs.typesafe.ai/confidence).
+        if (certainty < RELATION_CONFIDENCE_THRESHOLD) {
+          trace.weak++;
           continue;
         }
 
