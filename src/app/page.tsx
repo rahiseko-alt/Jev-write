@@ -282,14 +282,14 @@ export default function HomePage() {
               {/* Text Input Card */}
               <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden focus-within:border-blue-400 transition">
                 <div className="relative p-6">
-                  {/* Empty state background placeholder if empty */}
+                  {/* The only guidance for the empty input (no textarea placeholder, so it is not shown twice). */}
                   {!inputText && (
                     <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none text-slate-400 gap-2 p-6">
                       <FileText className="w-12 h-12 text-slate-300" strokeWidth={1.5} />
                       <p className="text-sm text-slate-400 text-center leading-relaxed">
-                        ここに原文を貼り付ける
+                        ここに原文を貼り付けるか、入力してください
                         <br />
-                        または入力してください
+                        裏付けの弱い文に印を付けてお知らせします。文章は書き換えません。
                       </p>
                     </div>
                   )}
@@ -297,7 +297,7 @@ export default function HomePage() {
                   <textarea
                     value={inputText}
                     onChange={(e) => setInputText(e.target.value)}
-                    placeholder="ここに原文を貼り付ける\n事実の正確さ、AIっぽい表現、根拠の有無をチェックし、裏付けの弱い箇所を知らせます。文章は書き換えません。"
+                    aria-label="原文"
                     className="w-full h-80 resize-none border-0 p-0 text-slate-800 placeholder:text-slate-300 focus:ring-0 text-sm leading-relaxed bg-transparent"
                   />
 
