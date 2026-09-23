@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import {
   getLLMProvider,
   MockLLMProvider,
@@ -211,6 +211,18 @@ describe("JEV Provider", () => {
     expect(unauthorizedCheck.unauthorizedChanges.length).toBeGreaterThan(0);
   });
 
+  it("does not call a wording change unauthorized when every fact is intact", async () => {
+    // A style repair: the same facts, said without the AI tell. Nothing here
+    // was checked and changed, so nothing here is an unauthorized change.
+    const check = await mockJEV.evaluateDeltaMeaningChange(
+      "まさに、この機能は2025年8月に公開されました。",
+      "この機能は2025年8月に公開されました。",
+      []
+    );
+
+    expect(check.hasUnauthorizedChange).toBe(false);
+  });
+
   it("factory returns HTTPJEVClient when URL is provided", () => {
     const client = getJEVClient({ apiUrl: "https://jev.internal.example.com" });
     expect(client).toBeInstanceOf(HTTPJEVClient);
@@ -250,9 +262,28 @@ describe("Google Fact Check Provider", () => {
     expect(client).toBeInstanceOf(HTTPGoogleFactCheckClient);
   });
 
-  it("factory returns MockGoogleFactCheckClient if API key is empty string", () => {
+  it("factory returns the stand-in where a test run asks for one", () => {
+    // NODE_ENV=test: the stand-in is asked for, not quietly substituted.
     const client = getGoogleFactCheckClient({ apiKey: "" });
     expect(client).toBeInstanceOf(MockGoogleFactCheckClient);
+  });
+
+  it("factory does not stand in for a missing credential outside a test run", () => {
+    const savedEnv = process.env.NODE_ENV;
+    const savedFlag = process.env.USE_MOCK_FACTCHECK;
+    try {
+      (process.env as Record<string, string>).NODE_ENV = "production";
+      delete process.env.USE_MOCK_FACTCHECK;
+      // Without a key the real client reports it cannot look anything up;
+      // it never answers with a review nobody published.
+      expect(getGoogleFactCheckClient({ apiKey: "" })).toBeInstanceOf(
+        HTTPGoogleFactCheckClient
+      );
+    } finally {
+      (process.env as Record<string, string | undefined>).NODE_ENV = savedEnv;
+      if (savedFlag === undefined) delete process.env.USE_MOCK_FACTCHECK;
+      else process.env.USE_MOCK_FACTCHECK = savedFlag;
+    }
   });
 
   it("aliases getFactCheckClient to getGoogleFactCheckClient", () => {
@@ -312,11 +343,54 @@ describe("Fetch Provider", () => {
     expect(page.content.length).toBeGreaterThan(0);
   });
 
-  it("factory returns HTTPFetchProvider by default and MockFetchProvider when requested", () => {
-    const httpProvider = getFetchProvider({}, false);
-    expect(httpProvider).toBeInstanceOf(HTTPFetchProvider);
+  describe("factory", () => {
+    const KEYS = [
+      "TAVILY_API_KEY",
+      "tavily",
+      "OPENAI_API_KEY",
+      "openai",
+      "ANTHROPIC_API_KEY",
+      "anthropic",
+      "USE_MOCK_FETCH",
+      "NODE_ENV",
+    ];
+    let saved: Record<string, string | undefined>;
 
-    const mockProvider = getFetchProvider({}, true);
-    expect(mockProvider).toBeInstanceOf(MockFetchProvider);
+    beforeEach(() => {
+      saved = Object.fromEntries(KEYS.map((key) => [key, process.env[key]]));
+      for (const key of KEYS) delete process.env[key];
+    });
+
+    afterEach(() => {
+      for (const [key, value] of Object.entries(saved)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    });
+
+    it("fetches over HTTP by default", () => {
+      // Reading a public page needs no credential, so nothing licenses a
+      // canned page in its place.
+      (process.env as Record<string, string>).NODE_ENV = "production";
+      expect(getFetchProvider({}, false)).toBeInstanceOf(HTTPFetchProvider);
+    });
+
+    it("stays on the mock when asked for it, credential or not", () => {
+      process.env.TAVILY_API_KEY = "test-key";
+      expect(getFetchProvider({}, true)).toBeInstanceOf(MockFetchProvider);
+    });
+
+    it("uses the mock in a test run", () => {
+      // ADR-0002: the mock adapters run offline and in CI — where they are
+      // asked for, never as a silent stand-in for a missing credential.
+      (process.env as Record<string, string>).NODE_ENV = "test";
+      expect(getFetchProvider({}, false)).toBeInstanceOf(MockFetchProvider);
+    });
+
+    it("honours USE_MOCK_FETCH outside a test run", () => {
+      (process.env as Record<string, string>).NODE_ENV = "production";
+      process.env.USE_MOCK_FETCH = "true";
+      expect(getFetchProvider({}, false)).toBeInstanceOf(MockFetchProvider);
+    });
   });
 });

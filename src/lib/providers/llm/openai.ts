@@ -2,6 +2,15 @@ import { Claim, Importance } from "@/types";
 import { LLMProvider, RewriteInput, SurgicalFixInput } from "./types";
 import { MockLLMProvider } from "./mock";
 
+const DEFAULT_RETRY_MS = 1000;
+const MAX_RETRY_MS = 20000;
+
+function retryAfterMs(header?: string | null): number {
+  const seconds = Number(header);
+  if (!Number.isFinite(seconds) || seconds <= 0) return DEFAULT_RETRY_MS;
+  return Math.min(seconds * 1000, MAX_RETRY_MS);
+}
+
 export interface OpenAILLMOptions {
   apiKey?: string;
   model?: string;
@@ -9,7 +18,6 @@ export interface OpenAILLMOptions {
 }
 
 export class OpenAILLMProvider implements LLMProvider {
-  private static hasQuotaExhausted = false;
   private apiKey: string;
   private model: string;
   private baseUrl: string;
@@ -22,11 +30,14 @@ export class OpenAILLMProvider implements LLMProvider {
     this.fallback = new MockLLMProvider();
   }
 
-  private async callChatCompletion(messages: Array<{ role: string; content: string }>, jsonMode = false): Promise<string> {
-    if (OpenAILLMProvider.hasQuotaExhausted) {
-      throw new Error("OpenAI API quota exhausted (cached). Falling back to mock.");
-    }
+  /** Whether any call in this run was answered by the mock instead. */
+  servedByFallback = false;
 
+  private async callChatCompletion(
+    messages: Array<{ role: string; content: string }>,
+    jsonMode = false,
+    retryOn429 = true
+  ): Promise<string> {
     if (!this.apiKey) {
       throw new Error("OpenAI API key is missing. Set OPENAI_API_KEY in environment or constructor.");
     }
@@ -52,13 +63,15 @@ export class OpenAILLMProvider implements LLMProvider {
 
     if (!response.ok) {
       const errorText = await response.text().catch(() => "");
-      if (
-        response.status === 429 ||
-        errorText.includes("credit_balance_exhausted") ||
-        errorText.includes("insufficient_quota")
-      ) {
-        OpenAILLMProvider.hasQuotaExhausted = true;
+
+      // A rate limit slows this request down. It says nothing about the next
+      // one, and nothing about anyone else's.
+      if (response.status === 429 && retryOn429) {
+        const wait = retryAfterMs(response.headers?.get?.("retry-after"));
+        await new Promise((resolve) => setTimeout(resolve, wait));
+        return this.callChatCompletion(messages, jsonMode, false);
       }
+
       throw new Error(`OpenAI API error (${response.status} ${response.statusText}): ${errorText}`);
     }
 
@@ -123,6 +136,7 @@ Return a JSON object with this exact structure:
       });
     } catch (err) {
       console.warn("OpenAI extractClaims failed, falling back to mock LLM:", err);
+      this.servedByFallback = true;
       return await this.fallback.extractClaims(text);
     }
   }
@@ -157,6 +171,7 @@ Entities: ${claim.entities?.join(", ") || "N/A"}`;
       return [claim.normalizedText];
     } catch (err) {
       console.warn("OpenAI generateSearchQueries failed, falling back to mock LLM:", err);
+      this.servedByFallback = true;
       return await this.fallback.generateSearchQueries(claim);
     }
   }
@@ -206,11 +221,14 @@ Entities: ${claim.entities?.join(", ") || "N/A"}`;
       ]);
     } catch (err) {
       console.warn("OpenAI rewrite failed, falling back to mock LLM:", err);
+      this.servedByFallback = true;
       return await this.fallback.rewrite(input);
     }
   }
 
   async surgicalFix(input: SurgicalFixInput): Promise<string> {
+    // A capability this adapter does not implement, not a service that failed:
+    // the local repair restores the reader's own figure, inventing nothing.
     return await this.fallback.surgicalFix(input);
   }
 }

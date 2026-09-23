@@ -5,6 +5,13 @@ import {
   StageTiming,
 } from "@/types";
 import { JobStore, jobStore as defaultJobStore } from "@/lib/jobs/job-store";
+import {
+  getFetchProvider,
+  getGoogleFactCheckClient,
+  getJEVClient,
+  getLLMProvider,
+  getSearchProvider,
+} from "../providers";
 import { runFactPipeline } from "./fact-pipeline";
 import { runStylePipeline } from "./style-pipeline";
 import { runRewritePipeline } from "./rewrite-pipeline";
@@ -43,6 +50,14 @@ export async function runOrchestrator(
 
   const timings: StageTiming[] = [];
 
+  // Every stage of one run shares one set of providers, so the run can say
+  // afterwards whether any of it was answered by a stand-in.
+  const llm = options?.llm ?? getLLMProvider();
+  const factCheck = options?.factCheck ?? getGoogleFactCheckClient();
+  const jev = options?.jev ?? getJEVClient();
+  const search = options?.search ?? getSearchProvider();
+  const fetchProvider = options?.fetch ?? getFetchProvider();
+
   const emit = (
     status: JobStatus,
     progressPercent: number,
@@ -75,11 +90,11 @@ export async function runOrchestrator(
       (async () => {
         const factStart = Date.now();
         const res = await runFactPipeline(text, {
-          llm: options?.llm,
-          factCheck: options?.factCheck,
-          jev: options?.jev,
-          search: options?.search,
-          fetch: options?.fetch,
+          llm,
+          factCheck,
+          jev,
+          search,
+          fetch: fetchProvider,
           onProgress: (p) => {
             if (p.stage === "FACTCHECK_DB") {
               emit("FACTCHECK_DATABASE", p.percent, p.message, {
@@ -108,7 +123,7 @@ export async function runOrchestrator(
       (async () => {
         const styleStart = Date.now();
         const res = await runStylePipeline(text, {
-          jev: options?.jev,
+          jev,
           onProgress: (p) => {
             emit("STYLE_ANALYSIS", p.percent, p.message, {
               styleIssuesCount: p.styleIssuesCount,
@@ -145,7 +160,7 @@ export async function runOrchestrator(
       factResult.factLedger,
       styleResult,
       {
-        llm: options?.llm,
+        llm,
         onProgress: (p) => {
           emit("REWRITING", p.percent, p.message);
         },
@@ -164,8 +179,8 @@ export async function runOrchestrator(
       rewriteOutput.revisedText,
       rewriteOutput.plan,
       {
-        jev: options?.jev,
-        llm: options?.llm,
+        jev,
+        llm,
         onProgress: (p) => {
           emit("VERIFYING", p.percent, p.message);
         },
@@ -214,6 +229,11 @@ export async function runOrchestrator(
       styleIssues: styleResult,
       sources: factResult.evidences,
       timings,
+      servedByFallback: [llm, factCheck, jev, search, fetchProvider].some(
+        (provider) => provider.servedByFallback === true
+      ),
+      unauthorizedChangeDetected: deltaResult.unauthorizedChangeDetected,
+      revisionRolledBack: deltaResult.rolledBack,
     };
 
     store.updateJob(jobId, {

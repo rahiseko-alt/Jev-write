@@ -34,6 +34,8 @@ export interface GoogleFactCheckOptions {
 }
 
 export interface GoogleFactCheckClient {
+  /** True when this provider answered with a stand-in rather than the real service. */
+  servedByFallback?: boolean;
   searchClaims(query: string, languageCode?: string): Promise<FactCheckSearchResult>;
   search(query: string, languageCode?: string): Promise<GoogleFactCheckClaim[]>;
 }

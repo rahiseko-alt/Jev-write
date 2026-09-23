@@ -89,6 +89,12 @@ export type ClaimResult = {
   reason?: string;
   evidence: Evidence[];
   confidence?: number;
+  /**
+   * True when a lookup for this claim could not be made at all — the service
+   * was unreachable or unconfigured. Different from a lookup that ran and
+   * found nothing, and the reader is told which happened.
+   */
+  lookupFailed?: boolean;
 };
 
 export type StageTiming = {
@@ -111,6 +117,23 @@ export type AnalysisResult = {
   styleIssues: StyleIssue[];
   sources: Evidence[];
   timings: StageTiming[];
+  /**
+   * True when some part of this run was answered by a stub rather than the
+   * configured provider. The reader is told, rather than shown a result that
+   * looks like a full check.
+   */
+  servedByFallback?: boolean;
+  /**
+   * True when the Delta Check found the rewrite had changed something it was
+   * not authorised to change. The change itself is repaired or taken back;
+   * the reader is told it happened.
+   */
+  unauthorizedChangeDetected?: boolean;
+  /**
+   * True when the rewrite was taken back wholesale because it could not be
+   * made safe — as opposed to a change put right where it stood.
+   */
+  revisionRolledBack?: boolean;
 };
 
 export type JobStatus =

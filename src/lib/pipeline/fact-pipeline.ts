@@ -1,3 +1,4 @@
+import { correctionFromEvidence } from "./correction";
 import {
   Claim,
   ClaimResult,
@@ -13,7 +14,7 @@ import {
   JEVClient,
   LLMProvider,
   SearchProvider,
-  MockSearchProvider,
+  SearchResultItem,
   getFetchProvider,
   getGoogleFactCheckClient,
   getJEVClient,
@@ -173,6 +174,9 @@ async function verifyClaim(params: {
 }> {
   const { claim, index, llm, factCheck, jev, search, fetchProvider } = params;
   const claimEvidences: Evidence[] = [];
+  // A lookup that could not be made at all, as opposed to one that ran and
+  // found nothing. The reader is told which of the two happened.
+  let lookupFailed = false;
   let verdict: ClaimVerdict = "INSUFFICIENT";
   let correctedClaim: string | undefined;
   let reason: string | undefined;
@@ -183,11 +187,18 @@ async function verifyClaim(params: {
   const query = buildFactCheckQuery(claim);
   let factHits: GoogleFactCheckClaim[] = [];
 
-  if (typeof (factCheck as any).search === "function") {
-    factHits = await (factCheck as any).search(query);
-  } else if (typeof factCheck.searchClaims === "function") {
-    const res = await factCheck.searchClaims(query);
-    factHits = res.claims || [];
+  try {
+    if (typeof (factCheck as any).search === "function") {
+      factHits = await (factCheck as any).search(query);
+    } else if (typeof factCheck.searchClaims === "function") {
+      const res = await factCheck.searchClaims(query);
+      factHits = res.claims || [];
+    }
+  } catch (err) {
+    // ADR-0003: the lookup failed, so the claim stays unverified and the run
+    // carries on to the web search. Nothing is filled in for it.
+    console.warn(`Fact check lookup failed for claim ${claim.id}:`, err);
+    lookupFailed = true;
   }
 
   if (factHits && factHits.length > 0) {
@@ -251,7 +262,9 @@ async function verifyClaim(params: {
         }
 
         if (verdict === "CONTRADICTED") {
-          correctedClaim = deriveCorrectedClaim(claim, reviews[0]?.title || hitClaimText);
+          // A review's headline is an article title, not a replacement
+          // sentence. The conflict is reported; the wording stays.
+          correctedClaim = undefined;
         }
         break; // Matched primary fact check hit
       }
@@ -261,8 +274,16 @@ async function verifyClaim(params: {
   // Step 3: Fallback to Web Search if no usable Google Fact Check hit
   if (!isFactCheckHit) {
     const searchQuery = buildWebSearchQuery(claim);
-    const searchResponse = await search.search(searchQuery, { maxResults: 3 });
-    const searchResults = searchResponse.results || [];
+    let searchResults: SearchResultItem[] = [];
+    try {
+      const searchResponse = await search.search(searchQuery, { maxResults: 3 });
+      searchResults = searchResponse.results || [];
+    } catch (err) {
+      // ADR-0003: the lookup failed, so the claim stays unverified and the
+      // pipeline carries on. It does not get made up for.
+      console.warn(`Web search failed for claim ${claim.id}:`, err);
+      lookupFailed = true;
+    }
 
     // Sort by source priority
     const effectiveEntities = (claim.entities && claim.entities.length > 0)
@@ -278,23 +299,6 @@ async function verifyClaim(params: {
         return (SOURCE_PRIORITY[typeA] || 6) - (SOURCE_PRIORITY[typeB] || 6);
       }
     );
-
-    if (sortedResults.length === 0) {
-      try {
-        const mockSearch = new MockSearchProvider();
-        const fallbackRes = await mockSearch.search(searchQuery, { maxResults: 3 });
-        const fbResults = fallbackRes.results || [];
-        sortedResults = [...fbResults]
-          .filter((res) => passesEntityGate(res.url, effectiveEntities))
-          .sort((a, b) => {
-            const typeA = mapDomainToSourceType(a.url);
-            const typeB = mapDomainToSourceType(b.url);
-            return (SOURCE_PRIORITY[typeA] || 6) - (SOURCE_PRIORITY[typeB] || 6);
-          });
-      } catch (fbErr) {
-        console.warn("Fallback mock search failed:", fbErr);
-      }
-    }
 
     const relationCounts = {
       supports: 0,
@@ -376,56 +380,14 @@ async function verifyClaim(params: {
       }
     }
 
-    // Secondary fallback: if external search yielded no valid supports/contradicts evidence, query Knowledge Base
-    if (claimEvidences.length === 0) {
-      try {
-        const mockSearch = new MockSearchProvider();
-        const kbResponse = await mockSearch.search(searchQuery, { maxResults: 3 });
-        const kbResults = kbResponse.results || [];
-        for (let i = 0; i < kbResults.length; i++) {
-          const res = kbResults[i];
-          const content = res.content || "";
-          const relevantEvidence = extractRelevantExcerpt(content, claim, 2500);
-          const evalResult = await jev.evaluateAtomicJudgment({
-            state: {
-              claim: claim.normalizedText || claim.originalText,
-              evidence: relevantEvidence,
-            },
-            instructions: "この証拠テキストは主張を肯定（supports）していますか、否定（contradicts）していますか？",
-            criteria: ["supports", "contradicts", "says_nothing", "ambiguous"],
-          });
-          const relation = (evalResult.choice as keyof typeof relationCounts) || "says_nothing";
-          if (relationCounts[relation] !== undefined) {
-            relationCounts[relation]++;
-          }
-          if (relation === "supports" || relation === "contradicts") {
-            claimEvidences.push({
-              id: `ev-${claim.id}-kb-${i}`,
-              claimId: claim.id,
-              sourceUrl: res.url,
-              sourceTitle: res.title,
-              publisher: "公式一次情報・ナレッジベース",
-              excerpt: relevantEvidence.slice(0, 350),
-              sourceType: mapDomainToSourceType(res.url),
-            });
-            if (!bestExplanation && evalResult.explanation) {
-              bestExplanation = evalResult.explanation;
-            }
-            if (relation === "contradicts" && !correctedClaim) {
-              correctedClaim = await deriveCorrectionFromText(content, claim, llm);
-            }
-          }
-        }
-      } catch (kbErr) {
-        console.warn("Secondary Knowledge Base fallback failed:", kbErr);
-      }
-    }
 
     // Synthesize final ClaimVerdict
     if (claimEvidences.length === 0) {
       verdict = "INSUFFICIENT";
       confidence = 0.6;
-      reason = "検証に足る明確な裏付け情報が確認できませんでした（証拠0件）。";
+      reason = lookupFailed
+        ? "外部の確認サービスに接続できなかったため、確認できませんでした。"
+        : "検証に足る明確な裏付け情報が確認できませんでした（証拠0件）。";
     } else if (relationCounts.contradicts > 0 && relationCounts.supports === 0) {
       verdict = "CONTRADICTED";
       confidence = 0.9;
@@ -453,7 +415,9 @@ async function verifyClaim(params: {
     } else {
       verdict = "INSUFFICIENT";
       confidence = 0.6;
-      reason = "検証に足る明確な裏付け情報が確認できませんでした。";
+      reason = lookupFailed
+        ? "外部の確認サービスに接続できなかったため、確認できませんでした。"
+        : "検証に足る明確な裏付け情報が確認できませんでした。";
     }
   }
 
@@ -470,7 +434,10 @@ async function verifyClaim(params: {
     claimId: claim.id,
     originalClaim: claim.normalizedText || claim.originalText,
     verdict,
-    correctedClaim: verdict === "CONTRADICTED" ? (correctedClaim || claim.normalizedText) : undefined,
+    // No correction the Evidence justifies means no correction. The claim's
+    // own paraphrase is not one, and offering it would authorise a change
+    // nobody checked.
+    correctedClaim: verdict === "CONTRADICTED" ? correctedClaim : undefined,
     correctionReason: reason,
     lockedFacts: Array.from(new Set(lockedFacts)),
     evidenceIds: claimEvidences.map((e) => e.id),
@@ -484,6 +451,7 @@ async function verifyClaim(params: {
     reason,
     evidence: claimEvidences,
     confidence,
+    lookupFailed,
   };
 
   return {
@@ -557,16 +525,12 @@ function mapChoiceToClaimVerdict(choice?: string): ClaimVerdict {
   }
 }
 
-function deriveCorrectedClaim(claim: Claim, reference: string): string {
-  return reference;
-}
-
 async function deriveCorrectionFromText(
   text: string,
   claim: Claim,
   llm?: LLMProvider
-): Promise<string> {
-  // If LLM supports deriveCorrection, ask LLM to extract the precise fact from evidence
+): Promise<string | undefined> {
+  // The LLM reads the Evidence and states the corrected fact, where it can.
   if (llm && typeof (llm as any).deriveCorrection === "function") {
     try {
       const res = await (llm as any).deriveCorrection(claim, text);
@@ -578,126 +542,10 @@ async function deriveCorrectionFromText(
     }
   }
 
-  let corrected = claim.normalizedText || claim.originalText;
-
-  // 1. Context-specific exact matching before generic replacement
-  // 多言語版価格 vs 本体価格
-  if (/多言語版/.test(corrected) && /多言語版[^\d]*(\d+[\d,]*\s*円)/.test(text)) {
-    const m = text.match(/多言語版[^\d]*(\d+[\d,]*\s*円)/);
-    if (m) {
-      corrected = corrected.replace(/\d+[\d,]*\s*円/, m[1]);
-    }
-  } else if (/本体価格|価格/.test(corrected) && /本体価格[^\d]*(\d+[\d,]*\s*円)/.test(text)) {
-    const m = text.match(/本体価格[^\d]*(\d+[\d,]*\s*円)/);
-    if (m) {
-      corrected = corrected.replace(/\d+[\d,]*\s*円/, m[1]);
-    }
-  }
-
-  // Joy-Con vs 本体バッテリー
-  if (/joy-?con/i.test(corrected) && /joy-?con[^\d]*(\d+\s*mah)/i.test(text)) {
-    const m = text.match(/joy-?con[^\d]*(\d+\s*mah)/i);
-    if (m) {
-      corrected = corrected.replace(/\d+\s*mah/i, m[1]);
-    }
-  } else if (/本体バッテリー|バッテリー/.test(corrected) && /本体[^\d]*(\d+\s*mah)/i.test(text)) {
-    const m = text.match(/本体[^\d]*(\d+\s*mah)/i);
-    if (m) {
-      corrected = corrected.replace(/\d+\s*mah/i, m[1]);
-    }
-  }
-
-  // 映像共有 vs チャット人数
-  if (/映像共有/.test(corrected) && /映像共有[^\d]*(\d+\s*人)/.test(text)) {
-    const m = text.match(/映像共有[^\d]*(\d+\s*人)/);
-    if (m) {
-      corrected = corrected.replace(/\d+\s*人/, m[1]);
-    }
-  } else if (/チャット/.test(corrected) && /チャット[^\d]*(\d+\s*人)/.test(text)) {
-    const m = text.match(/チャット[^\d]*(\d+\s*人)/);
-    if (m) {
-      corrected = corrected.replace(/\d+\s*人/, m[1]);
-    }
-  }
-
-  // microSDカード
-  if (/microsd/i.test(corrected) && /microsd[^\d]*(\d+\s*tb)/i.test(text)) {
-    const m = text.match(/microsd[^\d]*(\d+\s*tb)/i);
-    if (m) {
-      corrected = corrected.replace(/\d+\s*tb/i, m[1]);
-    }
-  }
-
-  // 2. Generic spec unit matching between claim and evidence:
-  // mm, g, インチ, Hz, GB, fps, Gbps
-  const specUnits = ["mm", "g", "インチ", "Hz", "GB", "fps", "Gbps"];
-  for (const unit of specUnits) {
-    const unitRegex = new RegExp(`(\\d+[\\d,.]*)\\s*${unit}`, "gi");
-    let match: RegExpExecArray | null;
-    while ((match = unitRegex.exec(corrected)) !== null) {
-      const claimVal = match[1];
-      const evRegex = new RegExp(`(\\d+[\\d,.]*)\\s*${unit}`, "gi");
-      let evMatch: RegExpExecArray | null;
-      while ((evMatch = evRegex.exec(text)) !== null) {
-        const evVal = evMatch[1];
-        if (evVal.replace(/,/g, "") !== claimVal.replace(/,/g, "")) {
-          const wrongSegment = `${claimVal}${unit}`;
-          const rightSegment = `${evVal}${unit}`;
-          if (corrected.includes(wrongSegment)) {
-            corrected = corrected.replace(wrongSegment, rightSegment);
-            break;
-          }
-        }
-      }
-    }
-  }
-
-  // Resolution replacement (e.g. 1920×1200 -> 1920×1080)
-  const resMatch = corrected.match(/(\d{3,4})\s*[×x]\s*(\d{3,4})/i);
-  const evResMatch = text.match(/(\d{3,4})\s*[×x]\s*(\d{3,4})/i);
-  if (resMatch && evResMatch) {
-    const wrongRes = resMatch[0];
-    const rightRes = evResMatch[0];
-    if (wrongRes !== rightRes) {
-      corrected = corrected.replace(wrongRes, rightRes);
-    }
-  }
-
-  // Wi-Fi standard replacement (e.g. Wi-Fi 6E -> Wi-Fi 6)
-  const wifiMatch = corrected.match(/wi-?fi\s*(\d+[a-z]*)/i);
-  const evWifiMatch = text.match(/wi-?fi\s*(\d+[a-z]*)/i);
-  if (wifiMatch && evWifiMatch) {
-    const wrongWifi = wifiMatch[0];
-    const rightWifi = evWifiMatch[0];
-    if (wrongWifi.toLowerCase() !== rightWifi.toLowerCase()) {
-      corrected = corrected.replace(wrongWifi, rightWifi);
-    }
-  }
-
-  // General spec/number/date corrections based on evidence content
-  const specPairs = [
-    { wrong: /2025年4月3日/g, right: "2025年4月2日", evCheck: /4月2日/ },
-    { wrong: /6月6日/g, right: "6月5日", evCheck: /6月5日/ },
-    { wrong: /4月3日/g, right: "4月2日", evCheck: /4月2日/ },
-    { wrong: /2023年9月13日/g, right: "2023年9月12日", evCheck: /12\s*日/ },
-    { wrong: /20\s*MP/gi, right: "24MP", evCheck: /24\s*mp/i },
-    { wrong: /6\s*倍/g, right: "5倍", evCheck: /5\s*倍/ },
-    { wrong: /20\s*Gbps/gi, right: "10Gbps", evCheck: /(?:10\s*gbps|10\s*gb\/s|10\s*ギガビット)/i },
-    { wrong: /約\s*2\s*倍/g, right: "最大3倍", evCheck: /3\s*倍/ },
-    { wrong: /Wi-Fi\s*7/gi, right: "Wi-Fi 6E", evCheck: /wi-?fi\s*6e/i },
-    { wrong: /Wi-Fi\s*6E/gi, right: "Wi-Fi 6", evCheck: /wi-?fi\s*6(?!\s*e)/i },
-    { wrong: /2024年9月/g, right: "2025年9月", evCheck: /2025年9月/ },
-  ];
-
-  for (const pair of specPairs) {
-    pair.wrong.lastIndex = 0;
-    if (pair.wrong.test(corrected) && pair.evCheck.test(text)) {
-      pair.wrong.lastIndex = 0;
-      corrected = corrected.replace(pair.wrong, pair.right);
-    }
-  }
-
-  return corrected;
+  // Otherwise the Evidence's own figures, and only where they answer the same
+  // question the Claim asks. Anything less specific is a guess, and a guess
+  // here rewrites the reader's article with another document's facts.
+  return correctionFromEvidence(claim, text);
 }
 
 function extractRelevantExcerpt(content: string, claim: Claim, maxLength = 2500): string {

@@ -1,5 +1,4 @@
 import { SearchOptions, SearchProvider, SearchResponse, SearchResultItem } from "./types";
-import { MockSearchProvider } from "./mock";
 
 export interface TavilySearchOptions {
   apiKey?: string;
@@ -29,7 +28,6 @@ export class TavilySearchProvider implements SearchProvider {
   private baseUrl: string;
   private defaultMaxResults: number;
   private timeoutMs: number;
-  private fallback: MockSearchProvider;
 
   constructor(options: TavilySearchOptions = {}) {
     this.apiKey =
@@ -41,12 +39,14 @@ export class TavilySearchProvider implements SearchProvider {
     this.baseUrl = (options.baseUrl || process.env.TAVILY_BASE_URL || "https://api.tavily.com").replace(/\/$/, "");
     this.defaultMaxResults = options.defaultMaxResults || 5;
     this.timeoutMs = options.timeoutMs || 10000;
-    this.fallback = new MockSearchProvider();
   }
 
   async search(query: string, options: SearchOptions = {}): Promise<SearchResponse> {
+    // A search nobody can run is a search that failed. ADR-0003 turns that
+    // into an INSUFFICIENT verdict upstream; it must not become invented
+    // Evidence down here.
     if (!this.apiKey) {
-      return await this.fallback.search(query, options);
+      throw new Error("Tavily search is not configured: no API key");
     }
 
     const trimmedQuery = query.trim();
@@ -91,7 +91,7 @@ export class TavilySearchProvider implements SearchProvider {
       const rawResults = Array.isArray(data.results) ? data.results : [];
 
       if (rawResults.length === 0) {
-        return await this.fallback.search(query, options);
+        return createSearchResponse(trimmedQuery, []);
       }
 
       const results: SearchResultItem[] = rawResults.map((item: any) => ({
@@ -105,8 +105,8 @@ export class TavilySearchProvider implements SearchProvider {
 
       return createSearchResponse(trimmedQuery, results);
     } catch (err) {
-      console.warn("Tavily search failed, falling back to mock search:", err);
-      return await this.fallback.search(query, options);
+      console.warn("Tavily search failed:", err);
+      throw err;
     } finally {
       clearTimeout(timer);
     }

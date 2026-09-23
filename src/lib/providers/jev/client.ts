@@ -8,7 +8,6 @@ import {
   JEVDeltaMeaningResult,
 } from "./types";
 
-import { MockJEVClient } from "./mock";
 
 export interface JEVClientOptions {
   apiUrl?: string;
@@ -21,11 +20,35 @@ export interface JEVClientOptions {
  * Connects directly to POST https://api.typesafe.ai/v1/systemone
  * Evaluates atomic judgments, parallel choice/noul questions over state.
  */
+/** No verdict, stated as no verdict. */
+const UNDECIDED: JEVAtomicJudgmentResult = {
+  choice: "says_nothing",
+  match: "says_nothing",
+  relation: "says_nothing",
+  noul: 0,
+  confidence: 0,
+  explanation: "JEVの判定を取得できませんでした。",
+};
+
+/** A batch that never ran detected nothing, rather than guessing at rules. */
+function undetected(
+  reqOrText: any,
+  maybeRules?: any
+): Record<string, { detected: boolean; confidence: number; explanation: string }> {
+  const rules = Array.isArray(maybeRules)
+    ? maybeRules
+    : reqOrText?.questions ?? reqOrText?.rules ?? [];
+  const entries = (rules as Array<{ id?: string; ruleId?: string }>).map((rule) => [
+    rule.id || rule.ruleId || "",
+    { detected: false, confidence: 0, explanation: "JEVの判定を取得できませんでした。" },
+  ]);
+  return Object.fromEntries(entries.filter(([id]) => id));
+}
+
 export class HTTPJEVClient implements JEVClient {
   private apiUrl: string;
   private apiKey: string;
   private timeoutMs: number;
-  private fallback: MockJEVClient;
 
   constructor(options: JEVClientOptions = {}) {
     // Default directly to TypeSafe AI's official System One endpoint
@@ -40,7 +63,6 @@ export class HTTPJEVClient implements JEVClient {
       process.env.TYPESAFE_API_KEY ||
       "";
     this.timeoutMs = options.timeoutMs || 15000;
-    this.fallback = new MockJEVClient();
   }
 
   /**
@@ -124,19 +146,6 @@ export class HTTPJEVClient implements JEVClient {
       }
       const confidence = typeof resultItem?.confidence === "number" ? resultItem.confidence : 0.95;
 
-      // Objective Invariant Guard: If deterministic evaluation detects a clear date/spec contradiction,
-      // override any lenient or ambiguous external model response.
-      const fallbackResult = await this.fallback.evaluateAtomicJudgment(req);
-      if (fallbackResult.choice === "contradicts") {
-        return fallbackResult;
-      }
-      // If external model returned 'supports', but deterministic check found 'says_nothing'
-      // (meaning the evidence lacks the specific numbers, dates, or specs asserted by the claim),
-      // do NOT allow a false-positive 'supports' - enforce deterministic 'says_nothing'.
-      if ((value === "supports" || value === "true") && fallbackResult.choice === "says_nothing") {
-        return fallbackResult;
-      }
-
       return {
         choice: typeof value === "string" ? value : undefined,
         match: typeof value === "string" ? value : undefined,
@@ -147,8 +156,10 @@ export class HTTPJEVClient implements JEVClient {
         explanation: resultItem?.explanation,
       };
     } catch (err) {
-      console.warn("HTTPJEVClient evaluateAtomicJudgment failed, using fallback:", err);
-      return await this.fallback.evaluateAtomicJudgment(req);
+      // ADR-0003: a judgment that could not be obtained leaves the claim
+      // unverified. It does not borrow a verdict from somewhere else.
+      console.warn("HTTPJEVClient evaluateAtomicJudgment failed:", err);
+      return UNDECIDED;
     }
   }
 
@@ -219,8 +230,8 @@ export class HTTPJEVClient implements JEVClient {
 
       return { results: formattedResults };
     } catch (err) {
-      console.warn("HTTPJEVClient evaluateBatchRules failed, using fallback:", err);
-      return await this.fallback.evaluateBatchRules(reqOrText, maybeRules);
+      console.warn("HTTPJEVClient evaluateBatchRules failed:", err);
+      return { results: undetected(reqOrText, maybeRules) };
     }
   }
 

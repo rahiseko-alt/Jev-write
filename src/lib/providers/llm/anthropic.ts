@@ -14,6 +14,9 @@ export class AnthropicLLMProvider implements LLMProvider {
   private baseUrl: string;
   private fallback: MockLLMProvider;
 
+  /** Whether any call in this run was answered by the mock instead. */
+  servedByFallback = false;
+
   constructor(options: AnthropicLLMOptions = {}) {
     this.apiKey =
       options.apiKey ||
@@ -139,6 +142,7 @@ Return ONLY a valid JSON object with this exact structure, nothing else:
       });
     } catch (err) {
       console.warn("Anthropic extractClaims failed, falling back to mock LLM:", err);
+      this.servedByFallback = true;
       return await this.fallback.extractClaims(text);
     }
   }
@@ -168,6 +172,7 @@ Entities: ${claim.entities?.join(", ") || "N/A"}`;
       return [claim.normalizedText];
     } catch (err) {
       console.warn("Anthropic generateSearchQueries failed, falling back to mock LLM:", err);
+      this.servedByFallback = true;
       return await this.fallback.generateSearchQueries(claim);
     }
   }
@@ -215,11 +220,14 @@ Entities: ${claim.entities?.join(", ") || "N/A"}`;
       return result.trim();
     } catch (err) {
       console.warn("Anthropic rewrite failed, falling back to mock LLM:", err);
+      this.servedByFallback = true;
       return await this.fallback.rewrite(input);
     }
   }
 
   async surgicalFix(input: SurgicalFixInput): Promise<string> {
+    // A capability this adapter does not implement, not a service that failed:
+    // the local repair restores the reader's own figure, inventing nothing.
     return await this.fallback.surgicalFix(input);
   }
 }

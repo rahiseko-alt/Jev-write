@@ -74,6 +74,8 @@ export interface JEVDeltaMeaningResult {
 }
 
 export interface JEVClient {
+  /** True when this client answered with a stand-in rather than the real service. */
+  servedByFallback?: boolean;
   evaluateAtomicJudgment(req: JEVAtomicJudgmentRequest): Promise<JEVAtomicJudgmentResult>;
   evaluateBatchRules(req: JEVBatchRulesRequest): Promise<JEVBatchRulesResult>;
   evaluateBatchRules(text: string, rules: any[]): Promise<any>;

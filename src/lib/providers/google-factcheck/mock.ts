@@ -5,6 +5,9 @@ import {
 } from "./types";
 
 export class MockGoogleFactCheckClient implements GoogleFactCheckClient {
+  /** A stand-in, and it says so, so the reader is never shown its output as a real check. */
+  readonly servedByFallback = true;
+
   private mockDatabase: GoogleFactCheckClaim[] = [
     {
       text: "iPhone 17は2024年9月に発売された",

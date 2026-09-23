@@ -1,6 +1,9 @@
 import { FetchedPage, FetchOptions, FetchProvider } from "./types";
 
 export class MockFetchProvider implements FetchProvider {
+  /** A stand-in, and it says so, so the reader is never shown its output as a real check. */
+  readonly servedByFallback = true;
+
   private mockPages: Record<string, Partial<FetchedPage>> = {
     "https://factcheckcenter.jp/fact-checks/iphone-17-release-date": {
       title: "「iPhone 17が2025年9月に発売された」は誤り。未発売であり、2026年秋の発売が予想されている",

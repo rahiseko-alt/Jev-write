@@ -150,12 +150,11 @@ export default function HomePage() {
     () =>
       analysisResult
         ? buildRevisedDocument({
-            originalText: inputText,
             analysis: analysisResult,
             adoption: adoptedOverrides,
           })
         : null,
-    [analysisResult, inputText, adoptedOverrides]
+    [analysisResult, adoptedOverrides]
   );
 
   const originalLines = useMemo(
@@ -291,6 +290,7 @@ export default function HomePage() {
 
       if (finalResult) {
         setAnalysisResult(finalResult);
+        setAdoptedOverrides({});
         setSelectedFindingId(null);
         setSheetOpen(false);
 
@@ -438,7 +438,7 @@ export default function HomePage() {
                     <div className="space-y-1">
                       <span className="text-slate-400 font-medium">原文</span>
                       <div className="bg-red-50 text-red-900 border border-red-200 rounded-lg p-2 leading-relaxed">
-                        {currentFinding.originalText}
+                        {currentFinding.sentenceBefore || currentFinding.originalText}
                       </div>
                     </div>
 
@@ -446,7 +446,7 @@ export default function HomePage() {
                     <div className="space-y-1">
                       <span className="text-slate-400 font-medium">修正版</span>
                       <div className="bg-emerald-50 text-emerald-900 border border-emerald-200 rounded-lg p-2 leading-relaxed">
-                        {currentFinding.revisedText}
+                        {currentFinding.sentenceAfter || currentFinding.revisedText}
                       </div>
                     </div>
 
@@ -858,6 +858,26 @@ export default function HomePage() {
                       </button>
                     </div>
 
+                    {analysisResult?.servedByFallback && (
+                      <div className="flex items-start gap-2 px-4 py-3 rounded-xl border border-amber-200 bg-amber-50 text-xs text-amber-900">
+                        <AlertTriangle className="w-4 h-4 shrink-0 text-amber-600 mt-0.5" />
+                        <span>
+                          この修正版の一部は、検証に使う外部サービスへ接続できなかったため簡易処理で作成されています。事実確認としては信頼できません。
+                        </span>
+                      </div>
+                    )}
+
+                    {analysisResult?.unauthorizedChangeDetected && (
+                      <div className="flex items-start gap-2 px-4 py-3 rounded-xl border border-amber-200 bg-amber-50 text-xs text-amber-900">
+                        <AlertTriangle className="w-4 h-4 shrink-0 text-amber-600 mt-0.5" />
+                        <span>
+                          {analysisResult?.revisionRolledBack
+                            ? "書き換えの途中で、根拠のない書き換えが見つかりました。安全のため、文章全体を原文のまま戻しています。"
+                            : "書き換えの途中で、根拠のない書き換えが見つかりました。その箇所は原文の内容に戻してあります。気になる場合は原文と見比べてください。"}
+                        </span>
+                      </div>
+                    )}
+
                     {revisedDocument && !revisedDocument.hasFindings && (
                       <div className="flex items-center gap-2 px-4 py-3 rounded-xl border border-emerald-200 bg-emerald-50 text-xs text-emerald-800">
                         <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-600" />
@@ -1216,6 +1236,11 @@ export default function HomePage() {
                   const draft = localStorage.getItem("jev_draft_text");
                   if (draft) {
                     setInputText(draft);
+                    // The result on screen belongs to the article it was run
+                    // on, not to the one just restored.
+                    setAnalysisResult(null);
+                    setAdoptedOverrides({});
+                    setSelectedFindingId(null);
                     alert("保存された下書きを復元しました。");
                     setShowDraftModal(false);
                   } else {

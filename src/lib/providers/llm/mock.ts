@@ -2,6 +2,9 @@ import { Claim, Importance } from "@/types";
 import { LLMProvider, RewriteInput, SurgicalFixInput } from "./types";
 
 export class MockLLMProvider implements LLMProvider {
+  /** A stand-in, and it says so, so the reader is never shown its output as a real check. */
+  readonly servedByFallback = true;
+
   async extractClaims(text: string): Promise<Claim[]> {
     const claims: Claim[] = [];
     // Split by sentence terminators (Japanese and Western, ignoring decimal points)
@@ -186,78 +189,23 @@ export class MockLLMProvider implements LLMProvider {
   }
 
   async rewrite(input: RewriteInput): Promise<string> {
-    let revised = input.originalText;
+    // Every edit is made inside the one sentence it belongs to. Replacing
+    // across the whole document is how a correction meant for one figure
+    // lands on an unrelated one, and how a partial match splices a whole
+    // corrected claim into the middle of a sentence.
+    let sentences = splitSentences(input.originalText);
 
-    // 1. Apply fact ledger corrections
     for (const correction of input.plan.corrections) {
-      if (correction.verdict === "CONTRADICTED" && correction.correctedClaim) {
-        // A. Direct exact match
-        if (revised.includes(correction.originalClaim)) {
-          revised = revised.replace(correction.originalClaim, correction.correctedClaim);
-          continue;
-        }
-
-        // B. Match and replace specific numbers / dates / tokens that changed
-        let appliedSpecific = false;
-        const tokenRegex = /(?:\d{4}年\d{1,2}月\d{1,2}日|\d{1,2}月\d{1,2}日|Wi-Fi\s*\w+|\d+(?:\.\d+)?[\d,]*(?:万|億|%|円|ドル|人|個|GB|MB|倍|MP|Gbps|インチ|mm|g|Hz|mAh|fps)?)/gi;
-        const origTokens = correction.originalClaim.match(tokenRegex) || [];
-        const corrTokens = correction.correctedClaim.match(tokenRegex) || [];
-
-        for (let i = 0; i < origTokens.length; i++) {
-          const ot = origTokens[i];
-          const ct = corrTokens[i];
-          if (ot && ct && ot !== ct && revised.includes(ot)) {
-            revised = revised.replace(ot, ct);
-            appliedSpecific = true;
-          }
-        }
-        if (appliedSpecific) continue;
-
-        // C. Fallback: match clause without destroying surrounding sentence
-        const parts = correction.originalClaim.split(/[、,。\s]+/).filter((p) => p.length >= 4);
-        for (const part of parts) {
-          if (revised.includes(part)) {
-            revised = revised.replace(part, correction.correctedClaim);
-            break;
-          }
-        }
-      }
+      if (correction.verdict !== "CONTRADICTED" || !correction.correctedClaim) continue;
+      sentences = applyCorrection(sentences, correction.originalClaim, correction.correctedClaim);
     }
 
-    // 2. Apply style repairs
     for (const issue of input.plan.styleIssues) {
-      if (issue.targetText && revised.includes(issue.targetText)) {
-        if (issue.ruleId === "AI001" || issue.ruleId === "AI003" || issue.ruleId === "AI008" || issue.ruleId === "AI012") {
-          revised = revised.replace(issue.targetText, "");
-        } else if (issue.ruleId === "AI002") {
-          // 単なる〜ではない / 常套句の対比
-          if (issue.targetText === "その一方で、" || issue.targetText.includes("その一方で")) {
-            revised = revised.replace(issue.targetText, "また、");
-          } else {
-            revised = revised.replace(issue.targetText, "");
-          }
-        } else if (issue.ruleId === "AI007") {
-          // 機械的な接続語
-          revised = revised.replace(issue.targetText, "");
-        } else {
-          revised = revised.replace(issue.targetText, "");
-        }
-      }
+      if (!issue.targetText) continue;
+      sentences = applyStyleRepair(sentences, issue.targetText, issue.ruleId);
     }
 
-    // Clean up any remaining typical style tell patterns if still present
-    revised = revised
-      .replace(/今後の動向からも目が離せません[。！？]?/g, "")
-      .replace(/今後の動向から目が離せません[。！？]?/g, "")
-      .replace(/近年、モバイルテクノロジーの急速な進化は目覚ましく、私たちの生活様式を一変させています[。！？]?/g, "")
-      .replace(/現代社会においてスマートフォンは不可欠なツールであり、その進化の波は留まるところを知りません[。！？]?/g, "")
-      .replace(/([。！？])\1+/g, "$1")
-      .replace(/^[、,。\s]+/, "")
-      .replace(/[、,]\s*[。！？]/g, "。")
-      .replace(/\n{3,}/g, "\n\n")
-      .trim();
-
-    return revised;
+    return tidy(sentences.join(""));
   }
 
   async surgicalFix(input: SurgicalFixInput): Promise<string> {
@@ -405,4 +353,148 @@ export class MockLLMProvider implements LLMProvider {
 
 function escapeRegExp(string: string): string {
   return string.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/** Sentences, each keeping the text and spacing it was written with. */
+function splitSentences(text: string): string[] {
+  const parts = text.split(/(?<=[。！？\n])/);
+  return parts.filter((part) => part.length > 0);
+}
+
+/**
+ * Apply a correction inside the sentence that carries the claim, or not at
+ * all. A correction the mock cannot place precisely is left unapplied: the
+ * Finding still reports the discrepancy, and the text stays as written.
+ */
+function applyCorrection(
+  sentences: string[],
+  originalClaim: string,
+  correctedClaim: string
+): string[] {
+  const at = locateSentence(sentences, originalClaim, correctedClaim);
+  if (at < 0) return sentences;
+
+  const sentence = sentences[at];
+  const rewritten = sentence.includes(originalClaim)
+    ? sentence.replace(originalClaim, correctedClaim)
+    : swapFigures(sentence, originalClaim, correctedClaim);
+
+  if (rewritten === null) return sentences;
+
+  const next = [...sentences];
+  next[at] = rewritten;
+  return next;
+}
+
+/**
+ * Finding the sentence may be approximate — the claim is often a paraphrase
+ * rather than a quote. Changing it may not: the edit itself is always an
+ * exact swap, which is what keeps a near miss from mangling the prose.
+ */
+function locateSentence(
+  sentences: string[],
+  originalClaim: string,
+  correctedClaim: string
+): number {
+  const direct = sentences.findIndex(
+    (sentence) =>
+      sentence.includes(originalClaim) ||
+      (sentence.trim().length > 0 && originalClaim.includes(sentence.trim()))
+  );
+  if (direct >= 0) return direct;
+
+  // The figure this correction changes is the most telling thing about it.
+  const before = originalClaim.match(FIGURE) ?? [];
+  const after = correctedClaim.match(FIGURE) ?? [];
+  for (let i = 0; i < before.length; i++) {
+    if (before[i] === after[i]) continue;
+    const byFigure = sentences.findIndex((sentence) => sentence.includes(before[i]));
+    if (byFigure >= 0) return byFigure;
+  }
+
+  // Otherwise the sentence sharing the longest stretch of the claim's wording.
+  const fragments = originalClaim
+    .split(/[、,。\s]+/)
+    .filter((part) => part.length >= 6)
+    .sort((a, b) => b.length - a.length);
+  for (const fragment of fragments) {
+    const byFragment = sentences.findIndex((sentence) => sentence.includes(fragment));
+    if (byFragment >= 0) return byFragment;
+  }
+
+  return -1;
+}
+
+const FIGURE =
+  /(?:\d{4}年\d{1,2}月\d{1,2}日|\d{1,2}月\d{1,2}日|Wi-Fi\s*\w+|\d+(?:\.\d+)?[\d,]*(?:万|億|%|円|ドル|人|個|GB|MB|倍|MP|Gbps|インチ|mm|g|Hz|mAh|fps)?)/gi;
+
+/**
+ * Swap the figures the correction changed, matching them by the unit they
+ * carry rather than by position, so a percentage is never replaced by a
+ * length. Returns null when the two sides do not line up.
+ */
+function swapFigures(
+  sentence: string,
+  originalClaim: string,
+  correctedClaim: string
+): string | null {
+  const before = originalClaim.match(FIGURE) ?? [];
+  const after = correctedClaim.match(FIGURE) ?? [];
+  if (before.length === 0 || before.length !== after.length) return null;
+
+  let rewritten = sentence;
+  let changed = false;
+
+  for (let i = 0; i < before.length; i++) {
+    const from = before[i];
+    const to = after[i];
+    if (from === to) continue;
+    if (unitOf(from) !== unitOf(to)) return null;
+    if (!rewritten.includes(from)) return null;
+    rewritten = rewritten.replace(from, to);
+    changed = true;
+  }
+
+  return changed ? rewritten : null;
+}
+
+/**
+ * What kind of thing a figure is, so a percentage is never swapped for a
+ * length. Most figures are named by the unit that trails them; a standard
+ * like "Wi-Fi 7" is named by the label that leads it instead.
+ */
+function unitOf(figure: string): string {
+  const label = figure.match(/^[A-Za-z][A-Za-z-]*/);
+  if (label && /[A-Za-z]/.test(label[0]) && /\s|-/.test(figure)) {
+    return label[0].toLowerCase();
+  }
+  const unit = figure.match(/[^\d.,\s]+$/);
+  return unit ? unit[0].toLowerCase() : "";
+}
+
+/** Style repairs are scoped to their own sentence for the same reason. */
+function applyStyleRepair(
+  sentences: string[],
+  targetText: string,
+  ruleId: string
+): string[] {
+  const at = sentences.findIndex((sentence) => sentence.includes(targetText));
+  if (at < 0) return sentences;
+
+  const replacement = targetText.includes("その一方で") && ruleId === "AI002" ? "また、" : "";
+  const next = [...sentences];
+  next[at] = sentences[at].replace(targetText, replacement);
+  return next;
+}
+
+function tidy(text: string): string {
+  // Nothing is deleted here on a hunch: a phrase that reads as an AI-tell is
+  // rule AI012's to find, so it comes with a Finding the reader can refuse.
+  // A silent deletion would change the document at a span carrying no mark.
+  return text
+    .replace(/([。！？])\1+/g, "$1")
+    .replace(/^[、,。\s]+/, "")
+    .replace(/[、,]\s*[。！？]/g, "。")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
 }
