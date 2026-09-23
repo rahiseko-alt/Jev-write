@@ -468,11 +468,29 @@ export default function HomePage() {
                     )}
 
                     {analysisResult?.providerStatuses?.some((s) => s.failureCount > 0) && (
-                      // 何が失敗したかではなく、次にできることだけを示す。
-                      <div className="flex items-center justify-between gap-3 px-4 py-3 rounded-xl border border-amber-200 bg-amber-50 text-xs text-amber-900">
-                        <div className="flex items-center gap-2 min-w-0">
-                          <AlertTriangle className="w-4 h-4 shrink-0 text-amber-600" />
-                          <span>一部の確認ができませんでした。結果が不完全な可能性があります。</span>
+                      // どのサービスが何と言って失敗したかは、不具合を切り分ける唯一の手がかり
+                      // （ADR-0006 の層0・3）。畳んで残し、次にできることを横に置く。
+                      <div className="flex items-start justify-between gap-3 px-4 py-3 rounded-xl border border-amber-200 bg-amber-50 text-xs text-amber-900">
+                        <div className="flex items-start gap-2 min-w-0">
+                          <AlertTriangle className="w-4 h-4 shrink-0 text-amber-600 mt-0.5" />
+                          <details className="min-w-0">
+                            <summary className="cursor-pointer select-none">
+                              一部の確認ができませんでした。結果が不完全な可能性があります。
+                            </summary>
+                            <ul className="mt-1.5 space-y-1">
+                              {analysisResult?.providerStatuses
+                                ?.filter((s) => s.failureCount > 0)
+                                .map((s) => (
+                                  <li key={s.service} className="break-all">
+                                    <span className="font-bold">{s.service}</span>
+                                    ：{s.failureCount}件失敗
+                                    {s.lastError && (
+                                      <span className="block text-[11px] text-amber-800">{s.lastError}</span>
+                                    )}
+                                  </li>
+                                ))}
+                            </ul>
+                          </details>
                         </div>
                         <button
                           type="button"
