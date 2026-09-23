@@ -2,7 +2,9 @@ import { Claim, Importance } from "@/types";
 import { LLMProvider, RewriteInput, SurgicalFixInput } from "./types";
 import { recordFailure } from "../diagnostics";
 import {
+  DOCUMENT_QUERY_SYSTEM_PROMPT,
   SEARCH_QUERY_SYSTEM_PROMPT,
+  buildDocumentQueryUserPrompt,
   buildSearchQueryUserPrompt,
 } from "./search-queries";
 
@@ -189,6 +191,26 @@ Return a JSON object with this exact structure:
         return parsed.queries.map(String);
       }
       return [claim.normalizedText];
+    } catch (err) {
+      recordFailure(this, err);
+      throw err;
+    }
+  }
+
+  async generateDocumentQueries(text: string): Promise<string[]> {
+    try {
+      const rawContent = await this.callChatCompletion(
+        [
+          { role: "system", content: DOCUMENT_QUERY_SYSTEM_PROMPT },
+          { role: "user", content: buildDocumentQueryUserPrompt(text) },
+        ],
+        true
+      );
+      const parsed = parseJson(rawContent, "資料を集める検索クエリの作成");
+
+      if (Array.isArray(parsed)) return parsed.map(String);
+      if (Array.isArray(parsed.queries)) return parsed.queries.map(String);
+      return [];
     } catch (err) {
       recordFailure(this, err);
       throw err;
