@@ -5,6 +5,7 @@ import { recordFailure } from "../diagnostics";
 export interface AnthropicLLMOptions {
   apiKey?: string;
   model?: string;
+  maxTokens?: number;
   baseUrl?: string;
 }
 
@@ -12,6 +13,7 @@ export class AnthropicLLMProvider implements LLMProvider {
   private apiKey: string;
   private model: string;
   private baseUrl: string;
+  private maxTokens: number;
   /** What went wrong with the real service during this run, for the reader. */
   failureCount = 0;
   lastError?: string;
@@ -28,6 +30,9 @@ export class AnthropicLLMProvider implements LLMProvider {
       options.model ||
       process.env.ANTHROPIC_MODEL ||
       "claude-sonnet-5";
+    this.maxTokens = Number(
+      options.maxTokens || process.env.ANTHROPIC_MAX_TOKENS || 16384
+    );
     this.baseUrl = (
       options.baseUrl ||
       process.env.ANTHROPIC_BASE_URL ||
@@ -47,7 +52,7 @@ export class AnthropicLLMProvider implements LLMProvider {
 
     const body: Record<string, any> = {
       model: this.model,
-      max_tokens: 4096,
+      max_tokens: this.maxTokens,
       system: systemPrompt,
       messages: [{ role: "user", content: userPrompt }],
     };
@@ -70,8 +75,31 @@ export class AnthropicLLMProvider implements LLMProvider {
     }
 
     const data = await response.json();
+
+    // An answer cut off at the length limit is not an answer: parsed as JSON
+    // it fails somewhere in the middle, which reads like a syntax error
+    // rather than what it is.
+    if (data.stop_reason === "max_tokens") {
+      throw new Error(
+        `Anthropic の応答が長さ上限（max_tokens=${this.maxTokens}）で打ち切られました。文章を短くするか ANTHROPIC_MAX_TOKENS を上げてください。`
+      );
+    }
+
     const textBlock = data.content?.find((c: any) => c.type === "text");
     return textBlock?.text || "";
+  }
+
+  /** Reads the answer as JSON, and says which step's answer it could not read. */
+  private parseJson(raw: string, step: string): any {
+    const cleaned = this.cleanJson(raw);
+    try {
+      return JSON.parse(cleaned);
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
+      throw new Error(
+        `${step}の応答をJSONとして読み取れませんでした（${reason}）。応答の長さ: ${cleaned.length}文字。`
+      );
+    }
   }
 
   private cleanJson(raw: string): string {
@@ -111,8 +139,7 @@ Return ONLY a valid JSON object with this exact structure, nothing else:
 }`;
 
       const rawContent = await this.callMessages(systemPrompt, text);
-      const cleaned = this.cleanJson(rawContent);
-      const parsed = JSON.parse(cleaned);
+      const parsed = this.parseJson(rawContent, "主張の抽出");
       const rawClaims = Array.isArray(parsed) ? parsed : parsed.claims || [];
 
       return rawClaims.map((item: any, index: number): Claim => {
@@ -158,8 +185,7 @@ Dates: ${claim.dates?.join(", ") || "N/A"}
 Entities: ${claim.entities?.join(", ") || "N/A"}`;
 
       const rawContent = await this.callMessages(systemPrompt, userPrompt);
-      const cleaned = this.cleanJson(rawContent);
-      const parsed = JSON.parse(cleaned);
+      const parsed = this.parseJson(rawContent, "検索クエリの作成");
 
       if (Array.isArray(parsed)) {
         return parsed.map(String);

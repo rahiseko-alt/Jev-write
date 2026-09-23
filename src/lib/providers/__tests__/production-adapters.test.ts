@@ -201,3 +201,45 @@ describe("OpenAILLMProvider rate limiting", () => {
     expect(reached).toBeGreaterThan(0);
   });
 });
+
+describe("AnthropicLLMProvider answers it cannot use", () => {
+  afterEach(() => {
+    globalThis.fetch = realFetch;
+    vi.restoreAllMocks();
+  });
+
+  function respond(payload: Record<string, unknown>) {
+    return vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      statusText: "OK",
+      headers: { get: () => null },
+      json: async () => payload,
+      text: async (): Promise<string> => "",
+    })) as unknown as typeof fetch;
+  }
+
+  it("says the answer was cut off at the length limit", async () => {
+    const { AnthropicLLMProvider } = await import("@/lib/providers/llm/anthropic");
+    globalThis.fetch = respond({
+      stop_reason: "max_tokens",
+      content: [{ type: "text", text: '{"claims":[{"id":"claim-1"' }],
+    });
+
+    await expect(
+      new AnthropicLLMProvider({ apiKey: "test-key" }).extractClaims("本文。")
+    ).rejects.toThrow(/上限/);
+  });
+
+  it("names the step whose answer it could not read", async () => {
+    const { AnthropicLLMProvider } = await import("@/lib/providers/llm/anthropic");
+    globalThis.fetch = respond({
+      stop_reason: "end_turn",
+      content: [{ type: "text", text: "これはJSONではありません" }],
+    });
+
+    await expect(
+      new AnthropicLLMProvider({ apiKey: "test-key" }).extractClaims("本文。")
+    ).rejects.toThrow(/主張の抽出/);
+  });
+});

@@ -14,13 +14,27 @@ function retryAfterMs(header?: string | null): number {
 export interface OpenAILLMOptions {
   apiKey?: string;
   model?: string;
+  maxTokens?: number;
   baseUrl?: string;
+}
+
+/** Reads an answer as JSON, and says which step's answer it could not read. */
+function parseJson(raw: string, step: string): any {
+  try {
+    return JSON.parse(raw);
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err);
+    throw new Error(
+      `${step}の応答をJSONとして読み取れませんでした（${reason}）。応答の長さ: ${raw.length}文字。`
+    );
+  }
 }
 
 export class OpenAILLMProvider implements LLMProvider {
   private apiKey: string;
   private model: string;
   private baseUrl: string;
+  private maxTokens: number;
   /** What went wrong with the real service during this run, for the reader. */
   failureCount = 0;
   lastError?: string;
@@ -28,6 +42,7 @@ export class OpenAILLMProvider implements LLMProvider {
   constructor(options: OpenAILLMOptions = {}) {
     this.apiKey = options.apiKey || process.env.OPENAI_API_KEY || "";
     this.model = options.model || process.env.OPENAI_MODEL || "gpt-4o-mini";
+    this.maxTokens = Number(options.maxTokens || process.env.OPENAI_MAX_TOKENS || 16384);
     this.baseUrl = (options.baseUrl || process.env.OPENAI_BASE_URL || "https://api.openai.com/v1").replace(/\/$/, "");
   }
 
@@ -46,6 +61,7 @@ export class OpenAILLMProvider implements LLMProvider {
       model: this.model,
       messages,
       temperature: 0.1,
+      max_tokens: this.maxTokens,
     };
 
     if (jsonMode) {
@@ -76,6 +92,14 @@ export class OpenAILLMProvider implements LLMProvider {
     }
 
     const data = await response.json();
+
+    // An answer cut off at the length limit is not an answer.
+    if (data.choices?.[0]?.finish_reason === "length") {
+      throw new Error(
+        "OpenAI の応答が長さ上限で打ち切られました。文章を短くするか OPENAI_MAX_TOKENS を上げてください。"
+      );
+    }
+
     return data.choices?.[0]?.message?.content || "";
   }
 
@@ -112,7 +136,7 @@ Return a JSON object with this exact structure:
         true
       );
 
-      const parsed = JSON.parse(rawContent);
+      const parsed = parseJson(rawContent, "主張の抽出");
       const rawClaims = Array.isArray(parsed) ? parsed : parsed.claims || [];
 
       return rawClaims.map((item: any, index: number): Claim => {
@@ -160,7 +184,7 @@ Entities: ${claim.entities?.join(", ") || "N/A"}`;
         true
       );
 
-      const parsed = JSON.parse(rawContent);
+      const parsed = parseJson(rawContent, "検索クエリの作成");
       if (Array.isArray(parsed)) {
         return parsed.map(String);
       }
