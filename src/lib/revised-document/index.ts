@@ -1,4 +1,6 @@
-import type { AnalysisResult, ClaimResult, ClaimVerdict, StyleIssue } from "@/types";
+import type { AnalysisResult, ClaimResult, ClaimVerdict, StyleIssue,
+  EvidenceTrace,
+} from "@/types";
 
 /**
  * The Revised Document and everything derived from it, built in one place.
@@ -70,6 +72,12 @@ export type Finding = {
    */
   sentenceBefore: string;
   sentenceAfter: string;
+  /**
+   * Where this Finding's evidence went. Present on a fact Finding, so a
+   * reader looking at "unverified" can see whether nothing was found, or
+   * what was found was thrown away, and at which step.
+   */
+  evidenceTrace?: EvidenceTrace;
 };
 
 /** Everything that follows from a Finding's kind, in one place. */
@@ -262,6 +270,7 @@ function factFinding(
     adoptable: kind === "corrected" && at >= 0 && corrected !== text,
     sentenceBefore: "",
     sentenceAfter: "",
+    evidenceTrace: result.evidenceTrace,
   };
 }
 

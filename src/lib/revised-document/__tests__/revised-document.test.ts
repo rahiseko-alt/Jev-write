@@ -1152,3 +1152,32 @@ describe("what the panel shows beside the document", () => {
     expect(view.clipboardText).toBe(original);
   });
 });
+
+describe("where a Finding's evidence went", () => {
+  it("carries the trail onto the Finding, so an unverified one can be traced", () => {
+    const withTrace = analysis("価格は799ドルです。", "価格は799ドルです。", [
+      {
+        ...claim("価格は799ドルです。", "INSUFFICIENT"),
+        evidenceTrace: {
+          query: "価格 799ドル",
+          found: 3,
+          offSubject: 2,
+          unreadable: 1,
+          saidNothing: 0,
+          used: 0,
+        },
+      },
+    ]);
+
+    const view = buildRevisedDocument({ analysis: withTrace, adoption: {} });
+
+    expect(view.findings[0].evidenceTrace).toEqual({
+      query: "価格 799ドル",
+      found: 3,
+      offSubject: 2,
+      unreadable: 1,
+      saidNothing: 0,
+      used: 0,
+    });
+  });
+});
