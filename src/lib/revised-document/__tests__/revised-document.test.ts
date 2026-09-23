@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { buildRevisedDocument } from "@/lib/revised-document";
+import { BAND_LABEL } from "@/lib/jev/bands";
 import type { AnalysisResult, ClaimResult, StyleIssue } from "@/types";
 
 function claim(
@@ -1211,7 +1212,7 @@ describe("JEVの数値を画面まで運ぶ", () => {
 
     expect(finding?.confidence).toBe(86);
     expect(finding?.band).toBe("act");
-    expect(finding?.bandLabel).toContain("80%");
+    expect(finding?.bandLabel).toBe(BAND_LABEL.act);
     expect(finding?.consistency).toEqual({ probabilityTrue: 0.11, confidence: 0.89 });
     expect(finding?.evidence?.[0]).toMatchObject({
       relation: "contradicts",

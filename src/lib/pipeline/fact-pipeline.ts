@@ -415,13 +415,19 @@ async function verifyClaim(params: {
       const questions: Record<string, JEVQuestion> = {};
 
       // Asked whatever the search turned up. A figure nobody published has no
-      // page to contradict it, but the article itself is state JEV can read,
-      // and it answers with a number instead of silence (ADR-0008).
+      // page to contradict it, but the rest of the article is state JEV can
+      // read, and it answers with a number instead of silence (ADR-0008).
+      //
+      // The claim's own sentence is taken out of that state first. Left in,
+      // the question answers itself: a fabricated figure always agrees with
+      // the article that carries it, and JEV rightly said so.
       questions.holdsUp = {
         type: "noul",
         instructions:
-          "claim.text は、article（この文章の全体）および sources に書かれていることと、" +
-          "矛盾なく成り立つか。article や sources の記述から無理が生じる場合は成り立たないとする。",
+          "claim.text の数値や事実関係は、others（この主張の文を取り除いた記事の残り）および " +
+          "sources の記述と突き合わせたとき、辻褄が合うか。" +
+          "数値の辻褄が合わない場合は合わないとする。" +
+          "どちらにも関連する記述が無く判断材料が無い場合は、どちらとも言えない側に寄せること。",
       };
 
       readable.forEach((candidate, index) => {
@@ -440,7 +446,7 @@ async function verifyClaim(params: {
 
       const answers = await jev.ask(
         {
-          article: articleText,
+          others: articleWithoutClaim(articleText, claim),
           claim: {
             text: claim.normalizedText || claim.originalText,
             subject: claim.subject || claim.entities?.[0] || "",
@@ -610,6 +616,18 @@ async function verifyClaim(params: {
     evidences: claimEvidences,
     isFactCheckHit,
   };
+}
+
+/**
+ * The article with the claim's own sentence taken out, so that asking whether
+ * the claim fits the article is not asking whether it fits itself.
+ */
+function articleWithoutClaim(articleText: string, claim: Claim): string {
+  const sentence = claim.originalText?.trim();
+  if (!sentence) return articleText;
+  const at = articleText.indexOf(sentence);
+  if (at === -1) return articleText;
+  return articleText.slice(0, at) + articleText.slice(at + sentence.length);
 }
 
 function buildFactCheckQuery(claim: Claim): string {

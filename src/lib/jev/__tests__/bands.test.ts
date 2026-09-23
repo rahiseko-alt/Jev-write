@@ -17,9 +17,12 @@ describe("confidence bands", () => {
     expect(bandOf(0)).toBe("review");
   });
 
-  it("names every band in plain Japanese, with the numbers in the label", () => {
-    expect(BAND_LABEL.act).toContain("80%");
-    expect(BAND_LABEL.caution).toContain("50");
-    expect(BAND_LABEL.review).toContain("50%");
+  it("names every band in plain Japanese, carrying the lines it was drawn at", () => {
+    const act = `${Math.round(ACT_THRESHOLD * 100)}%`;
+    const caution = `${Math.round(CAUTION_THRESHOLD * 100)}`;
+    expect(BAND_LABEL.act).toContain(act);
+    expect(BAND_LABEL.caution).toContain(caution);
+    expect(BAND_LABEL.caution).toContain(act);
+    expect(BAND_LABEL.review).toContain(caution);
   });
 });
