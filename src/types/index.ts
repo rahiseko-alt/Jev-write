@@ -119,12 +119,14 @@ export type EvidenceTrace = {
   query: string;
   /** How many pages the search returned. */
   found: number;
-  /** How many of them never named what the claim is about. */
+  /** No longer used: JEV decides relevance within its own answer. */
   offSubject: number;
   /** How many could not be read (fetch failed, or the page was empty). */
   unreadable: number;
   /** How many were read and judged to say nothing about the claim. */
   saidNothing: number;
+  /** How many gave a relation JEV was too unsure of to act on. */
+  weak: number;
   /** How many became Evidence. */
   used: number;
 };

@@ -1164,6 +1164,7 @@ describe("where a Finding's evidence went", () => {
           offSubject: 2,
           unreadable: 1,
           saidNothing: 0,
+          weak: 0,
           used: 0,
         },
       },
@@ -1177,6 +1178,7 @@ describe("where a Finding's evidence went", () => {
       offSubject: 2,
       unreadable: 1,
       saidNothing: 0,
+      weak: 0,
       used: 0,
     });
   });
