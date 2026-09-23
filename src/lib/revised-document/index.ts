@@ -637,6 +637,17 @@ function anchorFor(wording: string, changed: string): string {
  * claim, or the reader refused it — the mark widens to the sentence rather
  * than disappearing.
  */
+/**
+ * Whether the reader turned this suggestion down.
+ *
+ * Only a suggestion can be refused. A sentence marked because nothing backed
+ * it was never a suggestion, so it is drawn plainly rather than faded: it is
+ * not a correction the reader declined, it is a sentence nobody could check.
+ */
+function isRefused(finding: Finding): boolean {
+  return finding.adoptable && !finding.adopted;
+}
+
 function markSentence(
   text: string,
   findings: Finding[],
@@ -665,7 +676,7 @@ function markSentence(
         end: located[1],
         findingIds: [finding.id],
         kind: finding.markKind!,
-        rejected: !finding.adopted,
+        rejected: isRefused(finding),
       });
     } else {
       wholeSentence.push(finding);
@@ -678,7 +689,7 @@ function markSentence(
     ? {
         findingIds: wholeSentence.map((finding) => finding.id),
         kind: strongest(wholeSentence.map((finding) => finding.markKind!)),
-        rejected: wholeSentence.every((finding) => !finding.adopted),
+        rejected: wholeSentence.every(isRefused),
       }
     : undefined;
 
