@@ -1,16 +1,14 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "fs";
 import { join } from "path";
-import { splitIntoBlocks } from "@/lib/text/blocks";
-import { mergeAnalyses } from "@/lib/pipeline/merge-results";
 import { buildRevisedDocument } from "@/lib/revised-document";
 import type { AnalysisResult } from "@/types";
 
 /**
  * The article as the reader pasted it must come back with the same
- * paragraphs, even though it was checked in blocks. The server trims each
- * block it receives, so the blank lines a cut fell on are not in any block's
- * result — they have to be put back when the blocks are assembled.
+ * paragraphs. The whole article is sent to /api/analyze in one run, and the
+ * server trims what it is sent; the blank lines between paragraphs are inside
+ * the text, so they survive and every heading keeps a paragraph of its own.
  */
 
 const ARTICLE = readFileSync(
@@ -18,9 +16,9 @@ const ARTICLE = readFileSync(
   "utf8"
 );
 
-/** What /api/analyze returns for one block: the text it was sent, trimmed. */
-function serverResult(block: string): AnalysisResult {
-  const text = block.trim();
+/** What /api/analyze returns for the article: the text it was sent, trimmed. */
+function serverResult(article: string): AnalysisResult {
+  const text = article.trim();
   return {
     originalText: text,
     revisedText: text,
@@ -40,18 +38,14 @@ function serverResult(block: string): AnalysisResult {
 }
 
 function paragraphsOnScreen(input: string) {
-  const blocks = splitIntoBlocks(input);
-  const merged = mergeAnalyses(blocks.map(serverResult), blocks);
-  return buildRevisedDocument({ analysis: merged, adoption: {} });
+  return buildRevisedDocument({ analysis: serverResult(input), adoption: {} });
 }
 
-describe("paragraph structure across blocks (article-01)", () => {
+describe("paragraph structure of a whole article checked in one run (article-01)", () => {
   const input = ARTICLE.trim();
 
-  it("is checked in more than one block, with cuts on blank lines", () => {
-    const blocks = splitIntoBlocks(input);
-    expect(blocks.length).toBeGreaterThan(1);
-    expect(blocks.slice(0, -1).some((b) => b.endsWith("\n\n"))).toBe(true);
+  it("has blank lines between paragraphs to keep", () => {
+    expect(input).toContain("\n\n");
   });
 
   it("shows as many paragraphs as the original has, each starting where the original does", () => {
