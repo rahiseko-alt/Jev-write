@@ -1,5 +1,5 @@
 import { correctionFromEvidence } from "./correction";
-import { ACT_THRESHOLD, CAUTION_THRESHOLD, bandOf } from "@/lib/jev/bands";
+import { CAUTION_THRESHOLD, bandOf } from "@/lib/jev/bands";
 import { describeFailure } from "@/lib/providers/diagnostics";
 import {
   Claim,
@@ -538,21 +538,23 @@ async function verifyClaim(params: {
       );
 
     if (claimEvidences.length === 0) {
-      // No page carried the figure. That is not the same as nothing being
-      // known: JEV was still asked whether the claim holds together with the
-      // article, and its answer is used rather than a number chosen here
-      // (ADR-0008).
+      // No page carried the figure. JEV was still asked whether the claim
+      // holds together with the rest of the article, and that number is
+      // shown rather than one chosen here (ADR-0008).
+      //
+      // A low reading here means the article does not carry what the claim
+      // needs — not that the claim is false. Measured: run it as a verdict and
+      // true sentences whose support simply is not in the article ("4月時点で
+      // 約50人", "年間1500円") come back as errors at 92% and 96%. So the
+      // number is shown and the claim stays unverified; only a source that
+      // actually says otherwise makes it CONTRADICTED.
       const held = consistency;
-      if (held && held.probabilityTrue < 0.5 && held.confidence >= ACT_THRESHOLD) {
-        verdict = "CONTRADICTED";
-        confidence = held.confidence;
-        reason = `裏付けとなるページは見つかりませんでしたが、JEVは記事内の他の記述と噛み合わないと判定しました（成り立つ確率 ${(held.probabilityTrue * 100).toFixed(0)}%、確信度 ${(held.confidence * 100).toFixed(0)}%）。`;
-      } else if (held) {
+      if (held) {
         verdict = "INSUFFICIENT";
         confidence = held.confidence;
         reason = lookupFailed
           ? "外部の確認サービスに接続できなかったため、確認できませんでした。"
-          : `裏付けとなるページが見つかりませんでした。JEVの読みは、成り立つ確率 ${(held.probabilityTrue * 100).toFixed(0)}%、確信度 ${(held.confidence * 100).toFixed(0)}% です。`;
+          : `裏付けとなるページが見つかりませんでした。記事の残りと突き合わせたJEVの読みは、辻褄が合う確率 ${(held.probabilityTrue * 100).toFixed(0)}%（確信度 ${(held.confidence * 100).toFixed(0)}%）です。低い場合も「誤り」ではなく、記事の中に裏付けが無いことを示します。`;
       } else {
         verdict = "INSUFFICIENT";
         confidence = undefined;
