@@ -1,8 +1,15 @@
 {
+  "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": "nextjs",
   "functions": {
     "src/app/api/**/*": {
       "maxDuration": 60
+    }
+  },
+  "git": {
+    "deploymentEnabled": {
+      "**": false,
+      "main": true
     }
   }
 }
