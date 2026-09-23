@@ -1313,3 +1313,30 @@ describe("断定しない", () => {
     expect(labels.join()).not.toContain("誤り");
   });
 });
+
+describe("言い換えられた主張の置き場所", () => {
+  it("引用ではなく言い換えでも、その文に結びつける", () => {
+    const original = "名古屋駅から徒歩8分、国際センター駅から徒歩3分。名古屋市西区那古野に拠点を構える。";
+    const result = claim("フリノバの拠点は名古屋駅から徒歩8分、国際センター駅から徒歩3分である。", "INSUFFICIENT");
+
+    const view = buildRevisedDocument({
+      analysis: analysis(original, original, [result]),
+      adoption: {},
+    });
+
+    expect(view.findings[0].lineIndex).toBe(0);
+    expect(view.paragraphs.flatMap((p) => p.segments).some((s) => s.mark)).toBe(true);
+  });
+
+  it("言葉をほとんど共有しない主張は、どこにも貼り付けない", () => {
+    const original = "名古屋駅から徒歩8分。";
+    const result = claim("まったく別の話題についての記述である。", "INSUFFICIENT");
+
+    const view = buildRevisedDocument({
+      analysis: analysis(original, original, [result]),
+      adoption: {},
+    });
+
+    expect(view.findings[0].lineIndex).toBe(-1);
+  });
+});

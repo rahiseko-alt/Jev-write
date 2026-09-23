@@ -266,10 +266,47 @@ function styleFindingId(index: number): string {
 function sentenceIndexOf(sentences: string[], target: string): number {
   const needle = target.trim();
   if (!needle) return -1;
-  return sentences.findIndex((sentence) => {
+
+  const contained = sentences.findIndex((sentence) => {
     const haystack = sentence.trim();
     return haystack.includes(needle) || needle.includes(haystack);
   });
+  if (contained !== -1) return contained;
+
+  // A claim is a machine's paraphrase of a sentence, not a quotation of it:
+  // "フリノバの拠点は名古屋駅から徒歩8分" never appears in an article that
+  // says "名古屋駅から徒歩8分、国際センター駅から徒歩3分。". Matched by the
+  // wording they share, so the reader can still see which sentence a Finding
+  // is about; a claim that shares too little is left unplaced rather than
+  // pinned on the wrong sentence.
+  const wanted = pairsOf(needle);
+  if (wanted.size === 0) return -1;
+
+  let best = -1;
+  let bestScore = 0;
+  sentences.forEach((sentence, index) => {
+    const found = pairsOf(sentence.trim());
+    let shared = 0;
+    for (const pair of wanted) if (found.has(pair)) shared++;
+    const score = shared / wanted.size;
+    if (score > bestScore) {
+      bestScore = score;
+      best = index;
+    }
+  });
+
+  return bestScore >= SENTENCE_MATCH_THRESHOLD ? best : -1;
+}
+
+/** How much of a claim's wording a sentence has to share to be its place. */
+const SENTENCE_MATCH_THRESHOLD = 0.5;
+
+/** The two-character runs of a string: enough to compare wording across a paraphrase. */
+function pairsOf(text: string): Set<string> {
+  const stripped = text.replace(/[\s、。「」『』（）()・,.]/g, "");
+  const pairs = new Set<string>();
+  for (let i = 0; i + 1 < stripped.length; i++) pairs.add(stripped.slice(i, i + 2));
+  return pairs;
 }
 
 function claimText(result: ClaimResult): string {
