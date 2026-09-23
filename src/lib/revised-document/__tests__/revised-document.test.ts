@@ -1183,3 +1183,39 @@ describe("where a Finding's evidence went", () => {
     });
   });
 });
+
+describe("JEVの数値を画面まで運ぶ", () => {
+  it("確信度の帯と、記事内の整合性の数値を Finding に残す", () => {
+    const result = claim("9月には142人に到達した", "CONTRADICTED");
+    result.confidence = 0.86;
+    result.band = "act";
+    result.consistency = { probabilityTrue: 0.11, confidence: 0.89 };
+    result.evidence = [
+      {
+        id: "ev-1",
+        claimId: result.claim.id,
+        sourceUrl: "https://example.com/a",
+        sourceTitle: "公式のお知らせ",
+        excerpt: "……",
+        sourceType: "official",
+        relation: "contradicts",
+        confidence: 0.86,
+      },
+    ];
+
+    const doc = buildRevisedDocument({
+      analysis: analysis("9月には142人に到達した。", "9月には142人に到達した。", [result]),
+      adoption: {},
+    });
+    const finding = doc.findings.find((item) => item.type === "fact");
+
+    expect(finding?.confidence).toBe(86);
+    expect(finding?.band).toBe("act");
+    expect(finding?.bandLabel).toContain("80%");
+    expect(finding?.consistency).toEqual({ probabilityTrue: 0.11, confidence: 0.89 });
+    expect(finding?.evidence?.[0]).toMatchObject({
+      relation: "contradicts",
+      confidence: 0.86,
+    });
+  });
+});
