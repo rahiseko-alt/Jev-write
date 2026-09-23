@@ -29,6 +29,8 @@ import {
   FactLedgerItem,
   StyleIssue,
 } from "@/types";
+import { splitIntoBlocks } from "@/lib/text/blocks";
+import { mergeAnalyses } from "@/lib/pipeline/merge-results";
 import {
   buildRevisedDocument,
   type Finding,
@@ -112,6 +114,8 @@ export default function HomePage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [analysisResult, setAnalysisResult] = useState<AnalysisResult | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  // A long article is checked a block at a time, and the reader watches it go.
+  const [blockProgress, setBlockProgress] = useState<{ done: number; total: number } | null>(null);
 
   // Result View Controls
   const [viewTab, setViewTab] = useState<"original" | "revised" | "side-by-side" | "inline">("revised");
@@ -268,28 +272,50 @@ export default function HomePage() {
     setErrorMessage(null);
 
     try {
-      const response = await fetch("/api/analyze", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: inputText.trim() }),
-      });
+      // One run has a time limit, so a long article is cut into blocks and
+      // checked one after another. Each finished block is shown straight
+      // away, and the finished blocks are assembled into one document.
+      const blocks = splitIntoBlocks(inputText.trim());
+      setBlockProgress({ done: 0, total: blocks.length });
+      setAnalysisResult(null);
+      setAdoptedOverrides({});
+      setSelectedFindingId(null);
 
-      if (!response.ok) {
-        const data = await response.json().catch(() => ({}));
-        // The reason is the useful part: which service could not answer, and
-        // what it said. Nothing is checked in its place.
-        const reason = [data.error, data.details].filter(Boolean).join(" / ");
-        throw new Error(reason || "チェックの実行に失敗しました。");
+      const finished: AnalysisResult[] = [];
+
+      for (const block of blocks) {
+        const response = await fetch("/api/analyze", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ text: block }),
+        });
+
+        if (!response.ok) {
+          const data = await response.json().catch(() => ({}));
+          // The reason is the useful part: which service could not answer, and
+          // what it said. Nothing is checked in its place.
+          const reason = [data.error, data.details].filter(Boolean).join(" / ");
+          const where =
+            blocks.length > 1 ? `${finished.length + 1}ブロック目で止まりました。` : "";
+          throw new Error(where + (reason || "チェックの実行に失敗しました。"));
+        }
+
+        const resData = await response.json();
+        let blockResult = resData.result;
+        if (!blockResult && resData.jobId) {
+          const checkRes = await fetch(`/api/analyze/${resData.jobId}`);
+          const checkData = await checkRes.json();
+          blockResult = checkData.job?.result;
+        }
+
+        if (blockResult) {
+          finished.push(blockResult);
+          setBlockProgress({ done: finished.length, total: blocks.length });
+          setAnalysisResult(mergeAnalyses(finished));
+        }
       }
 
-      const resData = await response.json();
-      let finalResult = resData.result;
-      if (!finalResult && resData.jobId) {
-        // Fallback fetch if not returned synchronously
-        const checkRes = await fetch(`/api/analyze/${resData.jobId}`);
-        const checkData = await checkRes.json();
-        finalResult = checkData.job?.result;
-      }
+      const finalResult = finished.length > 0 ? mergeAnalyses(finished) : null;
 
       if (finalResult) {
         setAnalysisResult(finalResult);
@@ -317,6 +343,7 @@ export default function HomePage() {
       setErrorMessage(err.message || "エラーが発生しました。");
     } finally {
       setIsSubmitting(false);
+      setBlockProgress(null);
     }
   };
 
@@ -662,11 +689,27 @@ export default function HomePage() {
 
                   <div className="flex justify-end pt-2 text-xs text-slate-400 font-mono">
                     {inputText.length} / 10,000文字
+                    {inputText.trim().length > 700 && (
+                      <span className="ml-2 text-slate-400">
+                        （{splitIntoBlocks(inputText.trim()).length}ブロックに分けて順番に処理します）
+                      </span>
+                    )}
                   </div>
                 </div>
               </div>
 
               {/* Error Alert if any */}
+              {blockProgress && blockProgress.total > 1 && (
+                <div className="flex items-center gap-2 px-4 py-3 rounded-xl border border-blue-200 bg-blue-50 text-xs text-blue-900">
+                  <span className="font-bold">
+                    {blockProgress.done} / {blockProgress.total} ブロック完了
+                  </span>
+                  <span className="text-blue-700">
+                    終わったところから結果に反映されます。
+                  </span>
+                </div>
+              )}
+
               {errorMessage && (
                 <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-xl text-sm flex items-center gap-2">
                   <AlertCircle className="w-4 h-4 shrink-0 text-red-500" />
@@ -860,6 +903,24 @@ export default function HomePage() {
                         )}
                       </button>
                     </div>
+
+                    {blockProgress && blockProgress.done < blockProgress.total && (
+                      <div className="flex items-center gap-2 px-4 py-3 rounded-xl border border-blue-200 bg-blue-50 text-xs text-blue-900">
+                        <span className="font-bold">
+                          {blockProgress.done} / {blockProgress.total} ブロック完了
+                        </span>
+                        <span className="text-blue-700">
+                          残りを順番に処理しています。ここまでの結果を先に表示しています。
+                        </span>
+                      </div>
+                    )}
+
+                    {errorMessage && (
+                      <div className="flex items-start gap-2 px-4 py-3 rounded-xl border border-red-200 bg-red-50 text-xs text-red-900">
+                        <AlertTriangle className="w-4 h-4 shrink-0 text-red-600 mt-0.5" />
+                        <span>{errorMessage}</span>
+                      </div>
+                    )}
 
                     {analysisResult?.providerStatuses?.some((s) => s.failureCount > 0) && (
                       <details className="rounded-xl border border-slate-200 bg-slate-50 text-xs text-slate-700">

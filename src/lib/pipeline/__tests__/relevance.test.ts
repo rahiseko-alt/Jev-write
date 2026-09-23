@@ -61,6 +61,16 @@ describe("isAboutSubject", () => {
     expect(isAboutSubject("何かの記事。", nameless)).toBe(true);
   });
 
+  it("reads the whole page, not just the search snippet", () => {
+    // 検索の抜粋に社名が出ないことは珍しくない。抜粋だけで落とすと、
+    // 主語について書かれた本物のページまで捨ててしまう。
+    const snippet = "登録者は9月に142人へ。オンライン会員が6割を占める。";
+    const pageText = "フリノバギルドの登録者は9月に142人へ。オンライン会員が6割を占める。";
+
+    expect(isAboutSubject(snippet, FRINOVA)).toBe(false);
+    expect(isAboutSubject([snippet, pageText].join(" "), FRINOVA)).toBe(true);
+  });
+
   it("does not admit a page it could not read", () => {
     expect(isAboutSubject("", FRINOVA)).toBe(false);
   });
