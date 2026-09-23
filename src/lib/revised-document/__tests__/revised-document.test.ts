@@ -824,12 +824,11 @@ describe("指摘を黙って落とさない", () => {
 });
 
 describe("ご自身で確かめるための検索語", () => {
-  it("確認に使った検索語を出し、無ければ出さない", () => {
-    const original = "一文目。二文目。";
-    const none = claim("一文目。", "INSUFFICIENT");
-    const older = claim("二文目。", "INSUFFICIENT");
-    older.evidenceTrace = {
-      query: "二文目 公式",
+  it("記事全体の検索語ではなく、その文そのものを記号を除いて検索語にする", () => {
+    const original = "* **購入後:** 自らが体験を発信する。## 見出し。";
+    const flagged = claim("自らが体験を発信する。", "INSUFFICIENT");
+    flagged.evidenceTrace = {
+      query: "記事全体 検索語1 / 記事全体 検索語2",
       found: 0,
       offSubject: 0,
       unreadable: 0,
@@ -839,13 +838,12 @@ describe("ご自身で確かめるための検索語", () => {
     };
 
     const view = buildRevisedDocument({
-      analysis: analysis(original, original, [none, older], [styleIssue("一文目")]),
+      analysis: analysis(original, original, [flagged], [styleIssue("見出し")]),
       adoption: {},
     });
 
-    const byText = (text: string) => view.findings.find((f) => f.originalText === text);
-    expect(byText("一文目。")?.checkQueries).toEqual([]);
-    expect(byText("二文目。")?.checkQueries).toEqual(["二文目 公式"]);
+    const fact = view.findings.find((f) => f.type === "fact")!;
+    expect(fact.checkQueries).toEqual(["購入後: 自らが体験を発信する"]);
     expect(view.findings.find((f) => f.type === "style")?.checkQueries).toEqual([]);
   });
 });
