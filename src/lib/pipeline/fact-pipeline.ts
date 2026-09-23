@@ -48,8 +48,12 @@ export interface FactPipelineOutput {
   evidences: Evidence[];
 }
 
-/** How many candidates one claim asks JEV about. They ride in one request. */
-const MAX_SOURCES_PER_CLAIM = 5;
+/**
+ * How many candidates one claim asks JEV about. They ride in one request, so
+ * a few more cost little: raised from five after a run where the subject's own
+ * page was crowded out by a booking listing and the listing decided the answer.
+ */
+const MAX_SOURCES_PER_CLAIM = 8;
 
 /** How many ways of asking the web about the whole text, before any claim. */
 const QUERIES_PER_DOCUMENT = 6;
@@ -57,8 +61,12 @@ const QUERIES_PER_DOCUMENT = 6;
 /** One more search, for a claim the shared pages have nothing for. */
 const QUERIES_PER_CLAIM = 1;
 
-/** How many pages each of those asks for. */
-const RESULTS_PER_QUERY = 4;
+/**
+ * How many pages each of those asks for. The pool is shared by every claim,
+ * so this is the whole run's reading list; too short a list and the page one
+ * sentence needs never gets found.
+ */
+const RESULTS_PER_QUERY = 7;
 
 /**
  * A relation JEV is less sure of than this is not acted on: below it the
@@ -499,7 +507,10 @@ async function verifyClaim(params: {
         });
 
         if (!bestExplanation) {
-          bestExplanation = `JEVの判定: ${relation}（確信度 ${(certainty * 100).toFixed(0)}%）`;
+          bestExplanation =
+            relation === "contradicts"
+              ? `このページは違うことを書いています（JEVの確信度 ${(certainty * 100).toFixed(0)}%）。どちらが正しいかはページを見てお確かめください。`
+              : `このページは同じことを書いています（JEVの確信度 ${(certainty * 100).toFixed(0)}%）。`;
         }
 
         if (relation === "contradicts" && !correctedClaim) {

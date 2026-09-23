@@ -107,3 +107,28 @@ describe("source pool", () => {
     expect(pool.size()).toBe(0);
   });
 });
+
+describe("ページの選び方", () => {
+  it("主語を通して扱っているページを、一度だけ触れたページより前に置く", async () => {
+    const { search, fetchProvider } = providers({
+      q: [
+        {
+          url: "https://example.com/listing",
+          title: "レンタルスペース一覧",
+          body: "名古屋のスペースを予約できます。フリノバもその一つです。他の施設も多数。",
+        },
+        {
+          url: "https://example.com/official",
+          title: "フリノバについて",
+          body: "フリノバはフリーランスの場所です。フリノバの会員は……。フリノバの案内。",
+        },
+      ],
+    });
+    const pool = createSourcePool({ search, fetchProvider, resultsPerQuery: 4 });
+    await pool.seed(["q"]);
+
+    const ordered = pool.candidatesFor(claim("フリノバ"), 5);
+
+    expect(ordered[0].url).toBe("https://example.com/official");
+  });
+});
