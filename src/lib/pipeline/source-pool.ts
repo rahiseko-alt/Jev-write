@@ -137,7 +137,28 @@ function termsOf(claim: Claim): string[] {
   return Array.from(new Set(terms));
 }
 
+/**
+ * How much of the page is about this claim's subject.
+ *
+ * Counting mentions rather than presence, because a directory or booking
+ * listing names the subject once in passing while its own site names it
+ * throughout — and a passing mention decided a judgement it had no business
+ * deciding. Each term is capped so one repeated word cannot carry a page.
+ */
+const MENTIONS_PER_TERM_CAP = 6;
+
 function scoreOf(page: PooledSource, terms: string[]): number {
-  const haystack = `${page.title}\n${page.text}`;
-  return terms.reduce((score, term) => (haystack.includes(term) ? score + 1 : score), 0);
+  const haystack = `${page.title}\n${page.title}\n${page.text}`;
+
+  return terms.reduce((score, term) => score + Math.min(mentions(haystack, term), MENTIONS_PER_TERM_CAP), 0);
+}
+
+function mentions(haystack: string, term: string): number {
+  let count = 0;
+  let at = haystack.indexOf(term);
+  while (at !== -1) {
+    count++;
+    at = haystack.indexOf(term, at + term.length);
+  }
+  return count;
 }
