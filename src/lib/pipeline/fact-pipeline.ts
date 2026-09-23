@@ -7,6 +7,7 @@ import {
   sectionsOf,
 } from "./support-question";
 import { describeFailure } from "@/lib/providers/diagnostics";
+import { QUERIES_PER_CLAIM } from "@/lib/providers/llm/search-queries";
 import {
   Claim,
   ClaimResult,
@@ -59,9 +60,6 @@ const MAX_SOURCES_PER_CLAIM = 8;
 /** How many ways of asking the web about the whole text, before any claim. */
 const QUERIES_PER_DOCUMENT = 6;
 
-/** One more search, for a claim the shared pages have nothing for. */
-const QUERIES_PER_CLAIM = 1;
-
 /**
  * How many pages each of those asks for. The pool is shared by every claim,
  * so this is the whole run's reading list; too short a list and the page one
@@ -99,6 +97,10 @@ export async function runFactPipeline(
     message: "主張（Claim）の抽出中...",
   });
 
+  // The article's own queries need only the text, so they are written while
+  // the claims are being extracted rather than after.
+  const documentQueriesPending = writeDocumentQueries(llm, text);
+
   // No stand-in: a generation that failed is the run failing, said out loud.
   const extractedClaims: Claim[] = await llm.extractClaims(text);
 
@@ -109,46 +111,40 @@ export async function runFactPipeline(
     claimsCount: extractedClaims.length,
   });
 
-  // One pool of pages for the whole run. Searching per claim asked the same
-  // questions over and over and spent the search budget on duplicates.
+  // One pool of pages for the whole run. Every claim's own searches and the
+  // article's searches all fill it, and every claim picks from all of it.
   const pool = createSourcePool({
     search,
     fetchProvider,
     resultsPerQuery: RESULTS_PER_QUERY,
   });
 
-  let documentQueries: string[] = [];
-  try {
-    if (typeof llm.generateDocumentQueries === "function") {
-      documentQueries = (await llm.generateDocumentQueries(text))
-        .map((query) => query.trim())
-        .filter(Boolean)
-        .slice(0, QUERIES_PER_DOCUMENT);
-    }
-  } catch (err) {
-    console.warn("Document-level search queries could not be written:", err);
-  }
+  // The article's searches start as soon as their queries exist, while the
+  // claims' questions are still being written.
+  const documentQueries = await documentQueriesPending;
+  const documentSeeded = documentQueries.length > 0 ? pool.seed(documentQueries) : Promise.resolve();
 
-  if (documentQueries.length > 0) {
-    await pool.seed(documentQueries);
-  }
+  // For every claim, the questions that would settle it, primary source first
+  // (ADR-0015). One generation for all claims; all their searches at once.
+  const claimQueries = await writeClaimQueries(llm, extractedClaims);
+  await Promise.all([
+    documentSeeded,
+    pool.seed(extractedClaims.flatMap((claim) => claimQueries.get(claim.id) ?? [])),
+  ]);
 
   const claimResults: ClaimResult[] = [];
   const allEvidences: Evidence[] = [];
   let factHitsCount = 0;
 
   // Process claims in parallel
-  const claimPromises = extractedClaims.map(async (claim, index) => {
+  const claimPromises = extractedClaims.map(async (claim) => {
     try {
       return await verifyClaim({
         claim,
         pool,
-        index,
-        llm,
+        queries: [...(claimQueries.get(claim.id) ?? []), ...documentQueries],
         factCheck,
         jev,
-        search,
-        fetchProvider,
       });
     } catch (err) {
       // ADR-0003: one claim that could not be checked leaves that claim
@@ -212,18 +208,16 @@ async function verifyClaim(params: {
   claim: Claim;
   /** The pages this run has already found and read, shared by every claim. */
   pool: SourcePool;
-  index: number;
-  llm: LLMProvider;
+  /** The searches that were made with this claim in mind: its own, then the article's. */
+  queries: string[];
   factCheck: GoogleFactCheckClient;
   jev: JEVClient;
-  search: SearchProvider;
-  fetchProvider: FetchProvider;
 }): Promise<{
   claimResult: ClaimResult;
   evidences: Evidence[];
   isFactCheckHit: boolean;
 }> {
-  const { claim, pool, index, llm, factCheck, jev, fetchProvider } = params;
+  const { claim, pool, queries, factCheck, jev } = params;
   const claimEvidences: Evidence[] = [];
   // A lookup that could not be made at all, as opposed to one that ran and
   // found nothing. The reader is told which of the two happened.
@@ -333,26 +327,10 @@ async function verifyClaim(params: {
   // lookup found: the one question below is asked of every sentence, and it
   // is asked of everything that was collected (ADR-0011).
   //
-  // The pages were gathered for the whole text before any claim was looked
-  // at, so most claims cost no search at all. Only a claim the pool has
-  // nothing for pays for one of its own (ADR-0007: ask once, not per claim).
+  // The pool already holds what this claim's own questions found, next to
+  // what the article's queries found (ADR-0015). Which of them go to JEV is
+  // decided as before.
   let pooled = pool.candidatesFor(claim, MAX_SOURCES_PER_CLAIM);
-
-  if (pooled.length === 0) {
-    let queries: string[] = [];
-    try {
-      queries = (await llm.generateSearchQueries(claim))
-        .map((query) => query.trim())
-        .filter(Boolean)
-        .slice(0, QUERIES_PER_CLAIM);
-    } catch (err) {
-      console.warn(`Search queries could not be written for claim ${claim.id}:`, err);
-    }
-
-    const query = queries[0] || claim.normalizedText || claim.originalText;
-    await pool.addQuery(query);
-    pooled = pool.candidatesFor(claim, MAX_SOURCES_PER_CLAIM);
-  }
 
   // No page names the claim's subject word for word — the subject can come
   // back paraphrased or in another language. The pages are still read, and
@@ -362,7 +340,7 @@ async function verifyClaim(params: {
     pooled = pool.closestFor(claim, MAX_SOURCES_PER_CLAIM);
   }
 
-  trace.query = pool.queries().join(" / ");
+  trace.query = queries.join(" / ");
   trace.found = pooled.length;
   // What the reader is told about is the web search: the fact-check lookup
   // failing on its own leaves the pages to ask with.
@@ -508,6 +486,47 @@ async function verifyClaim(params: {
     evidences: claimEvidences,
     isFactCheckHit,
   };
+}
+
+/** The article's queries, or none when they could not be written. */
+async function writeDocumentQueries(llm: LLMProvider, text: string): Promise<string[]> {
+  if (typeof llm.generateDocumentQueries !== "function") return [];
+  try {
+    return (await llm.generateDocumentQueries(text))
+      .map((query) => query.trim())
+      .filter(Boolean)
+      .slice(0, QUERIES_PER_DOCUMENT);
+  } catch (err) {
+    console.warn("Document-level search queries could not be written:", err);
+    return [];
+  }
+}
+
+/**
+ * Each claim's questions, by claim id. When they could not be written the
+ * claims are still checked, against the pages the article's queries found;
+ * the claim's sentence is never searched in their place.
+ */
+async function writeClaimQueries(
+  llm: LLMProvider,
+  claims: Claim[]
+): Promise<Map<string, string[]>> {
+  if (claims.length === 0 || typeof llm.generateClaimQueries !== "function") return new Map();
+  try {
+    const written = await llm.generateClaimQueries(claims);
+    const byId = new Map<string, string[]>();
+    for (const claim of claims) {
+      const queries = (written.get(claim.id) ?? [])
+        .map((query) => query.trim())
+        .filter(Boolean)
+        .slice(0, QUERIES_PER_CLAIM);
+      byId.set(claim.id, queries);
+    }
+    return byId;
+  } catch (err) {
+    console.warn("Search questions for the claims could not be written:", err);
+    return new Map();
+  }
 }
 
 function buildFactCheckQuery(claim: Claim): string {

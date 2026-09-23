@@ -3,10 +3,11 @@ import { LLMProvider } from "./types";
 import { recordFailure, recordRetry } from "../diagnostics";
 import { sendWithRetry } from "../retry";
 import {
+  CLAIM_QUERY_SYSTEM_PROMPT,
   DOCUMENT_QUERY_SYSTEM_PROMPT,
-  SEARCH_QUERY_SYSTEM_PROMPT,
+  buildClaimQueryUserPrompt,
   buildDocumentQueryUserPrompt,
-  buildSearchQueryUserPrompt,
+  readClaimQueries,
 } from "./search-queries";
 
 export interface OpenAILLMOptions {
@@ -160,27 +161,17 @@ Return a JSON object with this exact structure:
     }
   }
 
-  async generateSearchQueries(claim: Claim): Promise<string[]> {
+  async generateClaimQueries(claims: Claim[]): Promise<Map<string, string[]>> {
+    if (claims.length === 0) return new Map();
     try {
-      const systemPrompt = SEARCH_QUERY_SYSTEM_PROMPT;
-      const userPrompt = buildSearchQueryUserPrompt(claim);
-
       const rawContent = await this.callChatCompletion(
         [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: userPrompt },
+          { role: "system", content: CLAIM_QUERY_SYSTEM_PROMPT },
+          { role: "user", content: buildClaimQueryUserPrompt(claims) },
         ],
         true
       );
-
-      const parsed = parseJson(rawContent, "検索クエリの作成");
-      if (Array.isArray(parsed)) {
-        return parsed.map(String);
-      }
-      if (Array.isArray(parsed.queries)) {
-        return parsed.queries.map(String);
-      }
-      return [claim.normalizedText];
+      return readClaimQueries(parseJson(rawContent, "検索の問いの作成"), claims);
     } catch (err) {
       recordFailure(this, err);
       throw err;
