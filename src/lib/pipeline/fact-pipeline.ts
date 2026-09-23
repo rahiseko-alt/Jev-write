@@ -1,11 +1,13 @@
-import { SourcePool, createSourcePool } from "./source-pool";
+import { PooledSource, SourcePool, createSourcePool } from "./source-pool";
 import { RELEVANCE_THRESHOLD } from "@/lib/jev/bands";
 import {
-  SourcePage,
+  OriginPage,
   planRelevanceRequests,
   planSupportRequests,
   sectionsOf,
+  takeWithinBudget,
 } from "./support-question";
+import { originsOf } from "./source-origin";
 import { describeFailure } from "@/lib/providers/diagnostics";
 import { QUERIES_PER_CLAIM } from "@/lib/providers/llm/search-queries";
 import {
@@ -50,13 +52,6 @@ export interface FactPipelineOutput {
   evidences: Evidence[];
 }
 
-/**
- * How many candidates one claim asks JEV about. They ride in one request, so
- * a few more cost little: raised from five after a run where the subject's own
- * page was crowded out by a booking listing and the listing decided the answer.
- */
-const MAX_SOURCES_PER_CLAIM = 8;
-
 /** How many ways of asking the web about the whole text, before any claim. */
 const QUERIES_PER_DOCUMENT = 6;
 
@@ -66,15 +61,6 @@ const QUERIES_PER_DOCUMENT = 6;
  * sentence needs never gets found.
  */
 const RESULTS_PER_QUERY = 7;
-
-const SOURCE_PRIORITY: Record<SourceType, number> = {
-  primary: 1,
-  official: 2,
-  research: 3,
-  secondary: 4,
-  ugc: 5,
-  unknown: 6,
-};
 
 /**
  * Execute Fact Verification Pipeline (Sections 7-17 of specification)
@@ -233,6 +219,8 @@ async function verifyClaim(params: {
     saidNothing: 0,
     weak: 0,
     used: 0,
+    overCap: 0,
+    origins: 0,
   };
   let verdict: ClaimVerdict = "INSUFFICIENT";
   let reason: string | undefined;
@@ -327,55 +315,63 @@ async function verifyClaim(params: {
   // lookup found: the one question below is asked of every sentence, and it
   // is asked of everything that was collected (ADR-0011).
   //
-  // The pool already holds what this claim's own questions found, next to
-  // what the article's queries found (ADR-0015). Which of them go to JEV is
-  // decided as before.
-  let pooled = pool.candidatesFor(claim, MAX_SOURCES_PER_CLAIM);
-
-  // No page names the claim's subject word for word — the subject can come
-  // back paraphrased or in another language. The pages are still read, and
-  // JEV says which of them speak to the claim (ADR-0007: nothing is dropped
-  // on this side before JEV is asked).
-  if (pooled.length === 0) {
-    pooled = pool.closestFor(claim, MAX_SOURCES_PER_CLAIM);
-  }
+  // The selection, step by step (ADR-0016):
+  //  1. Every page in the pool is a candidate. This claim's own searches
+  //     first, then the article's, then the rest, each in search order. No
+  //     score of this side's orders or cuts them (not the subject's mentions,
+  //     #39).
+  //  2. Only JEV's input ceiling keeps a candidate out, and what it keeps out
+  //     is counted and reported.
+  const pooled = pool.candidatesFor(queries);
+  const readable = pooled.filter((page) => page.text.trim().length > 0);
+  const { taken, overCap } = takeWithinBudget(readable);
 
   trace.query = queries.join(" / ");
   trace.found = pooled.length;
+  trace.unreadable = pooled.length - readable.length;
+  trace.overCap = overCap.length;
+  if (overCap.length > 0) {
+    console.info(
+      `Claim ${claim.id}: ${overCap.length} of ${readable.length} candidate pages were over the JEV budget and not asked about (ADR-0016).`
+    );
+  }
   // What the reader is told about is the web search: the fact-check lookup
   // failing on its own leaves the pages to ask with.
   lookupFailed = pool.searchFailed() && pooled.length === 0;
 
-  const readable = pooled
-    .slice()
-    .sort(
-      (a, b) =>
-        (SOURCE_PRIORITY[mapDomainToSourceType(a.url)] || 6) -
-        (SOURCE_PRIORITY[mapDomainToSourceType(b.url)] || 6)
-    )
-    .filter((page) => page.text.trim().length > 0);
-  trace.unreadable = pooled.length - readable.length;
-
-  // Every page collected, and every fact-check review, is cut into sections
-  // (ADR-0014). Nothing is cut away: the sections of a page are its text.
-  const factCheckPages: SourcePage[] = claimEvidences.map((item) => ({
-    title: item.sourceTitle,
-    url: item.sourceUrl,
-    text: item.excerpt,
-  }));
-  const pages: SourcePage[] = [
-    ...factCheckPages,
-    ...readable.map((page) => ({ title: page.title, url: page.url, text: page.text })),
+  //  3. Each page gets its origin (one site, or the sites carrying the same
+  //     text) and whether its address is a primary source's.
+  //  4. The pages go in a fixed order that does not change from run to run:
+  //     primary sources first, then by origin, then by address.
+  //  5. They are cut into sections (ADR-0014); nothing is cut away.
+  type Collected = { page: OriginPage; factCheck?: Evidence; web?: PooledSource };
+  const collected: Collected[] = [
+    ...claimEvidences.map((item) => ({
+      page: { title: item.sourceTitle, url: item.sourceUrl, text: item.excerpt },
+      factCheck: item,
+    })),
+    ...taken.map((page) => ({
+      page: { title: page.title, url: page.url, text: page.text },
+      web: page,
+    })),
   ];
-  const sections = sectionsOf(pages);
+  const origins = originsOf(collected.map(({ page }) => page));
+  collected.forEach((item, i) => Object.assign(item.page, origins[i]));
+  const primaryOrigins = new Set(
+    collected.filter(({ page }) => page.primary).map(({ page }) => page.origin ?? page.url)
+  );
+  const ordered = collected
+    .slice()
+    .sort((a, b) => fixedOrder(a.page, b.page, primaryOrigins));
+  const sections = sectionsOf(ordered.map(({ page }) => page));
 
   if (typeof jev.ask !== "function") {
     throw new Error("JEVに問いを送る手段がありません（ask が未実装）。");
   }
   const ask = jev.ask.bind(jev);
 
-  // First: JEV says, section by section, which ones speak to the sentence.
-  // Every section is asked; none is dropped on this side (ADR-0007).
+  //  6. JEV says, section by section, which ones speak to the sentence.
+  //     Every section is asked; none is dropped on this side (ADR-0007).
   const relevanceRequests = planRelevanceRequests({
     original: claim.originalText,
     sections,
@@ -394,15 +390,20 @@ async function verifyClaim(params: {
     });
   });
 
-  // Only the sections JEV judged related go on, in their original order.
-  // Unrelated material costs the next answer accuracy (docs.typesafe.ai/
-  // model-jaggedness: large state full of irrelevant detail).
+  //  7. Only the sections JEV judged related go on, in the fixed order of
+  //     step 4. Unrelated material costs the next answer accuracy
+  //     (docs.typesafe.ai/model-jaggedness: large state full of irrelevant
+  //     detail). A section that says otherwise than the sentence is about
+  //     the same thing, so it is related and goes on: nothing contradicting
+  //     is dropped here.
   const related = sections
     .map((section, index) => ({ section, index }))
     .filter(({ index }) => (relevance.get(index) ?? 0) >= RELEVANCE_THRESHOLD);
 
-  // Second: the 信頼度 question, as worded before, with those sections as
-  // the sources. None related: the same question with no sources.
+  //  8. The 信頼度 question, as worded before (ADR-0011), with those
+  //     sections as the sources, grouped by origin and each saying whether
+  //     it is a primary source. Whether that matters is JEV's to weigh. None
+  //     related: the same question with no sources.
   const supportRequests = planSupportRequests({
     original: claim.originalText,
     sections: related.map(({ section }) => section),
@@ -436,21 +437,23 @@ async function verifyClaim(params: {
     }
   }
 
-  const factCheckEvidence = claimEvidences.splice(0, claimEvidences.length);
-  factCheckEvidence.forEach((item, at) => {
-    if (best.has(at)) claimEvidences.push(item);
-  });
-
-  readable.forEach((page, i) => {
-    const at = factCheckPages.length + i;
+  claimEvidences.splice(0, claimEvidences.length);
+  const usedOrigins = new Set<string>();
+  ordered.forEach(({ page: collectedPage, factCheck: review, web: page }, at) => {
     const read = best.get(at);
+    if (read) usedOrigins.add(collectedPage.origin ?? collectedPage.url);
+    if (review) {
+      if (read) claimEvidences.push(review);
+      return;
+    }
+    if (!page) return;
     if (!read) {
       trace.saidNothing++;
       return;
     }
     trace.used++;
     claimEvidences.push({
-      id: `ev-${claim.id}-web-${i}`,
+      id: `ev-${claim.id}-web-${at}`,
       claimId: claim.id,
       sourceUrl: page.url,
       sourceTitle: page.title,
@@ -461,6 +464,7 @@ async function verifyClaim(params: {
       confidence: read.relevance,
     });
   });
+  trace.origins = usedOrigins.size;
 
   // No verdict is drawn from the pages: the screen shows the 信頼度 and
   // nothing else (ADR-0009, ADR-0011).
@@ -555,6 +559,30 @@ function mapChoiceToClaimVerdict(choice?: string): ClaimVerdict {
     default:
       return "INSUFFICIENT";
   }
+}
+
+/**
+ * The fixed order pages go to JEV in (ADR-0016, step 4): origins holding a
+ * primary source first, then origin by origin, and within an origin primary
+ * pages first, then by address. Strings are compared code unit by code unit
+ * so the order is the same on every run and every machine. An origin's pages
+ * stay together, so it reaches JEV as one entry. Ties (the same address
+ * twice) keep the order they came in, which is itself fixed.
+ */
+function fixedOrder(a: OriginPage, b: OriginPage, primaryOrigins: Set<string>): number {
+  const originA = a.origin ?? a.url;
+  const originB = b.origin ?? b.url;
+  const primaryOrigin = Number(primaryOrigins.has(originB)) - Number(primaryOrigins.has(originA));
+  if (primaryOrigin !== 0) return primaryOrigin;
+  const origin = compare(originA, originB);
+  if (origin !== 0) return origin;
+  const primary = Number(b.primary ?? false) - Number(a.primary ?? false);
+  if (primary !== 0) return primary;
+  return compare(a.url, b.url);
+}
+
+function compare(a: string, b: string): number {
+  return a < b ? -1 : a > b ? 1 : 0;
 }
 
 /**

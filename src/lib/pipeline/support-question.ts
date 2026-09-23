@@ -57,11 +57,63 @@ export function estimateTokens(text: string): number {
   return Math.ceil(wide * 1.5 + narrow / 3);
 }
 
+/**
+ * The ceiling on what one claim sends to the relevance question (ADR-0016):
+ * about four requests' worth of state, 120,000 estimated tokens (some 80,000
+ * Japanese characters). Every page in the pool is a candidate; this is the
+ * only thing that keeps one out, and it keeps count of what it kept out.
+ * Four requests is about what one claim sent before, with eight pages of
+ * 5,000–10,000 characters, so the run sends JEV no more than it did (JEV has
+ * no retry on 429 yet; more at once risks going over its rate limit).
+ */
+export const RELEVANCE_REQUESTS_PER_CLAIM = 4;
+export const CANDIDATE_TOKEN_BUDGET = RELEVANCE_REQUESTS_PER_CLAIM * STATE_TOKEN_BUDGET;
+
+/** What a page costs in the relevance question's state, estimated high. */
+export function pageTokens(page: SourcePage): number {
+  return estimateTokens(JSON.stringify({ title: page.title, url: page.url, text: page.text }));
+}
+
+/**
+ * The candidates, in the order given, that fit the budget: each is taken if
+ * it still fits, and passed over (and counted) if not, so a page too long for
+ * what is left does not also keep out the shorter ones after it. The order is
+ * the caller's (search order, ADR-0016); nothing is scored here.
+ */
+export function takeWithinBudget<T extends SourcePage>(
+  candidates: T[],
+  budget: number = CANDIDATE_TOKEN_BUDGET
+): { taken: T[]; overCap: T[] } {
+  const taken: T[] = [];
+  const overCap: T[] = [];
+  let used = 0;
+  for (const page of candidates) {
+    const cost = pageTokens(page);
+    if (used + cost <= budget) {
+      taken.push(page);
+      used += cost;
+    } else {
+      overCap.push(page);
+    }
+  }
+  return { taken, overCap };
+}
+
 /** A page as it was collected, or one section of it as it goes into the state. */
 export type SourcePage = { title: string; url: string; text: string };
 
-/** One section, and the page it came from (the order the pages were given). */
-export type Section = { page: number; source: SourcePage };
+/**
+ * Where a page comes from (ADR-0016): its origin (a site, or sites carrying
+ * the same text), and whether its address is a primary source's. Handed to
+ * JEV as attributes; nothing is weighed by them here.
+ */
+export type SourceOrigin = { origin: string; primary: boolean; primaryKind?: string };
+
+/** A collected page with its origin, when it is known. */
+export type OriginPage = SourcePage & Partial<SourceOrigin>;
+
+/** One section, the page it came from (the order the pages were given), and that page's origin. */
+export type Section = { page: number; source: SourcePage } & Partial<SourceOrigin>;
 
 /**
  * Whether a line reads as a heading: marked as one, or short and not ending
@@ -139,19 +191,51 @@ function splitLong(line: string, maxChars: number): string[] {
 }
 
 /** Every page in sections, in page order and then in reading order. */
-export function sectionsOf(pages: SourcePage[]): Section[] {
+export function sectionsOf(pages: OriginPage[]): Section[] {
   return pages.flatMap((page, index) =>
     splitSections(page.text).map((text) => ({
       page: index,
       source: { title: page.title, url: page.url, text },
+      ...(page.origin !== undefined ? { origin: page.origin } : {}),
+      ...(page.primary !== undefined ? { primary: page.primary } : {}),
+      ...(page.primaryKind !== undefined ? { primaryKind: page.primaryKind } : {}),
     }))
   );
+}
+
+/**
+ * One origin in the 信頼度 question's `sources` (ADR-0016): the related
+ * sections of the pages that share it, each saying whether it comes from a
+ * primary source. Pages of one site, or copies of one text, arrive as one
+ * origin, so a reprint is never read as a second, independent source.
+ */
+export type OriginSources = {
+  origin: string;
+  sections: (SourcePage & { primary: boolean; primaryKind?: string })[];
+};
+
+/** Consecutive sections of the same origin, as one entry each. */
+export function groupByOrigin(sections: Section[]): OriginSources[] {
+  const groups: OriginSources[] = [];
+  for (const section of sections) {
+    const origin = section.origin ?? section.source.url;
+    const entry = {
+      ...section.source,
+      primary: section.primary ?? false,
+      ...(section.primaryKind !== undefined ? { primaryKind: section.primaryKind } : {}),
+    };
+    const last = groups[groups.length - 1];
+    if (last && last.origin === origin) last.sections.push(entry);
+    else groups.push({ origin, sections: [entry] });
+  }
+  return groups;
 }
 
 export type JEVRequest = {
   state: {
     claim: { original: string };
-    sources: SourcePage[];
+    /** One entry per section (relevance), or origins holding their sections (信頼度). */
+    sources: SourcePage[] | OriginSources[];
   };
   /** Which of the given sections `state.sources` holds, in the same order. */
   sections: number[];
@@ -192,6 +276,7 @@ export function planSupportRequests(params: {
   return pack({
     ...params,
     fixed: { support: SUPPORT_QUESTION },
+    grouped: true,
   });
 }
 
@@ -200,6 +285,8 @@ function pack(params: {
   sections: Section[];
   fixed: Record<string, JEVQuestion>;
   perSection?: (index: number) => JEVQuestion;
+  /** Sources as origins holding their sections (the 信頼度 question), not one entry per section. */
+  grouped?: boolean;
   stateBudget?: number;
   requestBudget?: number;
 }): JEVRequest[] {
@@ -208,6 +295,7 @@ function pack(params: {
     sections,
     fixed,
     perSection,
+    grouped = false,
     stateBudget = STATE_TOKEN_BUDGET,
     requestBudget = REQUEST_TOKEN_BUDGET,
   } = params;
@@ -235,8 +323,12 @@ function pack(params: {
         questions[`relevant${i}`] = perSection(i);
       });
     }
+    const chosen = current.map((i) => sections[i]);
     requests.push({
-      state: { ...base, sources: current.map((i) => sections[i].source) },
+      state: {
+        ...base,
+        sources: grouped ? groupByOrigin(chosen) : chosen.map((section) => section.source),
+      },
       sections: current,
       questions,
     });
@@ -245,9 +337,15 @@ function pack(params: {
     asked = fixedCost;
   };
 
+  // What one section adds to the state. Grouped, it carries its origin's
+  // attributes and its origin's entry is counted with every section: too
+  // high only splits a request that would have fitted.
+  const sizeOf = (section: Section) =>
+    grouped ? cost(groupByOrigin([section])[0]) : cost(section.source);
+
   sections.forEach((section, index) => {
     // A separator's worth on top of the section itself.
-    const size = cost(section.source) + 1;
+    const size = sizeOf(section) + 1;
     const extra = perSection ? cost(perSection(current.length)) : 0;
     if (baseCost + size + longest > stateBudget) {
       throw new Error(

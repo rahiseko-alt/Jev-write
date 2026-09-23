@@ -1,6 +1,9 @@
 import { describe, it, expect } from "vitest";
 import { runFactPipeline } from "@/lib/pipeline/fact-pipeline";
 import {
+  CANDIDATE_TOKEN_BUDGET,
+  pageTokens,
+  takeWithinBudget,
   REQUEST_TOKEN_BUDGET,
   SECTION_MAX_CHARS,
   STATE_TOKEN_BUDGET,
@@ -115,6 +118,9 @@ function answering(
 
 const relevanceCalls = (calls: Call[]) => calls.filter((call) => !("support" in call.questions));
 const supportCalls = (calls: Call[]) => calls.filter((call) => "support" in call.questions);
+/** The addresses of the sections in a 信頼度 question, origin by origin. */
+const sentUrls = (call: Call): string[] =>
+  call.state.sources.flatMap((origin: any) => origin.sections.map((s: any) => s.url));
 
 describe("JEVへの問い（ADR-0011・ADR-0014）", () => {
   it("1回目は節ごとに関連の Noul を1回のリクエストで問い、2回目は関連する節だけで信頼度を問う", async () => {
@@ -151,12 +157,16 @@ describe("JEVへの問い（ADR-0011・ADR-0014）", () => {
     );
     expect(second.state.claim).toEqual({ original: CLAIM.originalText });
     expect(second.state.article).toBeUndefined();
+    // One origin, holding the one related section (ADR-0016).
     expect(second.state.sources).toHaveLength(1);
-    expect(second.state.sources[0].text).toContain(related);
-    expect(second.state.sources[0].text).not.toContain(unrelated);
-    expect(second.state.sources[0]).toMatchObject({
+    expect(second.state.sources[0].origin).toBe("example.com");
+    expect(second.state.sources[0].sections).toHaveLength(1);
+    expect(second.state.sources[0].sections[0].text).toContain(related);
+    expect(second.state.sources[0].sections[0].text).not.toContain(unrelated);
+    expect(second.state.sources[0].sections[0]).toMatchObject({
       title: "フリノバのお知らせ",
       url: "https://example.com/a",
+      primary: false,
     });
 
     expect(claims[0].confidence).toBe(0.23);
@@ -176,7 +186,7 @@ describe("JEVへの問い（ADR-0011・ADR-0014）", () => {
     const { claims } = await runFactPipeline(ARTICLE, options);
 
     const [support] = supportCalls(calls);
-    expect(support.state.sources.map((s: any) => s.url)).toEqual(["https://example.com/on"]);
+    expect(sentUrls(support)).toEqual(["https://example.com/on"]);
     // The bubble lists the page holding a related section, and only it.
     expect(claims[0].evidence.map((e) => e.sourceUrl)).toEqual(["https://example.com/on"]);
     expect(claims[0].evidence[0].confidence).toBe(RELEVANCE_THRESHOLD);
@@ -247,6 +257,104 @@ describe("JEVへの問い（ADR-0011・ADR-0014）", () => {
     expect(claims[0].confidence).toBeUndefined();
     expect(claims[0].lookupFailed).toBe(true);
     expect(claims[0].reason).toContain("JEV 503");
+  });
+});
+
+describe("資料の選び方（ADR-0016）", () => {
+  const reprinted = "厚生労働省は、受動喫煙の防止のための基準を定めている。".repeat(20);
+
+  it("同じサイトのページと、本文がほぼ同じ転載は1つの出所にまとめ、一次資料かどうかを付けて、一次資料→出所→URLの順で渡す", async () => {
+    const pages: Page[] = [
+      { url: "https://blog.example.com/1", title: "ブログ1", body: "フリノバのブログ1。" },
+      { url: "https://www.mhlw.go.jp/a", title: "厚労省", body: reprinted },
+      { url: "https://news.example.net/copy", title: "転載", body: `転載記事\n${reprinted}` },
+      { url: "https://example.com/2", title: "ブログ2", body: "フリノバのブログ2。" },
+    ];
+    const { options, calls } = fakes(pages, answering(0.6));
+
+    const { claims } = await runFactPipeline(ARTICLE, options);
+
+    const [support] = supportCalls(calls);
+    expect(support.state.sources.map((origin: any) => origin.origin)).toEqual([
+      "example.net、mhlw.go.jp",
+      "example.com",
+    ]);
+    expect(support.state.sources[0].sections.map((s: any) => [s.url, s.primary, s.primaryKind])).toEqual([
+      ["https://www.mhlw.go.jp/a", true, "官公庁"],
+      ["https://news.example.net/copy", false, undefined],
+    ]);
+    expect(sentUrls(support)).toEqual([
+      "https://www.mhlw.go.jp/a",
+      "https://news.example.net/copy",
+      "https://blog.example.com/1",
+      "https://example.com/2",
+    ]);
+    // Four pages, two independent origins.
+    expect(claims[0].evidenceTrace).toMatchObject({ used: 4, origins: 2, overCap: 0 });
+    // The 信頼度 is still JEV's one number, as returned (ADR-0011).
+    expect(claims[0].confidence).toBe(0.6);
+  });
+
+  it("主語に触れていないページも、JEVの関連の問いにかける（こちらの点数で捨てない）", async () => {
+    const pages: Page[] = [{ url: "https://example.org/x", title: "受動喫煙", body: "主語の語を含まない本文。" }];
+    const { options, calls } = fakes(pages, answering(0.4));
+
+    await runFactPipeline(ARTICLE, options);
+
+    const [relevance] = relevanceCalls(calls);
+    expect(relevance.state.sources.map((s: any) => s.url)).toEqual(["https://example.org/x"]);
+  });
+
+  it("検索が返す順が変わっても、JEVに渡る資料と順番は同じ", async () => {
+    const pages: Page[] = [
+      { url: "https://c.example/1", title: "c", body: "フリノバc。" },
+      { url: "https://www.city.nagoya.jp/1", title: "市", body: "フリノバ市。" },
+      { url: "https://a.example/1", title: "a", body: "フリノバa。" },
+      { url: "https://b.example/1", title: "b", body: "フリノバb。" },
+    ];
+    const first = fakes(pages, answering(0.5));
+    const second = fakes(pages.slice().reverse(), answering(0.5));
+
+    await runFactPipeline(ARTICLE, first.options);
+    await runFactPipeline(ARTICLE, second.options);
+
+    expect(second.calls.map((call) => call.state)).toEqual(first.calls.map((call) => call.state));
+    expect(sentUrls(supportCalls(first.calls)[0])).toEqual([
+      "https://www.city.nagoya.jp/1",
+      "https://a.example/1",
+      "https://b.example/1",
+      "https://c.example/1",
+    ]);
+  });
+
+  it("上限を超えた候補は関連の問いに入れず、その数を記録に出す", async () => {
+    expect(CANDIDATE_TOKEN_BUDGET).toBe(4 * STATE_TOKEN_BUDGET);
+    // About 45,000 estimated tokens each: two fit in 120,000, the rest do not.
+    const pages: Page[] = Array.from({ length: 5 }, (_, i) => ({
+      url: `https://site${i}.example/p`,
+      title: `p${i}`,
+      body: `フリノバ${i}。` + "い".repeat(30000),
+    }));
+    const { options, calls } = fakes(pages, answering(0.3, () => 0.01));
+
+    const { claims } = await runFactPipeline(ARTICLE, options);
+
+    const asked = new Set(
+      relevanceCalls(calls).flatMap((call) => call.state.sources.map((s: any) => s.url))
+    );
+    expect([...asked]).toEqual(["https://site0.example/p", "https://site1.example/p"]);
+    expect(claims[0].evidenceTrace).toMatchObject({ found: 5, overCap: 3 });
+  });
+
+  it("上限に収まらない長いページがあっても、後ろの短いページは入れる", () => {
+    const long = { title: "long", url: "https://l.example", text: "あ".repeat(100) };
+    const short = { title: "short", url: "https://s.example", text: "あ" };
+    const budget = pageTokens(short) * 3;
+
+    const { taken, overCap } = takeWithinBudget([short, long, short], budget);
+
+    expect(taken).toEqual([short, short]);
+    expect(overCap).toEqual([long]);
   });
 });
 
