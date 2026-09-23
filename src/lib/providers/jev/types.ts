@@ -68,11 +68,8 @@ export type JEVQuestion =
   | {
       type: "choice";
       instructions: string;
-      /**
-       * Choice name to a description of when it applies. A null description
-       * leaves the name to speak for itself, as a picked span does.
-       */
-      criteria: Record<string, string | null>;
+      /** Choice name to a description of when it applies. */
+      criteria: Record<string, string>;
     }
   | {
       type: "score";
