@@ -92,6 +92,24 @@ export type ClaimResult = {
 };
 
 /**
+ * A search the generation wrote against the rules (ADR-0019), kept on the
+ * record as it was written instead of being dropped without a word.
+ */
+export type QueryViolation = {
+  /** The query exactly as the generation wrote it. */
+  query: string;
+  /**
+   * The rules it broke: it was the claim's own sentence, it held a figure
+   * under scrutiny (#31), or it held what the claim says (its content).
+   */
+  broke: Array<"sentence" | "figure" | "content">;
+  /** The figures and content words taken out of it. */
+  removed: string[];
+  /** What of it was searched once those were out; absent when nothing was. */
+  searched?: string;
+};
+
+/**
  * The trail of one claim's search for evidence.
  *
  * "Nothing found" has several causes that look identical on screen: nobody
@@ -102,6 +120,11 @@ export type ClaimResult = {
 export type EvidenceTrace = {
   /** What was actually asked of the search. */
   query: string;
+  /**
+   * The searches written for this claim — its own and the article's — that
+   * broke the rules (ADR-0019), as written, with what was searched instead.
+   */
+  queryViolations?: QueryViolation[];
   /** How many pages the search returned: the claim's candidates. */
   found: number;
   /**

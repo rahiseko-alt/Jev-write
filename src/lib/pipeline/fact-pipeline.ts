@@ -11,7 +11,11 @@ import {
 } from "./source-selection";
 import { originsOf } from "./source-origin";
 import { describeFailure } from "@/lib/providers/diagnostics";
-import { QUERIES_PER_CLAIM } from "@/lib/providers/llm/search-queries";
+import {
+  CheckedQueries,
+  checkClaimQueries,
+  checkDocumentQueries,
+} from "@/lib/providers/llm/search-queries";
 import {
   Claim,
   ClaimResult,
@@ -117,12 +121,16 @@ export async function runFactPipeline(
 
   // The article's searches start as soon as their queries exist, while the
   // claims' questions are still being written.
-  const documentQueries = await documentQueriesPending;
+  const { queries: documentQueries, violations: documentViolations } = await documentQueriesPending;
   const documentSeeded = documentQueries.length > 0 ? pool.seed(documentQueries) : Promise.resolve();
 
   // For every claim, the questions that would settle it, primary source first
-  // (ADR-0015). One generation for all claims; all their searches at once.
-  const claimQueries = await writeClaimQueries(llm, extractedClaims);
+  // (ADR-0015), naming only what it is about and what is to be found out
+  // (ADR-0019). One generation for all claims; all their searches at once.
+  const { queries: claimQueries, violations: claimViolations } = await writeClaimQueries(
+    llm,
+    extractedClaims
+  );
   await Promise.all([
     documentSeeded,
     pool.seed(extractedClaims.flatMap((claim) => claimQueries.get(claim.id) ?? [])),
@@ -247,6 +255,14 @@ export async function runFactPipeline(
     if (item.isFactCheckHit) {
       factHitsCount++;
     }
+  }
+
+  // A search written against the rules stays on the record of every claim it
+  // was written for, as it was written (ADR-0019): the claim's own, and the
+  // article's, which every claim searched with.
+  for (const result of claimResults) {
+    const broken = [...(claimViolations.get(result.claim.id) ?? []), ...documentViolations];
+    if (broken.length > 0 && result.evidenceTrace) result.evidenceTrace.queryViolations = broken;
   }
 
   onProgress?.({
@@ -569,44 +585,59 @@ async function concludeClaim(params: {
   };
 }
 
-/** The article's queries, or none when they could not be written. */
-async function writeDocumentQueries(llm: LLMProvider, text: string): Promise<string[]> {
-  if (typeof llm.generateDocumentQueries !== "function") return [];
+/**
+ * The article's queries, held to the rules (ADR-0019), or none when they
+ * could not be written.
+ */
+async function writeDocumentQueries(llm: LLMProvider, text: string): Promise<CheckedQueries> {
+  if (typeof llm.generateDocumentQueries !== "function") return { queries: [], violations: [] };
   try {
-    return (await llm.generateDocumentQueries(text))
-      .map((query) => query.trim())
-      .filter(Boolean)
-      .slice(0, QUERIES_PER_DOCUMENT);
+    const checked = checkDocumentQueries(await llm.generateDocumentQueries(text), QUERIES_PER_DOCUMENT);
+    reportViolations("The article", checked.violations);
+    return checked;
   } catch (err) {
     console.warn("Document-level search queries could not be written:", err);
-    return [];
+    return { queries: [], violations: [] };
   }
 }
 
 /**
- * Each claim's questions, by claim id. When they could not be written the
+ * Each claim's questions, held to the rules (ADR-0019), and the record of
+ * those that broke them, by claim id. When they could not be written the
  * claims are still checked, against the pages the article's queries found;
  * the claim's sentence is never searched in their place.
  */
 async function writeClaimQueries(
   llm: LLMProvider,
   claims: Claim[]
-): Promise<Map<string, string[]>> {
-  if (claims.length === 0 || typeof llm.generateClaimQueries !== "function") return new Map();
+): Promise<{ queries: Map<string, string[]>; violations: Map<string, CheckedQueries["violations"]> }> {
+  const queries = new Map<string, string[]>();
+  const violations = new Map<string, CheckedQueries["violations"]>();
+  if (claims.length === 0 || typeof llm.generateClaimQueries !== "function") {
+    return { queries, violations };
+  }
   try {
     const written = await llm.generateClaimQueries(claims);
-    const byId = new Map<string, string[]>();
     for (const claim of claims) {
-      const queries = (written.get(claim.id) ?? [])
-        .map((query) => query.trim())
-        .filter(Boolean)
-        .slice(0, QUERIES_PER_CLAIM);
-      byId.set(claim.id, queries);
+      const checked = checkClaimQueries(claim, written.get(claim.id) ?? []);
+      queries.set(claim.id, checked.queries);
+      violations.set(claim.id, checked.violations);
+      reportViolations(`Claim ${claim.id}`, checked.violations);
     }
-    return byId;
+    return { queries, violations };
   } catch (err) {
     console.warn("Search questions for the claims could not be written:", err);
-    return new Map();
+    return { queries: new Map(), violations: new Map() };
+  }
+}
+
+/** A search written against the rules is said out loud, not dropped without a word (ADR-0019). */
+function reportViolations(whose: string, violations: CheckedQueries["violations"]): void {
+  for (const violation of violations) {
+    const done = violation.searched ? `searched as "${violation.searched}"` : "not searched";
+    console.warn(
+      `${whose}: the search "${violation.query}" broke the rules (${violation.broke.join(", ")}; ADR-0019) and was ${done}.`
+    );
   }
 }
 
