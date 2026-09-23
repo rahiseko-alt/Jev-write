@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildRevisedDocument, sortByAttention } from "@/lib/revised-document";
+import { buildRevisedDocument, isUnplaced, sortByAttention } from "@/lib/revised-document";
 import { BAND_LABEL } from "@/lib/jev/bands";
 import type { AnalysisResult, ClaimResult, StyleIssue } from "@/types";
 
@@ -715,6 +715,19 @@ describe("言い換えられた主張の置き場所", () => {
     expect(view.paragraphs.flatMap((p) => p.segments).some((s) => s.mark)).toBe(true);
   });
 
+  it("言い換えが本文と離れていても、記事から抜き出した文で結びつける", () => {
+    const original = "前置きの一文。SIPSでもSearchとShareが中核に置かれています。結びの一文。";
+    const result = claim("SIPSでもSearchとShareが中核に置かれています。", "CONTRADICTED");
+    result.claim.normalizedText = "消費行動モデルSIPSの段階構成は検索と共有を含む。";
+
+    const view = buildRevisedDocument({
+      analysis: analysis(original, original, [result]),
+      adoption: {},
+    });
+
+    expect(view.findings[0].lineIndex).toBe(1);
+  });
+
   it("言葉をほとんど共有しない主張は、どこにも貼り付けない", () => {
     const original = "名古屋駅から徒歩8分。";
     const result = claim("まったく別の話題についての記述である。", "INSUFFICIENT");
@@ -756,5 +769,116 @@ describe("書き換えない", () => {
     expect(view.clipboardText).toBe(original);
     expect(view.findings[0].adoptable).toBe(false);
     expect(view.findings[0].revisedText).toBe(view.findings[0].originalText);
+  });
+});
+
+describe("同じ文に乗った指摘", () => {
+  it("食い違いの印が文全体を覆っても、同じ文の他の指摘を印から落とさない", () => {
+    const original = "会費は月額1万円です。";
+    const contradicted = claim("会費は月額1万円です。", "CONTRADICTED");
+    const unverified = claim("会費は月額1万円です。", "INSUFFICIENT");
+    unverified.claim.id = "claim-other";
+
+    const view = buildRevisedDocument({
+      analysis: analysis(original, original, [contradicted, unverified], [styleIssue("会費は月額1万円です。")]),
+      adoption: {},
+    });
+
+    const marked = new Set(
+      view.paragraphs
+        .flatMap((p) => p.segments)
+        .flatMap((s) => s.mark?.findingIds ?? [])
+    );
+    const shouldMark = view.findings.filter((f) => f.markKind !== null && f.lineIndex >= 0);
+    expect(shouldMark.length).toBe(3);
+    for (const finding of shouldMark) expect(marked.has(finding.id)).toBe(true);
+  });
+});
+
+describe("指摘を黙って落とさない", () => {
+  it("印を付けるべき指摘は、どれも本文の印に乗るか、場所不明として残る", () => {
+    const original = "会費は月額1万円です。入会金は無料です。まったく別の段落です。";
+    const claims = [
+      claim("会費は月額1万円です。", "CONTRADICTED"),
+      claim("会費は月額1万円です。", "INSUFFICIENT"),
+      claim("入会金は無料です。", "MIXED"),
+      claim("どこにも無い話題についての主張である。", "INSUFFICIENT"),
+      claim("入会金は無料です。", "SUPPORTED"),
+    ];
+    claims.forEach((c, i) => (c.claim.id = `claim-${i}`));
+
+    const view = buildRevisedDocument({
+      analysis: analysis(original, original, claims, [styleIssue("入会金は無料です。")]),
+      adoption: {},
+    });
+
+    const marked = new Set(
+      view.paragraphs.flatMap((p) => p.segments).flatMap((s) => s.mark?.findingIds ?? [])
+    );
+    const shouldShow = view.findings.filter((f) => f.markKind !== null);
+    expect(shouldShow.length).toBe(5);
+    for (const finding of shouldShow) {
+      expect(marked.has(finding.id) || isUnplaced(finding)).toBe(true);
+    }
+  });
+});
+
+describe("ご自身で確かめるための検索語", () => {
+  it("確認に使った検索語を出し、無ければ出さない", () => {
+    const original = "一文目。二文目。";
+    const none = claim("一文目。", "INSUFFICIENT");
+    const older = claim("二文目。", "INSUFFICIENT");
+    older.evidenceTrace = {
+      query: "二文目 公式",
+      found: 0,
+      offSubject: 0,
+      unreadable: 0,
+      saidNothing: 0,
+      weak: 0,
+      used: 0,
+    };
+
+    const view = buildRevisedDocument({
+      analysis: analysis(original, original, [none, older], [styleIssue("一文目")]),
+      adoption: {},
+    });
+
+    const byText = (text: string) => view.findings.find((f) => f.originalText === text);
+    expect(byText("一文目。")?.checkQueries).toEqual([]);
+    expect(byText("二文目。")?.checkQueries).toEqual(["二文目 公式"]);
+    expect(view.findings.find((f) => f.type === "style")?.checkQueries).toEqual([]);
+  });
+});
+
+describe("本文のどこにも結びつかない指摘", () => {
+  it("場所不明として、数値に関わらず一覧の先頭に出す", () => {
+    const original = "名古屋駅から徒歩8分。";
+    const placed = claim("名古屋駅から徒歩8分である。", "INSUFFICIENT");
+    placed.confidence = 0.1;
+    const lost = claim("まったく別の話題についての記述である。", "INSUFFICIENT");
+    lost.confidence = 0.9;
+
+    const view = buildRevisedDocument({
+      analysis: analysis(original, original, [placed, lost]),
+      adoption: {},
+    });
+
+    const order = sortByAttention(view.findings);
+    expect(isUnplaced(order[0])).toBe(true);
+    expect(order[0].originalText).toContain("まったく別の話題");
+    expect(isUnplaced(order[1])).toBe(false);
+  });
+
+  it("資料と一致して印を付けない指摘は、場所不明に数えない", () => {
+    const original = "名古屋駅から徒歩8分。";
+    const lost = claim("まったく別の話題についての記述である。", "SUPPORTED");
+
+    const view = buildRevisedDocument({
+      analysis: analysis(original, original, [lost]),
+      adoption: {},
+    });
+
+    expect(view.findings[0].lineIndex).toBe(-1);
+    expect(isUnplaced(view.findings[0])).toBe(false);
   });
 });

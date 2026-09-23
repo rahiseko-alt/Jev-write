@@ -99,6 +99,11 @@ export type Finding = {
    * that never searched reads like one that searched and found nothing.
    */
   lookupFailed?: boolean;
+  /**
+   * Search queries a person can run to check the claim themselves. Empty on a
+   * wording finding, which has nothing to look up.
+   */
+  checkQueries: string[];
   /** Every source JEV judged, with its answer and how sure it was. */
   evidence?: Array<{
     url: string;
@@ -123,9 +128,23 @@ export function attentionOf(finding: Finding): number | null {
   return null;
 }
 
-/** The Findings in the order a reader should work through them. */
+/**
+ * A Finding that should mark the document but found no sentence to mark.
+ * Without saying so, it would drop out of the document silently: the reader
+ * counts the marks, not the list. A confirmed claim leaves no mark anyway.
+ */
+export function isUnplaced(finding: Finding): boolean {
+  return finding.lineIndex < 0 && finding.markKind !== null;
+}
+
+/**
+ * The Findings in the order a reader should work through them. The unplaced
+ * come first whatever their number: nothing in the document points to them.
+ */
 export function sortByAttention(findings: Finding[]): Finding[] {
   return [...findings].sort((a, b) => {
+    const lost = Number(isUnplaced(b)) - Number(isUnplaced(a));
+    if (lost !== 0) return lost;
     const left = attentionOf(a);
     const right = attentionOf(b);
     if (left === null && right === null) return 0;
@@ -313,6 +332,26 @@ function claimText(result: ClaimResult): string {
   return result.claim.normalizedText || result.claim.originalText;
 }
 
+/**
+ * The sentence a claim came from. The quote taken from the article is tried
+ * first: the normalised statement is a paraphrase and can share too few words
+ * with the sentence to find it.
+ */
+/**
+ * What the reader can search to check a claim: the query the check itself
+ * ran. It names the subject and the attribute rather than the figure under
+ * scrutiny, so it reaches the page that would publish the true value.
+ */
+function checkQueriesOf(result: ClaimResult): string[] {
+  const ran = result.evidenceTrace?.query?.trim();
+  return ran ? [ran] : [];
+}
+
+function placeOf(sentences: string[], result: ClaimResult): number {
+  const quoted = sentenceIndexOf(sentences, result.claim.originalText);
+  return quoted !== -1 ? quoted : sentenceIndexOf(sentences, claimText(result));
+}
+
 function isRaised(styleIssue: StyleIssue): boolean {
   return styleIssue.detected !== false;
 }
@@ -351,7 +390,7 @@ function factFinding(
   // Nothing is rewritten, so the sentence the Finding points at is the
   // sentence as written (ADR-0010).
   const corrected = text;
-  const at = sentenceIndexOf(sentences, text);
+  const at = placeOf(sentences, result);
   const ratio = result.confidence;
   const band =
     result.band ?? (ratio === undefined ? undefined : bandOf(ratio <= 1 ? ratio : ratio / 100));
@@ -378,6 +417,7 @@ function factFinding(
     sentenceBefore: "",
     sentenceAfter: "",
     evidenceTrace: result.evidenceTrace,
+    checkQueries: checkQueriesOf(result),
     band,
     bandLabel: band === undefined ? undefined : BAND_LABEL[band],
     consistency: result.consistency,
@@ -423,6 +463,7 @@ function styleFinding(
     adoptable: isRaised(styleIssue) && at >= 0 && after !== before,
     sentenceBefore: "",
     sentenceAfter: "",
+    checkQueries: [],
   };
 }
 
@@ -518,6 +559,18 @@ export function buildRevisedDocument(
     }),
     separator: paragraph.separator,
   }));
+
+  // The margin shows a Finding only where its mark is. One that should mark
+  // the document but ended up on no mark is shown as unplaced rather than
+  // dropped without a word.
+  const marked = new Set(
+    paragraphs.flatMap((p) => p.segments).flatMap((s) => s.mark?.findingIds ?? [])
+  );
+  for (const finding of findings) {
+    if (finding.markKind !== null && finding.lineIndex >= 0 && !marked.has(finding.id)) {
+      finding.lineIndex = -1;
+    }
+  }
 
   const clipboardText = paragraphs
     .map((paragraph) => paragraphText(paragraph) + paragraph.separator)
@@ -714,6 +767,15 @@ function markSentence(
   }
 
   if (at < text.length) segments.push(gap(text.slice(at), background));
+
+  // A span covering the whole sentence leaves no gap for the background to
+  // show in. Its Findings ride on the first mark instead of vanishing.
+  if (background && !segments.some((segment) => segment.mark === background)) {
+    const first = segments.find((segment) => segment.mark)!.mark!;
+    first.findingIds.push(...background.findingIds);
+    first.kind = strongest([first.kind, background.kind]);
+    first.rejected = first.rejected && background.rejected;
+  }
 
   return segments;
 }

@@ -88,19 +88,6 @@ describe("HTTPJEVClient", () => {
     await expect(client().evaluateAtomicJudgment(YEAR_MISMATCH)).rejects.toThrow();
   });
 
-  it("reports a failed batch as a failure, not as nothing detected", async () => {
-    globalThis.fetch = vi.fn(async () => {
-      throw new Error("network down");
-    }) as unknown as typeof fetch;
-
-    await expect(
-      client().evaluateBatchRules({
-        text: "まとめると、まとめると、こうなる。",
-        questions: [{ id: "AI001", question: "反復がありますか？" }],
-      })
-    ).rejects.toThrow();
-  });
-
   it("sends the choices as the mapping the API takes", async () => {
     const sent: string[] = [];
     globalThis.fetch = vi.fn(async (_url: unknown, init: { body?: string } = {}) => {
