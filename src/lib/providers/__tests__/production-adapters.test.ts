@@ -151,7 +151,22 @@ describe("OpenAILLMProvider rate limiting", () => {
     await provider.extractClaims("本文。");
 
     expect(calls).toBe(2);
-    expect(provider.servedByFallback).toBe(false);
+  });
+
+  it("reports a rate limit it could not get past, rather than answering anyway", async () => {
+    const { OpenAILLMProvider } = await import("@/lib/providers/llm/openai");
+    globalThis.fetch = vi.fn(async () => ({
+      ok: false,
+      status: 429,
+      statusText: "Too Many Requests",
+      headers: { get: () => "0" },
+      text: async (): Promise<string> => "rate limited",
+      json: async () => ({}),
+    })) as unknown as typeof fetch;
+
+    const provider = new OpenAILLMProvider({ apiKey: "test-key" });
+
+    await expect(provider.extractClaims("本文。")).rejects.toThrow();
   });
 
   it("does not retire the real provider for the next call", async () => {
@@ -166,8 +181,7 @@ describe("OpenAILLMProvider rate limiting", () => {
     })) as unknown as typeof fetch;
 
     const exhausted = new OpenAILLMProvider({ apiKey: "test-key" });
-    await exhausted.extractClaims("本文。");
-    expect(exhausted.servedByFallback).toBe(true);
+    await expect(exhausted.extractClaims("本文。")).rejects.toThrow();
 
     let reached = 0;
     globalThis.fetch = vi.fn(async () => {
@@ -182,89 +196,8 @@ describe("OpenAILLMProvider rate limiting", () => {
       };
     }) as unknown as typeof fetch;
 
-    const next = new OpenAILLMProvider({ apiKey: "test-key" });
-    await next.extractClaims("本文。");
+    await exhausted.extractClaims("本文。");
 
     expect(reached).toBeGreaterThan(0);
-    expect(next.servedByFallback).toBe(false);
-  });
-});
-
-describe("HTTPGoogleFactCheckClient", () => {
-  const options = { apiKey: "test-key" };
-
-  afterEach(() => {
-    globalThis.fetch = realFetch;
-    vi.restoreAllMocks();
-  });
-
-  it("returns the reviews the API actually returned", async () => {
-    const { HTTPGoogleFactCheckClient } = await import(
-      "@/lib/providers/google-factcheck/client"
-    );
-    globalThis.fetch = respondWith({
-      claims: [
-        {
-          text: "ある主張",
-          claimReview: [
-            { url: "https://example.org/review/1", textualRating: "正しい" },
-          ],
-        },
-      ],
-    });
-
-    const result = await new HTTPGoogleFactCheckClient(options).searchClaims("query");
-
-    expect(result.claims ?? []).toHaveLength(1);
-    expect(result.claims?.[0].claimReview?.[0].url).toBe("https://example.org/review/1");
-  });
-
-  it("returns nothing when no fact check covers the claim", async () => {
-    const { HTTPGoogleFactCheckClient } = await import(
-      "@/lib/providers/google-factcheck/client"
-    );
-    globalThis.fetch = respondWith({ claims: [] });
-
-    const result = await new HTTPGoogleFactCheckClient(options).searchClaims(
-      "誰も検証していない主張"
-    );
-
-    // Not one canned review, and not one fabricated publisher.
-    expect(result.claims).toEqual([]);
-  });
-
-  it("reports an API error rather than answering with a canned review", async () => {
-    const { HTTPGoogleFactCheckClient } = await import(
-      "@/lib/providers/google-factcheck/client"
-    );
-    globalThis.fetch = respondWith("upstream is unwell", { status: 500 });
-
-    await expect(
-      new HTTPGoogleFactCheckClient(options).searchClaims("query")
-    ).rejects.toThrow();
-  });
-
-  it("reports a missing credential rather than standing in for one", async () => {
-    const { HTTPGoogleFactCheckClient } = await import(
-      "@/lib/providers/google-factcheck/client"
-    );
-
-    await expect(
-      new HTTPGoogleFactCheckClient({ apiKey: "" }).searchClaims("query")
-    ).rejects.toThrow();
-  });
-
-  it("never returns a review for a claim it never looked up", async () => {
-    const { HTTPGoogleFactCheckClient } = await import(
-      "@/lib/providers/google-factcheck/client"
-    );
-    globalThis.fetch = vi.fn(async () => {
-      throw new Error("network down");
-    }) as unknown as typeof fetch;
-
-    // The stand-in holds a canned review for this very claim.
-    await expect(
-      new HTTPGoogleFactCheckClient(options).searchClaims("iPhone 17は2024年9月に発売された")
-    ).rejects.toThrow();
   });
 });

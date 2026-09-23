@@ -200,7 +200,6 @@ export async function runOrchestrator(
       { service: "ページの取得", provider: fetchProvider },
     ].map(({ service, provider }) => ({
       service,
-      stoodIn: provider.servedByFallback === true,
       failureCount: provider.failureCount ?? 0,
       lastError: provider.lastError,
     }));
@@ -243,7 +242,6 @@ export async function runOrchestrator(
       styleIssues: styleResult,
       sources: factResult.evidences,
       timings,
-      servedByFallback: providerStatuses.some((status) => status.stoodIn),
       providerStatuses,
       unauthorizedChangeDetected: deltaResult.unauthorizedChangeDetected,
       revisionRolledBack: deltaResult.rolledBack,

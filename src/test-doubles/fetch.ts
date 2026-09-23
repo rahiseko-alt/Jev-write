@@ -1,9 +1,14 @@
-import { FetchedPage, FetchOptions, FetchProvider } from "./types";
+/**
+ * TEST DOUBLE — never shipped, never reachable from the application.
+ *
+ * The application has no stand-ins: where an outside service cannot answer,
+ * it says so and stops. These doubles exist only so the tests can drive the
+ * pipeline without the network, and every test that uses one passes it in by
+ * hand.
+ */
+import { FetchedPage, FetchOptions, FetchProvider } from "@/lib/providers/fetch/types";
 
 export class MockFetchProvider implements FetchProvider {
-  /** A stand-in, and it says so, so the reader is never shown its output as a real check. */
-  readonly servedByFallback = true;
-
   private mockPages: Record<string, Partial<FetchedPage>> = {
     "https://factcheckcenter.jp/fact-checks/iphone-17-release-date": {
       title: "「iPhone 17が2025年9月に発売された」は誤り。未発売であり、2026年秋の発売が予想されている",

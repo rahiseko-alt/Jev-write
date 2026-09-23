@@ -47,18 +47,13 @@ export async function runRewritePipeline(
   // 2. Build strict rewrite prompt
   const prompt = buildRewritePrompt(originalText, plan);
 
-  // 3. Call LLM rewrite
-  let revisedText: string;
-  try {
-    revisedText = await llm.rewrite({
-      originalText,
-      plan,
-      prompt,
-    });
-  } catch (err) {
-    console.warn("LLM rewrite failed, using original text as fallback:", err);
-    revisedText = originalText;
-  }
+  // 3. Call LLM rewrite. A rewrite that failed is not "the original text";
+  // handing that back would look like an article with nothing to fix.
+  const revisedText = await llm.rewrite({
+    originalText,
+    plan,
+    prompt,
+  });
 
   onProgress?.({
     percent: 85,

@@ -276,7 +276,10 @@ export default function HomePage() {
 
       if (!response.ok) {
         const data = await response.json().catch(() => ({}));
-        throw new Error(data.error || "チェックの実行に失敗しました。");
+        // The reason is the useful part: which service could not answer, and
+        // what it said. Nothing is checked in its place.
+        const reason = [data.error, data.details].filter(Boolean).join(" / ");
+        throw new Error(reason || "チェックの実行に失敗しました。");
       }
 
       const resData = await response.json();
@@ -858,17 +861,7 @@ export default function HomePage() {
                       </button>
                     </div>
 
-                    {analysisResult?.servedByFallback && (
-                      <div className="flex items-start gap-2 px-4 py-3 rounded-xl border border-amber-200 bg-amber-50 text-xs text-amber-900">
-                        <AlertTriangle className="w-4 h-4 shrink-0 text-amber-600 mt-0.5" />
-                        <span>
-                          この修正版の一部は、検証に使う外部サービスへ接続できなかったため簡易処理で作成されています。事実確認としては信頼できません。
-                        </span>
-                      </div>
-                    )}
-
-                    {(analysisResult?.servedByFallback ||
-                      analysisResult?.providerStatuses?.some((s) => s.failureCount > 0)) && (
+                    {analysisResult?.providerStatuses?.some((s) => s.failureCount > 0) && (
                       <details className="rounded-xl border border-slate-200 bg-slate-50 text-xs text-slate-700">
                         <summary className="px-4 py-3 cursor-pointer font-bold select-none">
                           各サービスの状態を見る
@@ -879,20 +872,18 @@ export default function HomePage() {
                               <div className="flex items-center gap-2">
                                 <span
                                   className={
-                                    status.stoodIn || status.failureCount > 0
+                                    status.failureCount > 0
                                       ? "text-amber-600 font-bold"
                                       : "text-emerald-600 font-bold"
                                   }
                                 >
-                                  {status.stoodIn || status.failureCount > 0 ? "✕" : "✓"}
+                                  {status.failureCount > 0 ? "✕" : "✓"}
                                 </span>
                                 <span className="font-bold">{status.service}</span>
                                 <span className="text-slate-500">
-                                  {status.stoodIn
-                                    ? "簡易処理で代用しました"
-                                    : status.failureCount > 0
-                                      ? `${status.failureCount}件の呼び出しが失敗しました`
-                                      : "本来のサービスが応答しました"}
+                                  {status.failureCount > 0
+                                    ? `${status.failureCount}件の呼び出しが失敗しました`
+                                    : "応答しました"}
                                 </span>
                               </div>
                               {status.lastError && (

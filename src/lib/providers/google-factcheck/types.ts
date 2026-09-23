@@ -34,8 +34,6 @@ export interface GoogleFactCheckOptions {
 }
 
 export interface GoogleFactCheckClient {
-  /** True when this provider answered with a stand-in rather than the real service. */
-  servedByFallback?: boolean;
   /** How many calls to the real service failed during this run. */
   failureCount?: number;
   /** The first failure's message, with anything credential-shaped removed. */

@@ -1,3 +1,11 @@
+/**
+ * TEST DOUBLE — never shipped, never reachable from the application.
+ *
+ * The application has no stand-ins: where an outside service cannot answer,
+ * it says so and stops. These doubles exist only so the tests can drive the
+ * pipeline without the network, and every test that uses one passes it in by
+ * hand.
+ */
 import {
   JEVAtomicJudgmentRequest,
   JEVAtomicJudgmentResult,
@@ -9,14 +17,11 @@ import {
   JEVDeltaMeaningParams,
   JEVDeltaMeaningResult,
   JEVUnauthorizedChange,
-} from "./types";
-import { RatingVerdict } from "../google-factcheck/types";
+} from "@/lib/providers/jev/types";
+import { RatingVerdict } from "@/lib/providers/google-factcheck/types";
 import { figuresIn } from "@/lib/text/figures";
 
 export class MockJEVClient implements JEVClient {
-  /** A stand-in, and it says so, so the reader is never shown its output as a real check. */
-  readonly servedByFallback = true;
-
   async evaluateAtomicJudgment(req: JEVAtomicJudgmentRequest): Promise<JEVAtomicJudgmentResult> {
     const { type, candidateText, evidenceText, state, instructions, criteria, mode } = req;
 

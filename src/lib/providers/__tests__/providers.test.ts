@@ -1,30 +1,18 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import {
-  getLLMProvider,
-  MockLLMProvider,
-  OpenAILLMProvider,
-} from "../llm";
-import {
-  getJEVClient,
-  MockJEVClient,
-  HTTPJEVClient,
-} from "../jev";
+import { getLLMProvider, OpenAILLMProvider } from "../llm";
+import { getJEVClient, HTTPJEVClient } from "../jev";
 import {
   getGoogleFactCheckClient,
   getFactCheckClient,
-  MockGoogleFactCheckClient,
   HTTPGoogleFactCheckClient,
 } from "../google-factcheck";
-import {
-  getSearchProvider,
-  MockSearchProvider,
-  TavilySearchProvider,
-} from "../search";
-import {
-  getFetchProvider,
-  MockFetchProvider,
-  HTTPFetchProvider,
-} from "../fetch";
+import { getSearchProvider, TavilySearchProvider } from "../search";
+import { getFetchProvider, HTTPFetchProvider } from "../fetch";
+import { MockLLMProvider } from "@/test-doubles/llm";
+import { MockJEVClient } from "@/test-doubles/jev";
+import { MockSearchProvider } from "@/test-doubles/search";
+import { MockFetchProvider } from "@/test-doubles/fetch";
+import { MockGoogleFactCheckClient } from "@/test-doubles/google-factcheck";
 import { RewritePlan } from "@/types";
 
 describe("LLM Provider", () => {
@@ -109,9 +97,26 @@ describe("LLM Provider", () => {
     expect(rewritten).not.toContain("今後の動向からも目が離せません");
   });
 
-  it("factory returns MockLLMProvider when empty API key is passed", () => {
-    const provider = getLLMProvider({ apiKey: "" });
-    expect(provider).toBeInstanceOf(MockLLMProvider);
+  it("factory reports a missing credential rather than standing in for one", () => {
+    const saved = {
+      anthropic: process.env.ANTHROPIC_API_KEY,
+      claude: process.env.CLAUDE_API_KEY,
+      openai: process.env.OPENAI_API_KEY,
+      lower: process.env.openai,
+      lowerAnthropic: process.env.anthropic,
+    };
+    for (const key of ["ANTHROPIC_API_KEY", "CLAUDE_API_KEY", "OPENAI_API_KEY", "openai", "anthropic"]) {
+      delete process.env[key];
+    }
+    try {
+      expect(() => getLLMProvider({ apiKey: "" })).toThrow();
+    } finally {
+      if (saved.anthropic) process.env.ANTHROPIC_API_KEY = saved.anthropic;
+      if (saved.claude) process.env.CLAUDE_API_KEY = saved.claude;
+      if (saved.openai) process.env.OPENAI_API_KEY = saved.openai;
+      if (saved.lower) process.env.openai = saved.lower;
+      if (saved.lowerAnthropic) process.env.anthropic = saved.lowerAnthropic;
+    }
   });
 
   it("factory returns OpenAILLMProvider when API key is provided", () => {
@@ -228,9 +233,16 @@ describe("JEV Provider", () => {
     expect(client).toBeInstanceOf(HTTPJEVClient);
   });
 
-  it("factory falls back to MockJEVClient when empty URL is provided", () => {
-    const client = getJEVClient({ apiUrl: "" });
-    expect(client).toBeInstanceOf(MockJEVClient);
+  it("factory reports a missing key rather than judging with a stand-in", () => {
+    const saved = { key: process.env.JEV_API_KEY, typesafe: process.env.TYPESAFE_API_KEY };
+    delete process.env.JEV_API_KEY;
+    delete process.env.TYPESAFE_API_KEY;
+    try {
+      expect(() => getJEVClient({ apiUrl: "", apiKey: "" })).toThrow();
+    } finally {
+      if (saved.key) process.env.JEV_API_KEY = saved.key;
+      if (saved.typesafe) process.env.TYPESAFE_API_KEY = saved.typesafe;
+    }
   });
 });
 
@@ -262,28 +274,12 @@ describe("Google Fact Check Provider", () => {
     expect(client).toBeInstanceOf(HTTPGoogleFactCheckClient);
   });
 
-  it("factory returns the stand-in where a test run asks for one", () => {
-    // NODE_ENV=test: the stand-in is asked for, not quietly substituted.
-    const client = getGoogleFactCheckClient({ apiKey: "" });
-    expect(client).toBeInstanceOf(MockGoogleFactCheckClient);
-  });
-
-  it("factory does not stand in for a missing credential outside a test run", () => {
-    const savedEnv = process.env.NODE_ENV;
-    const savedFlag = process.env.USE_MOCK_FACTCHECK;
-    try {
-      (process.env as Record<string, string>).NODE_ENV = "production";
-      delete process.env.USE_MOCK_FACTCHECK;
-      // Without a key the real client reports it cannot look anything up;
-      // it never answers with a review nobody published.
-      expect(getGoogleFactCheckClient({ apiKey: "" })).toBeInstanceOf(
-        HTTPGoogleFactCheckClient
-      );
-    } finally {
-      (process.env as Record<string, string | undefined>).NODE_ENV = savedEnv;
-      if (savedFlag === undefined) delete process.env.USE_MOCK_FACTCHECK;
-      else process.env.USE_MOCK_FACTCHECK = savedFlag;
-    }
+  it("factory never stands in for a missing credential", () => {
+    // Without a key the real client reports it cannot look anything up;
+    // it never answers with a review nobody published.
+    expect(getGoogleFactCheckClient({ apiKey: "" })).toBeInstanceOf(
+      HTTPGoogleFactCheckClient
+    );
   });
 
   it("aliases getFactCheckClient to getGoogleFactCheckClient", () => {
@@ -313,9 +309,9 @@ describe("Search Provider", () => {
     expect(provider).toBeInstanceOf(TavilySearchProvider);
   });
 
-  it("factory falls back to MockSearchProvider when API key is empty string", () => {
-    const provider = getSearchProvider({ apiKey: "" });
-    expect(provider).toBeInstanceOf(MockSearchProvider);
+  it("factory never stands in for a missing credential", () => {
+    // The real provider reports the search it could not run.
+    expect(getSearchProvider({ apiKey: "" })).toBeInstanceOf(TavilySearchProvider);
   });
 });
 
@@ -344,53 +340,10 @@ describe("Fetch Provider", () => {
   });
 
   describe("factory", () => {
-    const KEYS = [
-      "TAVILY_API_KEY",
-      "tavily",
-      "OPENAI_API_KEY",
-      "openai",
-      "ANTHROPIC_API_KEY",
-      "anthropic",
-      "USE_MOCK_FETCH",
-      "NODE_ENV",
-    ];
-    let saved: Record<string, string | undefined>;
-
-    beforeEach(() => {
-      saved = Object.fromEntries(KEYS.map((key) => [key, process.env[key]]));
-      for (const key of KEYS) delete process.env[key];
-    });
-
-    afterEach(() => {
-      for (const [key, value] of Object.entries(saved)) {
-        if (value === undefined) delete process.env[key];
-        else process.env[key] = value;
-      }
-    });
-
-    it("fetches over HTTP by default", () => {
+    it("always fetches over HTTP", () => {
       // Reading a public page needs no credential, so nothing licenses a
       // canned page in its place.
-      (process.env as Record<string, string>).NODE_ENV = "production";
-      expect(getFetchProvider({}, false)).toBeInstanceOf(HTTPFetchProvider);
-    });
-
-    it("stays on the mock when asked for it, credential or not", () => {
-      process.env.TAVILY_API_KEY = "test-key";
-      expect(getFetchProvider({}, true)).toBeInstanceOf(MockFetchProvider);
-    });
-
-    it("uses the mock in a test run", () => {
-      // ADR-0002: the mock adapters run offline and in CI — where they are
-      // asked for, never as a silent stand-in for a missing credential.
-      (process.env as Record<string, string>).NODE_ENV = "test";
-      expect(getFetchProvider({}, false)).toBeInstanceOf(MockFetchProvider);
-    });
-
-    it("honours USE_MOCK_FETCH outside a test run", () => {
-      (process.env as Record<string, string>).NODE_ENV = "production";
-      process.env.USE_MOCK_FETCH = "true";
-      expect(getFetchProvider({}, false)).toBeInstanceOf(MockFetchProvider);
+      expect(getFetchProvider()).toBeInstanceOf(HTTPFetchProvider);
     });
   });
 });

@@ -11,13 +11,26 @@ import { runRewritePipeline } from "@/lib/pipeline/rewrite-pipeline";
 import { runDeltaCheck } from "@/lib/pipeline/delta-check";
 import { runOrchestrator } from "@/lib/pipeline/orchestrator";
 import { SAMPLE_ARTICLES } from "@/lib/data/sample-articles";
-import {
-  MockFetchProvider,
-  MockGoogleFactCheckClient,
-  MockJEVClient,
-  MockLLMProvider,
-  MockSearchProvider,
-} from "@/lib/providers";
+import { MockLLMProvider } from "@/test-doubles/llm";
+import { MockJEVClient } from "@/test-doubles/jev";
+import { MockSearchProvider } from "@/test-doubles/search";
+import { MockFetchProvider } from "@/test-doubles/fetch";
+import { MockGoogleFactCheckClient } from "@/test-doubles/google-factcheck";
+
+/**
+ * The application has no stand-ins. Every test that runs the pipeline hands
+ * it these doubles by name, so nothing here is reaching for a substitute the
+ * product would ever use.
+ */
+function doubles() {
+  return {
+    llm: new MockLLMProvider(),
+    jev: new MockJEVClient(),
+    search: new MockSearchProvider(),
+    fetch: new MockFetchProvider(),
+    factCheck: new MockGoogleFactCheckClient(),
+  };
+}
 
 describe("Style Rules Registry", () => {
   it("should contain all required style rules AI001 - AI012+", () => {
@@ -183,13 +196,14 @@ describe("Style Pipeline", () => {
 describe("Rewrite Pipeline", () => {
   it("should produce a revised text fixing contradicted facts and AI-tells", async () => {
     const sample = SAMPLE_ARTICLES[0].text;
-    const factOutput = await runFactPipeline(sample);
-    const styleIssues = await runStylePipeline(sample);
+    const factOutput = await runFactPipeline(sample, doubles());
+    const styleIssues = await runStylePipeline(sample, doubles());
 
     const rewriteResult = await runRewritePipeline(
       sample,
       factOutput.factLedger,
-      styleIssues
+      styleIssues,
+      doubles()
     );
 
     expect(rewriteResult.revisedText).toBeTruthy();
@@ -201,14 +215,15 @@ describe("Rewrite Pipeline", () => {
     const input =
       "Appleは2023年9月13日、iPhone 15 ProとiPhone 15 Pro Maxを発表した。両モデルは航空宇宙産業レベルのチタニウムを採用し、A17 Proと新しいアクションボタンを搭載する。メインカメラは48MPで、通常撮影では20MPをデフォルトとする。iPhone 15 Pro Maxには最大6倍の望遠カメラを搭載。USB-C端子はUSB 3に対応し、最大20Gbpsでデータを転送できる。第2世代の超広帯域無線チップによって通信範囲は従来の約2倍になったほか、Wi-Fi 7にも対応している。";
 
-    const factOutput = await runFactPipeline(input);
+    const factOutput = await runFactPipeline(input, doubles());
     const contradicted = factOutput.claims.filter((c) => c.verdict === "CONTRADICTED");
     expect(contradicted.length).toBeGreaterThanOrEqual(1);
 
     const rewriteResult = await runRewritePipeline(
       input,
       factOutput.factLedger,
-      []
+      [],
+      doubles()
     );
 
     expect(rewriteResult.revisedText).toContain("9月12日");
@@ -222,14 +237,15 @@ describe("Rewrite Pipeline", () => {
   it("should accurately detect and correct Nintendo Switch 2 announcement and release dates", async () => {
     const input = "Nintendo Switch 2は2025年4月3日に詳細発表、6月6日に発売。";
 
-    const factOutput = await runFactPipeline(input);
+    const factOutput = await runFactPipeline(input, doubles());
     const contradicted = factOutput.claims.filter((c) => c.verdict === "CONTRADICTED");
     expect(contradicted.length).toBeGreaterThanOrEqual(1);
 
     const rewriteResult = await runRewritePipeline(
       input,
       factOutput.factLedger,
-      []
+      [],
+      doubles()
     );
 
     expect(rewriteResult.revisedText).toContain("4月2日");
@@ -251,7 +267,7 @@ describe("Delta Check", () => {
       protectedNames: [],
     };
 
-    const delta = await runDeltaCheck(original, revised, plan);
+    const delta = await runDeltaCheck(original, revised, plan, doubles());
     expect(delta.unauthorizedChangeDetected).toBe(false);
   });
 
@@ -266,29 +282,37 @@ describe("Delta Check", () => {
       protectedNames: [],
     };
 
-    const delta = await runDeltaCheck(original, revised, plan);
+    const delta = await runDeltaCheck(original, revised, plan, doubles());
     expect(delta.unauthorizedChangeDetected).toBe(true);
   });
 });
 
 describe("Orchestrator End-to-End", () => {
-  it("says which service answered and which stood in", async () => {
-    const result = await runOrchestrator("これはテスト用の短い文章です。");
+  it("names every outside service and whether its calls went through", async () => {
+    const result = await runOrchestrator("これはテスト用の短い文章です。", doubles());
 
     const services = result.providerStatuses?.map((s) => s.service) ?? [];
     expect(services).toContain("文章の生成");
     expect(services).toContain("判定（JEV）");
     expect(services).toContain("ウェブ検索");
-    // In a test run every one of them is a stand-in, and each says so itself.
-    expect(result.providerStatuses?.every((s) => s.stoodIn)).toBe(true);
+    expect(services).toContain("ファクトチェック照会");
+    expect(services).toContain("ページの取得");
+    expect(result.providerStatuses?.every((s) => s.failureCount === 0)).toBe(true);
   });
 
-  it("records that a run answered by stand-ins was not a real check", async () => {
-    // In a test run every provider is a stand-in, so the result must say so
-    // rather than look like a completed check.
-    const result = await runOrchestrator("これはテスト用の短い文章です。");
+  it("reports a service that could not answer, and does not finish the run", async () => {
+    const refuses = {
+      ...doubles(),
+      llm: {
+        extractClaims: async () => {
+          throw new Error("Anthropic API error (400 Bad Request)");
+        },
+      } as never,
+    };
 
-    expect(result.servedByFallback).toBe(true);
+    await expect(
+      runOrchestrator("これはテスト用の短い文章です。", refuses)
+    ).rejects.toThrow();
   });
 
   it("should coordinate full pipeline, emit progress and return complete AnalysisResult", async () => {
@@ -304,6 +328,7 @@ describe("Orchestrator End-to-End", () => {
     const result = await runOrchestrator(sample, {
       jobId: job.id,
       jobStore: store,
+      ...doubles(),
     });
 
     unsubscribe();

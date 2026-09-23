@@ -1,16 +1,14 @@
 import { JEVClient } from "./types";
 import { HTTPJEVClient, JEVClientOptions } from "./client";
-import { MockJEVClient } from "./mock";
 
 export * from "./types";
 export * from "./client";
-export * from "./mock";
 
 /**
  * Returns an HTTPJEVClient connecting to TypeSafe AI Jev (System One)
  * if JEV_API_KEY or TYPESAFE_API_KEY is configured.
  * Defaults endpoint to https://api.typesafe.ai/v1/systemone.
- * Falls back to MockJEVClient only if no key is provided.
+ * Without a key it reports that, rather than judging with a stand-in.
  */
 export function getJEVClient(options: JEVClientOptions = {}): JEVClient {
   const apiKey =
@@ -33,5 +31,5 @@ export function getJEVClient(options: JEVClientOptions = {}): JEVClient {
     return new HTTPJEVClient(options);
   }
 
-  return new MockJEVClient();
+  throw new Error("JEVの鍵が設定されていません（JEV_API_KEY / TYPESAFE_API_KEY）。");
 }

@@ -18,8 +18,6 @@ export interface LLMProvider {
   generateSearchQueries(claim: Claim): Promise<string[]>;
   rewrite(input: RewriteInput): Promise<string>;
   surgicalFix?(input: SurgicalFixInput): Promise<string>;
-  /** True when this provider answered with a stand-in rather than the real service. */
-  servedByFallback?: boolean;
   /** How many calls to the real service failed during this run. */
   failureCount?: number;
   /** The first failure's message, with anything credential-shaped removed. */

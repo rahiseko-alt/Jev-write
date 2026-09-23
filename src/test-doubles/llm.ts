@@ -1,10 +1,15 @@
+/**
+ * TEST DOUBLE — never shipped, never reachable from the application.
+ *
+ * The application has no stand-ins: where an outside service cannot answer,
+ * it says so and stops. These doubles exist only so the tests can drive the
+ * pipeline without the network, and every test that uses one passes it in by
+ * hand.
+ */
 import { Claim, Importance } from "@/types";
-import { LLMProvider, RewriteInput, SurgicalFixInput } from "./types";
+import { LLMProvider, RewriteInput, SurgicalFixInput } from "@/lib/providers/llm/types";
 
 export class MockLLMProvider implements LLMProvider {
-  /** A stand-in, and it says so, so the reader is never shown its output as a real check. */
-  readonly servedByFallback = true;
-
   async extractClaims(text: string): Promise<Claim[]> {
     const claims: Claim[] = [];
     // Split by sentence terminators (Japanese and Western, ignoring decimal points)

@@ -1,13 +1,18 @@
+/**
+ * TEST DOUBLE — never shipped, never reachable from the application.
+ *
+ * The application has no stand-ins: where an outside service cannot answer,
+ * it says so and stops. These doubles exist only so the tests can drive the
+ * pipeline without the network, and every test that uses one passes it in by
+ * hand.
+ */
 import {
   FactCheckSearchResult,
   GoogleFactCheckClaim,
   GoogleFactCheckClient,
-} from "./types";
+} from "@/lib/providers/google-factcheck/types";
 
 export class MockGoogleFactCheckClient implements GoogleFactCheckClient {
-  /** A stand-in, and it says so, so the reader is never shown its output as a real check. */
-  readonly servedByFallback = true;
-
   private mockDatabase: GoogleFactCheckClaim[] = [
     {
       text: "iPhone 17は2024年9月に発売された",

@@ -1,4 +1,12 @@
-import { SearchOptions, SearchProvider, SearchResponse, SearchResultItem } from "./types";
+/**
+ * TEST DOUBLE — never shipped, never reachable from the application.
+ *
+ * The application has no stand-ins: where an outside service cannot answer,
+ * it says so and stops. These doubles exist only so the tests can drive the
+ * pipeline without the network, and every test that uses one passes it in by
+ * hand.
+ */
+import { SearchOptions, SearchProvider, SearchResponse, SearchResultItem } from "@/lib/providers/search/types";
 
 function createSearchResponse(query: string, results: SearchResultItem[]): SearchResponse {
   const response = Object.assign(
@@ -17,9 +25,6 @@ function createSearchResponse(query: string, results: SearchResultItem[]): Searc
 }
 
 export class MockSearchProvider implements SearchProvider {
-  /** A stand-in, and it says so, so the reader is never shown its output as a real check. */
-  readonly servedByFallback = true;
-
   async search(query: string, options: SearchOptions = {}): Promise<SearchResponse> {
     const normalizedQuery = query.toLowerCase().trim();
     const maxResults = options.maxResults || 5;

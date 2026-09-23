@@ -1,6 +1,5 @@
 import { Claim, Importance } from "@/types";
 import { LLMProvider, RewriteInput, SurgicalFixInput } from "./types";
-import { MockLLMProvider } from "./mock";
 import { recordFailure } from "../diagnostics";
 
 const DEFAULT_RETRY_MS = 1000;
@@ -22,7 +21,6 @@ export class OpenAILLMProvider implements LLMProvider {
   private apiKey: string;
   private model: string;
   private baseUrl: string;
-  private fallback: MockLLMProvider;
   /** What went wrong with the real service during this run, for the reader. */
   failureCount = 0;
   lastError?: string;
@@ -31,11 +29,9 @@ export class OpenAILLMProvider implements LLMProvider {
     this.apiKey = options.apiKey || process.env.OPENAI_API_KEY || "";
     this.model = options.model || process.env.OPENAI_MODEL || "gpt-4o-mini";
     this.baseUrl = (options.baseUrl || process.env.OPENAI_BASE_URL || "https://api.openai.com/v1").replace(/\/$/, "");
-    this.fallback = new MockLLMProvider();
   }
 
   /** Whether any call in this run was answered by the mock instead. */
-  servedByFallback = false;
 
   private async callChatCompletion(
     messages: Array<{ role: string; content: string }>,
@@ -139,10 +135,8 @@ Return a JSON object with this exact structure:
         };
       });
     } catch (err) {
-      console.warn("OpenAI extractClaims failed, falling back to mock LLM:", err);
-      this.servedByFallback = true;
       recordFailure(this, err);
-      return await this.fallback.extractClaims(text);
+      throw err;
     }
   }
 
@@ -175,10 +169,8 @@ Entities: ${claim.entities?.join(", ") || "N/A"}`;
       }
       return [claim.normalizedText];
     } catch (err) {
-      console.warn("OpenAI generateSearchQueries failed, falling back to mock LLM:", err);
-      this.servedByFallback = true;
       recordFailure(this, err);
-      return await this.fallback.generateSearchQueries(claim);
+      throw err;
     }
   }
 
@@ -226,16 +218,9 @@ Entities: ${claim.entities?.join(", ") || "N/A"}`;
         { role: "user", content: userPrompt },
       ]);
     } catch (err) {
-      console.warn("OpenAI rewrite failed, falling back to mock LLM:", err);
-      this.servedByFallback = true;
       recordFailure(this, err);
-      return await this.fallback.rewrite(input);
+      throw err;
     }
   }
 
-  async surgicalFix(input: SurgicalFixInput): Promise<string> {
-    // A capability this adapter does not implement, not a service that failed:
-    // the local repair restores the reader's own figure, inventing nothing.
-    return await this.fallback.surgicalFix(input);
-  }
 }
