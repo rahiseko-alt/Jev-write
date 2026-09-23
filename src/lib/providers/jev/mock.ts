@@ -565,18 +565,13 @@ export class MockJEVClient implements JEVClient {
       };
     }
 
-    // 4. If entities were altered without authorization
-    const origKeywords = this.extractKeywords(original);
-    const hasSharedEntity = origKeywords.some((kw) => revised.includes(kw));
-
-    if (unauthorizedChanges.length > 0 || (hasSharedEntity && allowed.length === 0)) {
-      if (unauthorizedChanges.length === 0) {
-        unauthorizedChanges.push({
-          segment: revised,
-          reason: `原文「${original}」の内容が未承認に変更されました。`,
-          expectedFact: original,
-        });
-      }
+    // 4. Report the changes actually found.
+    //
+    // A rewrite that says the same facts in better words is the whole point of
+    // the rewrite; only a fact that moved without authorization is a finding
+    // here. Treating every reworded sentence as unauthorized threw away every
+    // style repair in an article that needed no factual correction.
+    if (unauthorizedChanges.length > 0) {
       return {
         hasUnauthorizedChange: true,
         unauthorizedChangeDetected: true,

@@ -217,6 +217,7 @@ export async function runOrchestrator(
       sources: factResult.evidences,
       timings,
       servedByFallback: (llm as { servedByFallback?: boolean }).servedByFallback === true,
+      unauthorizedChangeDetected: deltaResult.unauthorizedChangeDetected,
     };
 
     store.updateJob(jobId, {

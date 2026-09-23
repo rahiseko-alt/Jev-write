@@ -19,12 +19,106 @@ export interface DeltaCheckResult {
     expectedFact?: string;
   }>;
   surgicalFixApplied: boolean;
+  /** True when the rewrite was taken back wholesale because it could not be made safe. */
+  rolledBack: boolean;
+}
+
+/** A figure, with the unit it was written in and the words that introduce it. */
+type Figure = {
+  text: string;
+  index: number;
+  unit: string;
+  label: string;
+};
+
+const NUMBER_PATTERN = /\d+[\d,]*(?:万|億|兆|%|円|ドル|人|個|GB|MB)?/g;
+const LABEL_LENGTH = 12;
+
+function figuresIn(text: string): Figure[] {
+  const found: Figure[] = [];
+  const pattern = new RegExp(NUMBER_PATTERN.source, "g");
+  let match: RegExpExecArray | null;
+
+  while ((match = pattern.exec(text)) !== null) {
+    found.push({
+      text: match[0],
+      index: match.index,
+      unit: match[0].replace(/^[\d,]+/, ""),
+      label: labelBefore(text, match.index),
+    });
+  }
+
+  return found;
+}
+
+/** The words immediately before a figure, which say what it is a figure of. */
+function labelBefore(text: string, at: number): string {
+  const run = text.slice(Math.max(0, at - LABEL_LENGTH), at);
+  const words = run.match(/[^\s、。（）()「」『』:：,]+$/);
+  return words ? words[0] : "";
+}
+
+/**
+ * The figures in `text` that the original does not account for.
+ *
+ * Counted rather than lined up by position: a sentence the rewrite dropped
+ * shortens the list without shifting anything, so the figures that survived
+ * are still recognised as the original's own.
+ */
+function unaccountedFigures(
+  originalText: string,
+  text: string,
+  authorizedChanges: string[]
+): Figure[] {
+  const budget = new Map<string, number>();
+  for (const figure of figuresIn(originalText)) {
+    budget.set(figure.text, (budget.get(figure.text) ?? 0) + 1);
+  }
+
+  const unaccounted: Figure[] = [];
+  for (const figure of figuresIn(text)) {
+    const left = budget.get(figure.text) ?? 0;
+    if (left > 0) {
+      budget.set(figure.text, left - 1);
+      continue;
+    }
+    if (authorizedChanges.some((change) => change.includes(figure.text))) {
+      continue;
+    }
+    unaccounted.push(figure);
+  }
+
+  return unaccounted;
+}
+
+/**
+ * The original figure this one stands in for: same unit, introduced by the
+ * same words, and itself missing from the rewrite. Where that is not a single
+ * unambiguous figure there is nothing to restore, and the rewrite is taken
+ * back instead of guessing.
+ */
+function displacedFigure(
+  figure: Figure,
+  originalText: string,
+  revisedText: string
+): Figure | undefined {
+  if (!figure.label) return undefined;
+
+  const kept = new Set(figuresIn(revisedText).map((f) => f.text));
+  const candidates = figuresIn(originalText).filter(
+    (f) => !kept.has(f.text) && f.unit === figure.unit && f.label === figure.label
+  );
+
+  return candidates.length === 1 ? candidates[0] : undefined;
 }
 
 /**
  * Execute Delta Check (Sections 26-28 of specification)
  * Verifies post-rewrite text against unauthorized factual modifications,
  * and performs surgical corrections if necessary.
+ *
+ * Whatever this finds is put right or taken back out. Text it flagged is
+ * never returned as verified.
  */
 export async function runDeltaCheck(
   originalText: string,
@@ -49,44 +143,28 @@ export async function runDeltaCheck(
     }
   }
 
-  // Also extract differences in numbers, dates, or entities
-  const numRegex = /\d+[\d,]*(?:万|億|兆|%|円|ドル|人|個|GB|MB)?/g;
-  const origNumberMatches = Array.from(originalText.matchAll(numRegex));
-  const revNumberMatches = Array.from(revisedText.matchAll(numRegex));
-
   const candidateUnauthorizedSegments: Array<{
     segment: string;
     reason: string;
     expectedFact?: string;
     index?: number;
-  }> = [];
+  }> = unaccountedFigures(originalText, revisedText, authorizedChanges).map(
+    (figure) => ({
+      segment: figure.text,
+      reason: `新しく現れた数値「${figure.text}」は、ファクト台帳の訂正として承認されていません。`,
+      expectedFact: displacedFigure(figure, originalText, revisedText)?.text,
+      index: figure.index,
+    })
+  );
 
-  for (let i = 0; i < revNumberMatches.length; i++) {
-    const revMatch = revNumberMatches[i];
-    const num = revMatch[0];
-    const origMatch = origNumberMatches[i];
-
-    if (!origMatch) {
-      continue;
-    }
-
-    if (num !== origMatch[0]) {
-      const isAuthorized = authorizedChanges.some((c) => c.includes(num));
-      if (!isAuthorized) {
-        candidateUnauthorizedSegments.push({
-          segment: num,
-          reason: `新しく追加された数値「${num}」は、ファクト台帳の訂正として承認されていません。`,
-          expectedFact: origMatch[0],
-          index: revMatch.index,
-        });
-      }
-    }
-  }
+  const reportedChanges: DeltaCheckResult["unauthorizedChanges"] =
+    candidateUnauthorizedSegments.map(({ segment, reason, expectedFact }) => ({
+      segment,
+      reason,
+      expectedFact,
+    }));
 
   let hasUnauthorizedChange = candidateUnauthorizedSegments.length > 0;
-  let explanation: string | undefined;
-
-  let jevEvaluated = false;
   let jevHasUnauthorizedChange = false;
 
   try {
@@ -95,12 +173,27 @@ export async function runDeltaCheck(
       revisedText,
       authorizedChanges
     );
-    
-    jevEvaluated = true;
+
     if (deltaRes.hasUnauthorizedChange) {
       hasUnauthorizedChange = true;
       jevHasUnauthorizedChange = true;
-      explanation = deltaRes.explanation;
+
+      const explanation =
+        deltaRes.explanation || "原文にない事実の書き換えが見つかりました。";
+
+      for (const change of deltaRes.unauthorizedChanges ?? []) {
+        if (!change?.segment) continue;
+        if (reportedChanges.some((r) => r.segment === change.segment)) continue;
+        reportedChanges.push({
+          segment: change.segment,
+          reason: change.reason || explanation,
+          expectedFact: change.expectedFact,
+        });
+      }
+
+      if (reportedChanges.length === 0) {
+        reportedChanges.push({ segment: revisedText, reason: explanation });
+      }
     }
   } catch (err) {
     console.warn("JEV Delta check evaluation failed:", err);
@@ -108,39 +201,44 @@ export async function runDeltaCheck(
 
   let verifiedText = revisedText;
   let surgicalFixApplied = false;
+  let rolledBack = false;
 
-  if (jevEvaluated && jevHasUnauthorizedChange) {
+  if (jevHasUnauthorizedChange) {
+    // JEV names a meaning change that the figure check cannot localise, so the
+    // only text known to be safe is the one the reader wrote.
     verifiedText = originalText;
-  }
-
-  // If unauthorized modifications are detected, perform targeted surgical correction
-  if (hasUnauthorizedChange && candidateUnauthorizedSegments.length > 0 && verifiedText !== originalText) {
+    rolledBack = true;
+  } else if (candidateUnauthorizedSegments.length > 0) {
     onProgress?.({
       percent: 92,
       message: `未承認の変更 (${candidateUnauthorizedSegments.length}件) に対する局所外科的修正中...`,
     });
 
     for (const unauthorized of candidateUnauthorizedSegments) {
+      // Without the figure it displaced there is nothing to put back, and
+      // inventing one would be the very thing this check exists to stop.
+      if (!unauthorized.expectedFact) continue;
+
       if (llm.surgicalFix) {
         try {
           verifiedText = await llm.surgicalFix({
             text: verifiedText,
             issueDescription: unauthorized.reason,
             targetSegment: unauthorized.segment,
-            expectedFact: unauthorized.expectedFact || originalText,
+            expectedFact: unauthorized.expectedFact,
           });
           surgicalFixApplied = true;
         } catch (err) {
           console.warn("Surgical fix failed for segment:", unauthorized.segment, err);
         }
-      } else if (unauthorized.expectedFact && verifiedText.includes(unauthorized.segment)) {
+      } else if (verifiedText.includes(unauthorized.segment)) {
         // Fallback targeted replacement: restore expected fact
         let targetIndex = -1;
         if (unauthorized.index !== undefined) {
           const searchStart = Math.max(0, unauthorized.index - 10);
           targetIndex = verifiedText.indexOf(unauthorized.segment, searchStart);
         }
-        
+
         if (targetIndex === -1) {
           targetIndex = verifiedText.indexOf(unauthorized.segment);
         }
@@ -154,6 +252,14 @@ export async function runDeltaCheck(
         }
       }
     }
+
+    // A repair counts only if it held. Anything still unaccounted for means the
+    // rewrite goes back, rather than reaching the reader marked as checked.
+    if (unaccountedFigures(originalText, verifiedText, authorizedChanges).length > 0) {
+      verifiedText = originalText;
+      surgicalFixApplied = false;
+      rolledBack = true;
+    }
   }
 
   onProgress?.({
@@ -164,7 +270,8 @@ export async function runDeltaCheck(
   return {
     verifiedText,
     unauthorizedChangeDetected: hasUnauthorizedChange,
-    unauthorizedChanges: candidateUnauthorizedSegments,
+    unauthorizedChanges: reportedChanges,
     surgicalFixApplied,
+    rolledBack,
   };
 }

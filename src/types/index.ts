@@ -117,6 +117,12 @@ export type AnalysisResult = {
    * looks like a full check.
    */
   servedByFallback?: boolean;
+  /**
+   * True when the Delta Check found the rewrite had changed something it was
+   * not authorised to change. The change itself is repaired or taken back;
+   * the reader is told it happened.
+   */
+  unauthorizedChangeDetected?: boolean;
 };
 
 export type JobStatus =

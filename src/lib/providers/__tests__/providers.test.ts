@@ -211,6 +211,18 @@ describe("JEV Provider", () => {
     expect(unauthorizedCheck.unauthorizedChanges.length).toBeGreaterThan(0);
   });
 
+  it("does not call a wording change unauthorized when every fact is intact", async () => {
+    // A style repair: the same facts, said without the AI tell. Nothing here
+    // was checked and changed, so nothing here is an unauthorized change.
+    const check = await mockJEV.evaluateDeltaMeaningChange(
+      "まさに、この機能は2025年8月に公開されました。",
+      "この機能は2025年8月に公開されました。",
+      []
+    );
+
+    expect(check.hasUnauthorizedChange).toBe(false);
+  });
+
   it("factory returns HTTPJEVClient when URL is provided", () => {
     const client = getJEVClient({ apiUrl: "https://jev.internal.example.com" });
     expect(client).toBeInstanceOf(HTTPJEVClient);
