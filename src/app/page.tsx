@@ -28,6 +28,11 @@ import {
 } from "@/lib/revised-document";
 import { MarginNotes } from "@/components/margin-notes";
 import { FindingCard } from "@/components/finding-card";
+import {
+  noticeForError,
+  noticeForResponse,
+  type FailureNotice,
+} from "@/lib/failure-explanation";
 
 // Each kind of mark is told apart by shape as well as by colour: a glyph
 // before the span and a distinct underline, so the distinction survives for a
@@ -99,12 +104,35 @@ function MarkedText({
   );
 }
 
+// 失敗の知らせ。主文で「何が起きて、何をすればよいか」を伝え、
+// 止まったサービスと元の文言は隠さずに残す（ADR-0006）。
+function FailureNoticeBody({ notice }: { notice: FailureNotice & { where?: string } }) {
+  return (
+    <div className="min-w-0 space-y-1">
+      <p>
+        {notice.where}
+        {notice.headline}
+      </p>
+      {notice.service && <p className="text-[0.92em] opacity-90">止まったところ：{notice.service}</p>}
+      {notice.details && (
+        <details className="text-[0.85em] opacity-90">
+          <summary className="cursor-pointer select-none">詳しい情報</summary>
+          <p className="mt-1 break-all font-mono whitespace-pre-wrap">{notice.details}</p>
+        </details>
+      )}
+    </div>
+  );
+}
+
 export default function HomePage() {
   // Navigation & View Mode
   const [inputText, setInputText] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [analysisResult, setAnalysisResult] = useState<AnalysisResult | null>(null);
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  // 主文は書き手向けの日本語。どのサービスが何と言ったかは詳しい情報に畳んで残す。
+  const [errorMessage, setErrorMessage] = useState<
+    (FailureNotice & { where?: string }) | null
+  >(null);
   // A long article is checked a block at a time, and the reader watches it go.
   const [blockProgress, setBlockProgress] = useState<{ done: number; total: number } | null>(null);
 
@@ -192,12 +220,13 @@ export default function HomePage() {
 
         if (!response.ok) {
           const data = await response.json().catch(() => ({}));
-          // The reason is the useful part: which service could not answer, and
-          // what it said. Nothing is checked in its place.
-          const reason = [data.error, data.details].filter(Boolean).join(" / ");
+          // The writer first reads what happened and what to do; which service
+          // could not answer, and what it said, stays under 詳しい情報.
+          // Nothing is checked in its place.
           const where =
-            blocks.length > 1 ? `${finished.length + 1}ブロック目で止まりました。` : "";
-          throw new Error(where + (reason || "チェックの実行に失敗しました。"));
+            blocks.length > 1 ? `${finished.length + 1}ブロック目で止まりました。` : undefined;
+          setErrorMessage({ ...noticeForResponse(response.status, data), where });
+          return;
         }
 
         const resData = await response.json();
@@ -224,7 +253,7 @@ export default function HomePage() {
       }
     } catch (err: any) {
       console.error(err);
-      setErrorMessage(err.message || "エラーが発生しました。");
+      setErrorMessage(noticeForError(err));
     } finally {
       setIsSubmitting(false);
       setBlockProgress(null);
@@ -325,9 +354,9 @@ export default function HomePage() {
               )}
 
               {errorMessage && (
-                <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-xl text-sm flex items-center gap-2">
-                  <AlertCircle className="w-4 h-4 shrink-0 text-red-500" />
-                  <span>{errorMessage}</span>
+                <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-xl text-sm flex items-start gap-2">
+                  <AlertCircle className="w-4 h-4 shrink-0 text-red-500 mt-0.5" />
+                  <FailureNoticeBody notice={errorMessage} />
                 </div>
               )}
 
@@ -463,7 +492,7 @@ export default function HomePage() {
                     {errorMessage && (
                       <div className="flex items-start gap-2 px-4 py-3 rounded-xl border border-red-200 bg-red-50 text-xs text-red-900">
                         <AlertTriangle className="w-4 h-4 shrink-0 text-red-600 mt-0.5" />
-                        <span>{errorMessage}</span>
+                        <FailureNoticeBody notice={errorMessage} />
                       </div>
                     )}
 
