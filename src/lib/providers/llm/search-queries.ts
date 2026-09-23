@@ -54,7 +54,9 @@ Rules:
 
 Return ONLY a valid JSON object: { "queries": ["query 1", "query 2", ...] }`;
 
+// The whole article goes in, never a leading slice of it: queries written from
+// the first part alone leave the subjects of the rest without pages (ADR-0007).
 export function buildDocumentQueryUserPrompt(text: string): string {
   return `Article:
-${text.slice(0, 4000)}`;
+${text}`;
 }

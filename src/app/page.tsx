@@ -18,8 +18,6 @@ import {
   ClaimResult,
   StyleIssue,
 } from "@/types";
-import { splitIntoBlocks } from "@/lib/text/blocks";
-import { mergeAnalyses } from "@/lib/pipeline/merge-results";
 import {
   buildRevisedDocument,
   type Finding,
@@ -133,8 +131,6 @@ export default function HomePage() {
   const [errorMessage, setErrorMessage] = useState<
     (FailureNotice & { where?: string }) | null
   >(null);
-  // A long article is checked a block at a time, and the reader watches it go.
-  const [blockProgress, setBlockProgress] = useState<{ done: number; total: number } | null>(null);
 
   // The notes open in the margin, in the order they were opened. Each stays
   // open until the reader closes it.
@@ -200,63 +196,43 @@ export default function HomePage() {
     setErrorMessage(null);
 
     try {
-      // One run has a time limit, so a long article is cut into blocks and
-      // checked one after another. Each finished block is shown straight
-      // away, and the finished blocks are assembled into one document.
-      const blocks = splitIntoBlocks(inputText.trim());
-      setBlockProgress({ done: 0, total: blocks.length });
+      // The whole article goes to /api/analyze in one run, so every sentence is
+      // checked with the rest of the article in view (ADR-0007).
       setAnalysisResult(null);
       setAdoptedOverrides({});
       setOpenFindingIds([]);
 
-      const finished: AnalysisResult[] = [];
+      const response = await fetch("/api/analyze", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: inputText.trim() }),
+      });
 
-      for (const block of blocks) {
-        const response = await fetch("/api/analyze", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ text: block }),
-        });
-
-        if (!response.ok) {
-          const data = await response.json().catch(() => ({}));
-          // The writer first reads what happened and what to do; which service
-          // could not answer, and what it said, stays under 詳しい情報.
-          // Nothing is checked in its place.
-          const where =
-            blocks.length > 1 ? `${finished.length + 1}ブロック目で止まりました。` : undefined;
-          setErrorMessage({ ...noticeForResponse(response.status, data), where });
-          return;
-        }
-
-        const resData = await response.json();
-        let blockResult = resData.result;
-        if (!blockResult && resData.jobId) {
-          const checkRes = await fetch(`/api/analyze/${resData.jobId}`);
-          const checkData = await checkRes.json();
-          blockResult = checkData.job?.result;
-        }
-
-        if (blockResult) {
-          finished.push(blockResult);
-          setBlockProgress({ done: finished.length, total: blocks.length });
-          setAnalysisResult(mergeAnalyses(finished, blocks));
-        }
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        // The writer first reads what happened and what to do; which service
+        // could not answer, and what it said, stays under 詳しい情報.
+        // Nothing is checked in its place.
+        setErrorMessage(noticeForResponse(response.status, data));
+        return;
       }
 
-      const finalResult = finished.length > 0 ? mergeAnalyses(finished, blocks) : null;
+      const resData = await response.json();
+      let result = resData.result;
+      if (!result && resData.jobId) {
+        const checkRes = await fetch(`/api/analyze/${resData.jobId}`);
+        const checkData = await checkRes.json();
+        result = checkData.job?.result;
+      }
 
-      if (finalResult) {
-        setAnalysisResult(finalResult);
-        setAdoptedOverrides({});
-        setOpenFindingIds([]);
+      if (result) {
+        setAnalysisResult(result);
       }
     } catch (err: any) {
       console.error(err);
       setErrorMessage(noticeForError(err));
     } finally {
       setIsSubmitting(false);
-      setBlockProgress(null);
     }
   };
 
@@ -332,27 +308,21 @@ export default function HomePage() {
 
                   <div className="flex justify-end pt-2 text-xs text-slate-400 font-mono">
                     {inputText.length} / 10,000文字
-                    {inputText.trim().length > 700 && (
-                      <span className="ml-2 text-slate-400">
-                        （{splitIntoBlocks(inputText.trim()).length}ブロックに分けて順番に処理します）
-                      </span>
-                    )}
                   </div>
                 </div>
               </div>
 
-              {/* Error Alert if any */}
-              {blockProgress && blockProgress.total > 1 && (
+              {isSubmitting && (
                 <div className="flex items-center gap-2 px-4 py-3 rounded-xl border border-blue-200 bg-blue-50 text-xs text-blue-900">
-                  <span className="font-bold">
-                    {blockProgress.done} / {blockProgress.total} ブロック完了
-                  </span>
+                  <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />
+                  <span className="font-bold">解析中</span>
                   <span className="text-blue-700">
-                    終わったところから結果に反映されます。
+                    記事全体をまとめて確認しています。長い記事では数分かかることがあります。
                   </span>
                 </div>
               )}
 
+              {/* Error Alert if any */}
               {errorMessage && (
                 <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-xl text-sm flex items-start gap-2">
                   <AlertCircle className="w-4 h-4 shrink-0 text-red-500 mt-0.5" />
@@ -477,17 +447,6 @@ export default function HomePage() {
                         )}
                       </button>
                     </div>
-
-                    {blockProgress && blockProgress.done < blockProgress.total && (
-                      <div className="flex items-center gap-2 px-4 py-3 rounded-xl border border-blue-200 bg-blue-50 text-xs text-blue-900">
-                        <span className="font-bold">
-                          {blockProgress.done} / {blockProgress.total} ブロック完了
-                        </span>
-                        <span className="text-blue-700">
-                          残りを順番に処理しています。ここまでの結果を先に表示しています。
-                        </span>
-                      </div>
-                    )}
 
                     {errorMessage && (
                       <div className="flex items-start gap-2 px-4 py-3 rounded-xl border border-red-200 bg-red-50 text-xs text-red-900">
