@@ -58,7 +58,8 @@ export type FactLedgerItem = {
   correctionReason?: string;
   lockedFacts: string[];
   evidenceIds: string[];
-  confidence: number;
+  /** JEV's number for this claim, or nothing when no judgement produced one. */
+  confidence?: number;
 };
 
 export type StyleSeverity = "low" | "medium" | "high";

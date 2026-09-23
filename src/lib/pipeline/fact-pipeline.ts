@@ -134,7 +134,9 @@ export async function runFactPipeline(
           verdict: "INSUFFICIENT" as ClaimVerdict,
           reason,
           evidence: [],
-          confidence: 0.5,
+          // No judgement was made, so there is no number to show. An invented
+          // one would be the very thing this product exists to replace.
+          confidence: undefined,
           lookupFailed: true,
         },
         ledgerItem: {
@@ -144,7 +146,7 @@ export async function runFactPipeline(
           correctionReason: reason,
           lockedFacts: [],
           evidenceIds: [],
-          confidence: 0.5,
+          confidence: undefined,
         },
         evidences: [],
         isFactCheckHit: false,
@@ -218,7 +220,11 @@ async function verifyClaim(params: {
   let correctedClaim: string | undefined;
   let reason: string | undefined;
   let isFactCheckHit = false;
-  let confidence = 0.7;
+  /**
+   * JEV's number for this claim, or nothing. Every value here comes from an
+   * answer; nothing is filled in to make the screen look decided (ADR-0008).
+   */
+  let confidence: number | undefined;
 
   // Step 2: Query Google Fact Check Tools API
   const query = buildFactCheckQuery(claim);
@@ -268,11 +274,12 @@ async function verifyClaim(params: {
 
           if (isFalse) {
             verdict = "CONTRADICTED";
-            confidence = 0.95;
+            // A published rating decided this, not JEV. There is no number.
+            confidence = undefined;
             reason = `FactCheck評価: ${ratingText} (${review.publisher?.name || "検証機関"})`;
           } else if (isTrue) {
             verdict = "SUPPORTED";
-            confidence = 0.95;
+            confidence = undefined;
             reason = `FactCheck評価: ${ratingText} (${review.publisher?.name || "検証機関"})`;
           } else {
             const normResult = await jev.evaluateAtomicJudgment({
@@ -281,7 +288,7 @@ async function verifyClaim(params: {
               criteria: ["supports", "contradicts", "mixed", "insufficient"],
             });
             verdict = mapChoiceToClaimVerdict(normResult.choice);
-            confidence = normResult.confidence || 0.85;
+            confidence = normResult.confidence;
             reason = normResult.explanation || `FactCheck評価: ${ratingText}`;
           }
 
@@ -548,26 +555,26 @@ async function verifyClaim(params: {
           : `裏付けとなるページが見つかりませんでした。JEVの読みは、成り立つ確率 ${(held.probabilityTrue * 100).toFixed(0)}%、確信度 ${(held.confidence * 100).toFixed(0)}% です。`;
       } else {
         verdict = "INSUFFICIENT";
-        confidence = 0.6;
+        confidence = undefined;
         reason = lookupFailed
           ? "外部の確認サービスに接続できなかったため、確認できませんでした。"
           : "検証に足る明確な裏付け情報が確認できませんでした（証拠0件）。";
       }
     } else if (relationCounts.contradicts > 0 && relationCounts.supports === 0) {
       verdict = "CONTRADICTED";
-      confidence = strongest("contradicts") || 0.9;
+      confidence = strongest("contradicts");
       reason = bestExplanation || "外部ソースの情報と矛盾する内容が確認されました。";
     } else if (relationCounts.contradicts > 0 && relationCounts.supports > 0) {
       verdict = "MIXED";
-      confidence = Math.max(strongest("contradicts"), strongest("supports")) || 0.75;
+      confidence = Math.max(strongest("contradicts"), strongest("supports"));
       reason = bestExplanation || "裏付け情報と矛盾する情報の双方が存在します。";
     } else if (relationCounts.supports > 0) {
       verdict = "SUPPORTED";
-      confidence = strongest("supports") || 0.88;
+      confidence = strongest("supports");
       reason = bestExplanation || "信頼できる外部ソースによって事実の裏付けが得られました。";
     } else {
       verdict = "INSUFFICIENT";
-      confidence = consistency?.confidence ?? 0.6;
+      confidence = consistency?.confidence;
       reason = lookupFailed
         ? "外部の確認サービスに接続できなかったため、確認できませんでした。"
         : "検証に足る明確な裏付け情報が確認できませんでした。";
@@ -604,7 +611,7 @@ async function verifyClaim(params: {
     reason,
     evidence: claimEvidences,
     confidence,
-    band: bandOf(confidence),
+    band: confidence === undefined ? undefined : bandOf(confidence),
     consistency,
     lookupFailed,
     evidenceTrace: trace,
