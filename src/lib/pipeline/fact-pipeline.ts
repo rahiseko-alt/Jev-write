@@ -1,5 +1,4 @@
 import { correctionFromEvidence } from "./correction";
-import { isAboutSubject } from "./relevance";
 import { describeFailure } from "@/lib/providers/diagnostics";
 import {
   Claim,
@@ -15,6 +14,7 @@ import {
   GoogleFactCheckClaim,
   GoogleFactCheckClient,
   JEVClient,
+  JEVQuestion,
   LLMProvider,
   SearchProvider,
   SearchResultItem,
@@ -45,6 +45,19 @@ export interface FactPipelineOutput {
   factLedger: FactLedgerItem[];
   evidences: Evidence[];
 }
+
+/** How many candidates one claim asks JEV about. They ride in one request. */
+const MAX_SOURCES_PER_CLAIM = 5;
+
+/** Below an even chance, JEV says the page is about something else. */
+const SAME_SUBJECT_THRESHOLD = 0.5;
+
+/**
+ * A relation JEV is less sure of than this is not acted on. The scale is
+ * JEV's own: confidence is how concentrated its answer is
+ * (docs.typesafe.ai/confidence).
+ */
+const RELATION_CONFIDENCE_THRESHOLD = 0.5;
 
 const SOURCE_PRIORITY: Record<SourceType, number> = {
   primary: 1,
@@ -320,10 +333,21 @@ async function verifyClaim(params: {
 
     let bestExplanation: string | undefined;
 
-    for (let i = 0; i < sortedResults.length; i++) {
-      const res = sortedResults[i];
-      try {
-        let fetched: any = { url: res.url, title: res.title, siteName: "", author: "", publishedAt: "", statusCode: 200 };
+    // Every candidate is read first, then JEV is asked about all of them in
+    // one request (ADR-0007): questions are answered in parallel, so asking
+    // about five pages costs about what asking about one costs. Nothing is
+    // discarded before JEV sees it, and the numbers it returns are kept.
+    const candidates = await Promise.all(
+      sortedResults.slice(0, MAX_SOURCES_PER_CLAIM).map(async (res) => {
+        let fetched: any = {
+          url: res.url,
+          title: res.title,
+          siteName: "",
+          author: "",
+          publishedAt: "",
+          statusCode: 200,
+        };
+
         try {
           fetched =
             typeof fetchProvider.fetchUrl === "function"
@@ -333,92 +357,125 @@ async function verifyClaim(params: {
           console.warn(`Fetch failed for ${res.url}:`, err);
         }
 
-        const rawContent = fetched.content || (fetched as any).text || "";
-        let content = res.content || (res as any).snippet || "";
+        const pageText = fetched.content || (fetched as any).text || "";
+        const snippet = res.content || (res as any).snippet || "";
+        const text = pageText.trim().length > 0 ? pageText : snippet;
 
-        if (!content && rawContent.trim().length > 0 && fetched.statusCode !== 403 && fetched.statusCode !== 404) {
-          content = rawContent;
-        } else if (!content) {
-          content = rawContent;
-        }
+        return {
+          res,
+          fetched,
+          text,
+          excerpt: extractRelevantExcerpt(text, claim, 2500),
+        };
+      })
+    );
 
-        // A page that never names what the claim is about cannot answer for
-        // it. Asking JEV anyway produces a confident verdict about the wrong
-        // company (ADR-0006, layer 2).
-        //
-        // Everything known about the page is read, not just the search
-        // snippet: a snippet is a few lines chosen around the query, and a
-        // page about the subject often names it nowhere near them.
-        const everythingKnown = [fetched.title, res.title, rawContent, content]
-          .filter(Boolean)
-          .join(" ");
+    const readable = candidates.filter((candidate) => candidate.text.trim().length > 0);
+    trace.unreadable = candidates.length - readable.length;
 
-        if (!isAboutSubject(everythingKnown, claim)) {
+    if (readable.length > 0 && typeof jev.ask === "function") {
+      const questions: Record<string, JEVQuestion> = {};
+
+      readable.forEach((candidate, index) => {
+        questions[`subject${index}`] = {
+          type: "noul",
+          instructions: `sources[${index}] は、claim.subject と同じ対象について書かれた情報か。同名の別の組織や製品であれば、そうではない。`,
+        };
+        questions[`relation${index}`] = {
+          type: "choice",
+          instructions: `sources[${index}] の内容は、claim.text をどう扱っているか。`,
+          criteria: {
+            supports: "主張と同じ事実を述べている",
+            contradicts: "主張と異なる事実を述べている（数値・日付・名称の食い違いを含む）",
+            says_nothing: "主張について何も述べていない",
+          },
+        };
+      });
+
+      const answers = await jev.ask(
+        {
+          claim: {
+            text: claim.normalizedText || claim.originalText,
+            subject: claim.subject || claim.entities?.[0] || "",
+          },
+          sources: readable.map((candidate) => ({
+            title: candidate.fetched.title || candidate.res.title || "",
+            url: candidate.res.url,
+            text: candidate.excerpt,
+          })),
+        },
+        questions
+      );
+
+      for (let index = 0; index < readable.length; index++) {
+        const candidate = readable[index];
+        const subjectAnswer = answers[`subject${index}`];
+        const relationAnswer = answers[`relation${index}`];
+
+        const sameSubject =
+          subjectAnswer && subjectAnswer.type === "noul" ? subjectAnswer.noul : 0;
+
+        // JEV decides whether the page is about the same thing. Below an even
+        // chance it is another subject, and its figures say nothing here.
+        if (sameSubject < SAME_SUBJECT_THRESHOLD) {
           trace.offSubject++;
           continue;
         }
 
-        if (content.trim().length === 0) {
-          trace.unreadable++;
+        if (!relationAnswer || relationAnswer.type !== "choice") {
+          trace.saidNothing++;
           continue;
         }
 
-        const relevantEvidence = extractRelevantExcerpt(content, claim, 2500);
+        const relation = relationAnswer.choice as keyof typeof relationCounts;
+        const certainty = relationAnswer.confidence ?? 0;
 
-        // JEV evidence evaluation
-        const evalResult = await jev.evaluateAtomicJudgment({
-          state: {
-            claim: claim.normalizedText || claim.originalText,
-            evidence: relevantEvidence,
-          },
-          instructions: "この証拠テキストは主張を肯定（supports）していますか、否定（contradicts）していますか？",
-          criteria: ["supports", "contradicts", "says_nothing", "ambiguous"],
+        // An answer JEV is unsure of is not a verdict. It is reported as a
+        // weak reading rather than acted on (docs.typesafe.ai/confidence).
+        const decided =
+          (relation === "supports" || relation === "contradicts") &&
+          certainty >= RELATION_CONFIDENCE_THRESHOLD;
+
+        if (!decided) {
+          trace.saidNothing++;
+          continue;
+        }
+
+        relationCounts[relation]++;
+        trace.used++;
+
+        claimEvidences.push({
+          id: `ev-${claim.id}-web-${index}`,
+          claimId: claim.id,
+          sourceUrl: candidate.fetched.url || candidate.res.url,
+          sourceTitle: candidate.fetched.title || candidate.res.title,
+          publisher: candidate.fetched.siteName || candidate.fetched.author,
+          publishedAt: candidate.fetched.publishedAt,
+          excerpt: candidate.excerpt.slice(0, 350),
+          sourceType: mapDomainToSourceType(candidate.res.url),
+          confidence: certainty,
+          relation,
         });
 
-        const relation = (evalResult.choice as keyof typeof relationCounts) || "says_nothing";
-        if (relationCounts[relation] !== undefined) {
-          relationCounts[relation]++;
-        }
-        if (relation === "supports" || relation === "contradicts") {
-          trace.used++;
-        } else {
-          trace.saidNothing++;
+        if (!bestExplanation) {
+          bestExplanation = `JEVの判定: ${relation}（確信度 ${(certainty * 100).toFixed(0)}%）`;
         }
 
-        if (relation === "supports" || relation === "contradicts") {
-          const evId = `ev-${claim.id}-web-${i}`;
-          claimEvidences.push({
-            id: evId,
-            claimId: claim.id,
-            sourceUrl: fetched.url,
-            sourceTitle: fetched.title || res.title,
-            publisher: fetched.siteName || fetched.author,
-            publishedAt: fetched.publishedAt,
-            excerpt: relevantEvidence.slice(0, 350),
-            sourceType: mapDomainToSourceType(fetched.url),
-          });
-
-          if (!bestExplanation && evalResult.explanation) {
-            bestExplanation = evalResult.explanation;
-          }
-
-          if (relation === "contradicts" && !correctedClaim) {
-            correctedClaim = await deriveCorrectionFromText(content, claim, llm);
-          }
-
-          // If official/primary source confirms the claim, stop searching lower-priority sources
-          const sType = mapDomainToSourceType(fetched.url);
-          if (relation === "supports" && (sType === "official" || sType === "primary")) {
-            break;
-          }
+        if (relation === "contradicts" && !correctedClaim) {
+          correctedClaim = await deriveCorrectionFromText(candidate.text, claim, llm);
         }
-      } catch (err) {
-        console.warn(`Fetch failed for ${res.url}:`, err);
       }
     }
 
+    // The verdict's strength is JEV's, not a number chosen here (ADR-0007).
+    const strongest = (kind: "supports" | "contradicts") =>
+      Math.max(
+        0,
+        ...claimEvidences
+          .filter((item) => (item.confidence ?? 0) > 0 && item.relation === kind)
+          .map((item) => item.confidence ?? 0)
+      );
 
-    // Synthesize final ClaimVerdict
     if (claimEvidences.length === 0) {
       verdict = "INSUFFICIENT";
       confidence = 0.6;
@@ -427,27 +484,15 @@ async function verifyClaim(params: {
         : "検証に足る明確な裏付け情報が確認できませんでした（証拠0件）。";
     } else if (relationCounts.contradicts > 0 && relationCounts.supports === 0) {
       verdict = "CONTRADICTED";
-      confidence = 0.9;
+      confidence = strongest("contradicts") || 0.9;
       reason = bestExplanation || "外部ソースの情報と矛盾する内容が確認されました。";
     } else if (relationCounts.contradicts > 0 && relationCounts.supports > 0) {
-      // Primary source hierarchy: If official/primary source supports the claim,
-      // it overrides secondary/ugc contradictions.
-      const hasOfficialSupport = claimEvidences.some(
-        (e) => e.sourceType === "official" || e.sourceType === "primary"
-      );
-      if (hasOfficialSupport) {
-        verdict = "SUPPORTED";
-        confidence = 0.92;
-        reason = "公式一次ソースによる確実な裏付けが得られました。";
-        correctedClaim = undefined;
-      } else {
-        verdict = "MIXED";
-        confidence = 0.75;
-        reason = bestExplanation || "裏付け情報と矛盾する情報の双方が存在します。";
-      }
+      verdict = "MIXED";
+      confidence = Math.max(strongest("contradicts"), strongest("supports")) || 0.75;
+      reason = bestExplanation || "裏付け情報と矛盾する情報の双方が存在します。";
     } else if (relationCounts.supports > 0) {
       verdict = "SUPPORTED";
-      confidence = 0.88;
+      confidence = strongest("supports") || 0.88;
       reason = bestExplanation || "信頼できる外部ソースによって事実の裏付けが得られました。";
     } else {
       verdict = "INSUFFICIENT";

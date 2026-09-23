@@ -33,6 +33,13 @@ export type Evidence = {
   publishedAt?: string;
   excerpt: string;
   sourceType: SourceType;
+  /**
+   * How sure JEV was of the relation this Evidence stands for, on its own
+   * scale of 0 to 1. Kept as given: the number is the point (ADR-0007).
+   */
+  confidence?: number;
+  /** Which way this Evidence went: JEV's own choice for it. */
+  relation?: "supports" | "contradicts";
 };
 
 export type ClaimVerdict =

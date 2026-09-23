@@ -6,6 +6,8 @@ import {
   JEVClient,
   JEVDeltaMeaningParams,
   JEVDeltaMeaningResult,
+  JEVAnswer,
+  JEVQuestion,
 } from "./types";
 import { recordFailure } from "../diagnostics";
 
@@ -107,6 +109,31 @@ export class HTTPJEVClient implements JEVClient {
       throw err;
     } finally {
       clearTimeout(timer);
+    }
+  }
+
+  /**
+   * Ask several questions about one state, in one request.
+   *
+   * The answers come back as they were given — probabilities and confidence
+   * included — because that is what they are for (ADR-0007).
+   */
+  async ask(
+    state: unknown,
+    questions: Record<string, JEVQuestion>
+  ): Promise<Record<string, JEVAnswer>> {
+    try {
+      const data = await this.callSystemOne(state, questions);
+      const answers = data?.answers;
+
+      if (!answers) {
+        throw new Error("JEV returned no answers for the questions that were asked.");
+      }
+
+      return answers as Record<string, JEVAnswer>;
+    } catch (err) {
+      recordFailure(this, err);
+      throw err;
     }
   }
 
