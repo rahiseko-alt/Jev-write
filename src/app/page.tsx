@@ -31,14 +31,13 @@ import {
 import { splitIntoBlocks } from "@/lib/text/blocks";
 import { mergeAnalyses } from "@/lib/pipeline/merge-results";
 import {
-  attentionOf,
   buildRevisedDocument,
-  isUnplaced,
-  sortByAttention,
   type Finding,
   type MarkKind,
   type Segment,
 } from "@/lib/revised-document";
+import { MarginNotes } from "@/components/margin-notes";
+import { FindingCard } from "@/components/finding-card";
 
 // Each kind of mark is told apart by shape as well as by colour: a glyph
 // before the span and a distinct underline, so the distinction survives for a
@@ -73,7 +72,7 @@ const MARK_STYLES: Record<
   },
 };
 
-/** Below this width the Finding opens as a sheet rather than in the side panel. */
+/** Below this width the margin shrinks to its arrows and a note spans the page. */
 const NARROW_SCREEN = "(max-width: 1023px)";
 
 function MarkedText({
@@ -93,7 +92,7 @@ function MarkedText({
     <button
       type="button"
       onClick={() => onSelect(mark.findingIds)}
-      aria-haspopup="dialog"
+      data-finding-ids={mark.findingIds.join(" ")}
       className={`inline rounded px-0.5 text-left ${
         rejected ? style.rejectedClassName : style.className
       } hover:brightness-95 transition`}
@@ -110,12 +109,6 @@ function MarkedText({
   );
 }
 
-/** The leading number as a percentage, or null when JEV gave none. */
-function attentionPercent(finding: Finding): number | null {
-  const value = attentionOf(finding);
-  return value === null ? null : Math.round(value * 100);
-}
-
 export default function HomePage() {
   // Navigation & View Mode
   const [inputText, setInputText] = useState("");
@@ -125,24 +118,17 @@ export default function HomePage() {
   // A long article is checked a block at a time, and the reader watches it go.
   const [blockProgress, setBlockProgress] = useState<{ done: number; total: number } | null>(null);
 
-  // Result View Controls
-  const [selectedFindingId, setSelectedFindingId] = useState<string | null>(null);
-  const [categoryFilter, setCategoryFilter] = useState<"all" | "fact" | "warning" | "style" | "verified">("all");
+  // The notes open in the margin, in the order they were opened. Each stays
+  // open until the reader closes it.
+  const [openFindingIds, setOpenFindingIds] = useState<string[]>([]);
+  const [narrow, setNarrow] = useState(false);
+  const bodyRef = useRef<HTMLDivElement>(null);
 
-  // Modals & Popovers
-  const [showHistoryModal, setShowHistoryModal] = useState(false);
-  const [showDraftModal, setShowDraftModal] = useState(false);
-  const [showGuideModal, setShowGuideModal] = useState(false);
-  const [showUserPopover, setShowUserPopover] = useState(false);
   const [showMoreMenu, setShowMoreMenu] = useState(false);
-  const [historyItems, setHistoryItems] = useState<{ id: string; time: string; text: string }[]>([]);
   const [lastSavedTime, setLastSavedTime] = useState("");
 
-  // Initialize and load history / draft from localStorage on mount
   useEffect(() => {
     try {
-      const savedHist = localStorage.getItem("jev_analysis_history");
-      if (savedHist) setHistoryItems(JSON.parse(savedHist));
       const now = new Date();
       setLastSavedTime(`${now.getFullYear()}/${now.getMonth() + 1}/${now.getDate()} ${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`);
     } catch {}
@@ -151,8 +137,6 @@ export default function HomePage() {
   // Track user adoption state for each Finding
   const [adoptedOverrides, setAdoptedOverrides] = useState<Record<string, boolean>>({});
   const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle");
-  const [sheetOpen, setSheetOpen] = useState(false);
-  const sheetRef = useRef<HTMLDivElement>(null);
 
   // Everything the result screen renders comes from this one place.
   const revisedDocument = useMemo(
@@ -166,48 +150,8 @@ export default function HomePage() {
     [analysisResult, adoptedOverrides]
   );
 
-  const originalLines = useMemo(
-    () => revisedDocument?.comparison.map((pair) => pair.original) ?? [],
-    [revisedDocument]
-  );
-
   const findings: Finding[] = useMemo(
     () => revisedDocument?.findings ?? [],
-    [revisedDocument]
-  );
-
-  // Findings the category filter lets through, weakest first: the reader works
-  // down the numbers rather than through the document.
-  const filteredFindings = useMemo(() => {
-    const kept =
-      categoryFilter === "fact"
-        ? findings.filter((i) => i.kind === "corrected")
-        : categoryFilter === "warning"
-        ? findings.filter((i) => i.kind === "unverified")
-        : categoryFilter === "style"
-        ? findings.filter((i) => i.kind === "ai-tell")
-        : categoryFilter === "verified"
-        ? findings.filter((i) => i.kind === "confirmed")
-        : findings;
-    return sortByAttention(kept);
-  }, [findings, categoryFilter]);
-
-  // The Finding on show, and where it sits in the list the reader is paging.
-  const currentFinding =
-    filteredFindings.find((finding) => finding.id === selectedFindingId) ??
-    filteredFindings[0] ??
-    null;
-  const selectedFindingIndex = currentFinding
-    ? filteredFindings.findIndex((finding) => finding.id === currentFinding.id)
-    : -1;
-
-  const selectFindingAt = (at: number) => {
-    const finding = filteredFindings[at];
-    if (finding) setSelectedFindingId(finding.id);
-  };
-
-  const revisedLines = useMemo(
-    () => revisedDocument?.comparison.map((pair) => pair.revised) ?? [],
     [revisedDocument]
   );
 
@@ -223,32 +167,13 @@ export default function HomePage() {
     }
   };
 
-  // The sheet is how a narrow screen opens a Finding. It has no business
-  // surviving a change of view, or a window grown past the breakpoint.
   useEffect(() => {
-    setSheetOpen(false);
-  }, [categoryFilter]);
-
-  useEffect(() => {
-    if (!sheetOpen) return;
-
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setSheetOpen(false);
-    };
-    const narrow = window.matchMedia(NARROW_SCREEN);
-    const onWidthChange = () => {
-      if (!narrow.matches) setSheetOpen(false);
-    };
-
-    document.addEventListener("keydown", onKeyDown);
-    narrow.addEventListener("change", onWidthChange);
-    sheetRef.current?.focus();
-
-    return () => {
-      document.removeEventListener("keydown", onKeyDown);
-      narrow.removeEventListener("change", onWidthChange);
-    };
-  }, [sheetOpen]);
+    const query = window.matchMedia(NARROW_SCREEN);
+    const onChange = () => setNarrow(query.matches);
+    onChange();
+    query.addEventListener("change", onChange);
+    return () => query.removeEventListener("change", onChange);
+  }, []);
 
   useEffect(() => {
     if (copyState === "idle") return;
@@ -272,7 +197,7 @@ export default function HomePage() {
       setBlockProgress({ done: 0, total: blocks.length });
       setAnalysisResult(null);
       setAdoptedOverrides({});
-      setSelectedFindingId(null);
+      setOpenFindingIds([]);
 
       const finished: AnalysisResult[] = [];
 
@@ -313,23 +238,12 @@ export default function HomePage() {
       if (finalResult) {
         setAnalysisResult(finalResult);
         setAdoptedOverrides({});
-        setSelectedFindingId(null);
-        setSheetOpen(false);
+        setOpenFindingIds([]);
 
         // Update last saved time
         const now = new Date();
         const timeStr = `${now.getFullYear()}/${now.getMonth() + 1}/${now.getDate()} ${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
         setLastSavedTime(timeStr);
-
-        // Persist history item
-        const newHist = [
-          { id: Date.now().toString(), time: timeStr, text: inputText.trim() },
-          ...historyItems.filter((h) => h.text !== inputText.trim()),
-        ].slice(0, 10);
-        setHistoryItems(newHist);
-        try {
-          localStorage.setItem("jev_analysis_history", JSON.stringify(newHist));
-        } catch {}
       }
     } catch (err: any) {
       console.error(err);
@@ -340,320 +254,39 @@ export default function HomePage() {
     }
   };
 
-  // Selecting a mark opens its Finding: a sheet on a phone, the panel on a
-  // wide screen. The document is never scrolled on the reader's behalf.
+  // An arrow or a mark opens its note in the margin, and the same again
+  // closes it. The document itself never changes.
+  const toggleNote = (id: string) =>
+    setOpenFindingIds((ids) =>
+      ids.includes(id) ? ids.filter((open) => open !== id) : [...ids, id]
+    );
+
   const handleSelectMark = (findingIds: string[]) => {
     const finding = findings.find((candidate) => findingIds.includes(candidate.id));
-    if (!finding) return;
-
-    // The mark is drawn for every Finding, so a filter that hides this one
-    // must give way rather than leave the mark inert.
-    if (!filteredFindings.some((visible) => visible.id === finding.id)) {
-      setCategoryFilter("all");
-    }
-
-    setSelectedFindingId(finding.id);
-    if (!isWideScreen()) setSheetOpen(true);
+    if (finding) toggleNote(finding.id);
   };
-
-  const isWideScreen = () =>
-    typeof window !== "undefined" && !window.matchMedia(NARROW_SCREEN).matches;
-
-  // Adoption toggles
-  const handleAdoptToggle = (findingId: string, adopt: boolean) => {
-    setAdoptedOverrides((prev) => ({ ...prev, [findingId]: adopt }));
-  };
-
-  const findingDetail = currentFinding ? (
-                <div className="p-6 space-y-5">
-                  {/* Top Pagination Control */}
-                  <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-                    <span className="text-xs font-mono font-bold text-slate-600">
-                      {selectedFindingIndex + 1} / {filteredFindings.length}
-                    </span>
-                    <div className="flex items-center gap-1">
-                      <button
-                        disabled={selectedFindingIndex === 0}
-                        onClick={() => selectFindingAt(selectedFindingIndex - 1)}
-                        className="p-1 text-slate-500 hover:text-slate-800 disabled:opacity-30 rounded hover:bg-slate-100"
-                      >
-                        <ChevronLeft className="w-4 h-4" />
-                      </button>
-                      <button
-                        disabled={selectedFindingIndex === filteredFindings.length - 1}
-                        onClick={() =>
-                          selectFindingAt(selectedFindingIndex + 1)
-                        }
-                        className="p-1 text-slate-500 hover:text-slate-800 disabled:opacity-30 rounded hover:bg-slate-100"
-                      >
-                        <ChevronRight className="w-4 h-4" />
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* 裏付けの強さ。この数値が主役で、札はその下の説明にすぎない。 */}
-                  <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 space-y-1">
-                    <div className="flex items-end gap-2">
-                      <span className="text-4xl font-bold tabular-nums text-slate-900 leading-none">
-                        {attentionPercent(currentFinding) ?? "—"}
-                        {attentionPercent(currentFinding) !== null && (
-                          <span className="text-xl font-bold">%</span>
-                        )}
-                      </span>
-                      <span className="text-[11px] text-slate-500 pb-1">
-                        {currentFinding.consistency
-                          ? "記事と資料に照らして辻褄が合う確率"
-                          : currentFinding.confidence !== null
-                          ? "JEVの確信度"
-                          : "JEVの数値なし"}
-                      </span>
-                    </div>
-                    {currentFinding.lookupFailed && (
-                      <p className="text-[11px] font-bold text-red-600 leading-snug">
-                        ウェブ検索ができませんでした。この数値は記事の中だけを見たものです。
-                        外部の資料とは突き合わせていません。
-                      </p>
-                    )}
-                  </div>
-
-                  {/* 本文に印が無い指摘。黙って落とさず、そう言う。 */}
-                  {isUnplaced(currentFinding) && (
-                    <div className="flex items-start gap-2 rounded-xl border border-slate-300 bg-slate-100 px-4 py-3 text-xs text-slate-800">
-                      <HelpCircle className="w-4 h-4 shrink-0 text-slate-600 mt-0.5" />
-                      <span>
-                        <span className="font-bold">場所不明</span>
-                        ：本文のどの文の話か特定できず、本文に印を付けられませんでした。
-                        下の主張の文面を手がかりに、本文の該当箇所をお探しください。
-                      </span>
-                    </div>
-                  )}
-
-                  {/* Header Title */}
-                  <div className="flex items-start gap-2">
-                    <div className="flex items-center gap-2">
-                      {currentFinding.kind === "corrected" ? (
-                        <AlertCircle className="w-5 h-5 text-red-500 shrink-0" />
-                      ) : currentFinding.kind === "ai-tell" ? (
-                        <Star className="w-5 h-5 text-purple-500 shrink-0" />
-                      ) : (
-                        <AlertTriangle className="w-5 h-5 text-amber-500 shrink-0" />
-                      )}
-                      <h3 className="font-bold text-slate-900 text-sm">{currentFinding.title}</h3>
-                    </div>
-                  </div>
-
-                  {/* Details Table */}
-                  <div className="space-y-3.5 text-xs">
-                    {/* 判定 */}
-                    <div className="flex items-center justify-between py-1 border-b border-slate-50">
-                      <span className="text-slate-400 font-medium">判定</span>
-                      <span
-                        className={`font-bold px-2 py-0.5 rounded ${
-                          currentFinding.kind === "corrected"
-                            ? "bg-red-100 text-red-700"
-                            : currentFinding.kind === "ai-tell"
-                            ? "bg-purple-100 text-purple-700"
-                            : "bg-amber-100 text-amber-700"
-                        }`}
-                      >
-                        {currentFinding.kind === "corrected"
-                          ? "資料と食い違い"
-                          : currentFinding.kind === "ai-tell"
-                          ? "AI癖表現"
-                          : currentFinding.kind === "confirmed"
-                          ? "資料と一致"
-                          : "裏付けなし"}
-                      </span>
-                    </div>
-
-                    {/* JEV信頼度 */}
-                    <div className="py-1 border-b border-slate-50">
-                      <div className="flex items-center justify-between">
-                        <span className="text-slate-400 font-medium">信頼度</span>
-                        <span className="flex items-center gap-2">
-                          {currentFinding.bandLabel && (
-                            <span
-                              className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${
-                                currentFinding.band === "act"
-                                  ? "bg-emerald-100 text-emerald-700"
-                                  : currentFinding.band === "caution"
-                                  ? "bg-amber-100 text-amber-700"
-                                  : "bg-slate-200 text-slate-600"
-                              }`}
-                            >
-                              {currentFinding.bandLabel}
-                            </span>
-                          )}
-                          <span className="font-bold text-slate-900 text-sm">
-                            {currentFinding.confidence === null
-                              ? "数値なし"
-                              : `${currentFinding.confidence}%`}
-                          </span>
-                        </span>
-                      </div>
-                    </div>
-
-                    {/* 原文 */}
-                    <div className="space-y-1">
-                      <span className="text-slate-400 font-medium">
-                        {isUnplaced(currentFinding) ? "主張の文面（本文の言葉とは異なります）" : "この文"}
-                      </span>
-                      <div className="bg-slate-50 text-slate-800 border border-slate-200 rounded-lg p-2 leading-relaxed">
-                        {currentFinding.sentenceBefore || currentFinding.originalText}
-                      </div>
-                    </div>
-
-                    {currentFinding.sourceUrl && (
-                      <div className="flex items-center justify-between py-1 border-b border-slate-50">
-                        <span className="text-slate-400 font-medium">根拠</span>
-                        <a
-                          href={currentFinding.sourceUrl}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-blue-600 hover:underline flex items-center gap-1 font-medium"
-                        >
-                          <span>{currentFinding.sourceTitle || currentFinding.sourceUrl}</span>
-                          <ExternalLink className="w-3 h-3" />
-                        </a>
-                      </div>
-                    )}
-
-                    {/* 説明 */}
-                    <div className="space-y-1">
-                      <span className="text-slate-400 font-medium">説明</span>
-                      <p className="text-slate-600 leading-relaxed bg-slate-50 p-2.5 rounded-lg border border-slate-100">
-                        {currentFinding.explanation}
-                      </p>
-                    </div>
-
-                    {/* 根拠がどこで消えたか。「何も無い」には理由がいくつもある。 */}
-                    {currentFinding.evidenceTrace && (
-                      <details className="space-y-1">
-                        <summary className="text-slate-400 font-medium cursor-pointer select-none">
-                          根拠の探し方を見る
-                        </summary>
-                        <div className="mt-1 space-y-1 bg-slate-50 p-2.5 rounded-lg border border-slate-100 text-slate-600">
-                          <p className="break-all">
-                            検索語: 「{currentFinding.evidenceTrace.query || "（なし）"}」
-                          </p>
-                          <p>
-                            候補 {currentFinding.evidenceTrace.found} 件 ／ 本文を読めず{" "}
-                            {currentFinding.evidenceTrace.unreadable} 件 ／ 主張に触れていないと判定{" "}
-                            {currentFinding.evidenceTrace.saidNothing} 件 ／ 判定が弱く不採用{" "}
-                            {currentFinding.evidenceTrace.weak ?? 0} 件 ／ 根拠に採用{" "}
-                            {currentFinding.evidenceTrace.used} 件
-                          </p>
-                          {currentFinding.evidence && currentFinding.evidence.length > 0 && (
-                            <ul className="space-y-0.5 pt-1">
-                              {currentFinding.evidence.map((item, i) => (
-                                <li key={`${item.url}-${i}`} className="break-all">
-                                  <span className="font-medium">
-                                    {item.relation === "contradicts"
-                                      ? "食い違い"
-                                      : item.relation === "supports"
-                                      ? "裏付け"
-                                      : "参考"}
-                                    {typeof item.confidence === "number" &&
-                                      `（確信度 ${Math.round(item.confidence * 100)}%）`}
-                                  </span>
-                                  : {item.title || item.url}
-                                </li>
-                              ))}
-                            </ul>
-                          )}
-                        </div>
-                      </details>
-                    )}
-                  </div>
-
-                </div>
-              ) : (
-                <div className="p-8 text-center text-xs text-slate-400">
-                  検出項目が選択されていません。
-                </div>
-  );
 
   return (
     <div className="min-h-screen bg-[#F8FAFC] text-slate-800 flex flex-col font-sans">
-      {/* 1. Global Header */}
-      <header className="h-14 bg-white border-b border-slate-200 px-6 flex items-center justify-between z-20 shrink-0">
-        <div
+      {/* Only the name: anything else up here is one more thing to look at. */}
+      <header className="h-14 bg-white border-b border-slate-200 px-4 sm:px-6 flex items-center z-20 shrink-0">
+        <button
+          type="button"
           onClick={() => {
             setAnalysisResult(null);
-            setSheetOpen(false);
+            setOpenFindingIds([]);
           }}
-          className="flex items-center gap-3 cursor-pointer select-none hover:opacity-80 transition"
+          className="flex items-center gap-2.5 select-none hover:opacity-80 transition"
         >
-          <div className="w-8 h-8 rounded-lg bg-blue-50 flex items-center justify-center text-blue-600">
+          <span className="w-8 h-8 rounded-lg bg-blue-50 flex items-center justify-center text-blue-600">
             <Feather className="w-5 h-5" />
-          </div>
-          <div className="flex items-baseline gap-2">
-            <span className="font-bold text-slate-900 tracking-tight text-lg">文章品質保証</span>
-            <span className="text-xs text-slate-400 font-normal hidden sm:inline">
-              書く、確かめる、より良い文章へ
-            </span>
-          </div>
-        </div>
-
-        <div className="flex items-center gap-4 relative">
-          <button
-            onClick={() => setShowGuideModal(true)}
-            className="hidden md:flex items-center gap-1.5 text-xs text-slate-500 hover:text-slate-800 transition py-1.5 px-2.5 rounded-md hover:bg-slate-100"
-          >
-            <HelpCircle className="w-4 h-4" />
-            <span>使い方を見る</span>
-          </button>
-
-          <button
-            onClick={() => setShowHistoryModal(true)}
-            className="flex items-center gap-1.5 text-xs text-slate-500 hover:text-slate-800 transition py-1.5 px-2.5 rounded-md hover:bg-slate-100"
-          >
-            <Clock className="w-4 h-4" />
-            <span>履歴</span>
-          </button>
-
-          <button
-            onClick={() => setShowDraftModal(true)}
-            className="flex items-center gap-1.5 text-xs text-slate-500 hover:text-slate-800 transition py-1.5 px-2.5 rounded-md hover:bg-slate-100"
-          >
-            <FileText className="w-4 h-4" />
-            <span>下書き</span>
-          </button>
-
-          <button
-            onClick={() => setShowUserPopover(!showUserPopover)}
-            className="w-8 h-8 rounded-full bg-slate-200 hover:ring-2 hover:ring-blue-400 flex items-center justify-center text-slate-600 transition"
-          >
-            <User className="w-4 h-4" />
-          </button>
-
-          {/* User Popover */}
-          {showUserPopover && (
-            <div className="absolute right-0 top-11 w-64 bg-white border border-slate-200 rounded-xl shadow-lg p-4 z-50 text-xs space-y-3">
-              <div className="font-bold text-slate-800 border-b border-slate-100 pb-2">システム接続情報</div>
-              <div className="space-y-1.5 text-slate-600">
-                <div className="flex justify-between">
-                  <span className="text-slate-400">認証モード:</span>
-                  <span className="font-semibold text-emerald-600">JEV / Anthropic 連携中</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-400">キャッシュ:</span>
-                  <span>有効 (KV / In-Memory)</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-400">エンジン:</span>
-                  <span>System One + JEV-write</span>
-                </div>
-              </div>
-              <button
-                onClick={() => setShowUserPopover(false)}
-                className="w-full py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-lg transition"
-              >
-                閉じる
-              </button>
-            </div>
-          )}
-        </div>
+          </span>
+          {/* "Proof" says what it is; the coloured "ee" takes the stiffness off. */}
+          <span className="font-bold tracking-tight text-xl whitespace-nowrap">
+            <span className="text-slate-900">Proof</span>
+            <span className="text-blue-500">ee</span>
+          </span>
+        </button>
       </header>
 
       {/* Main Layout Body */}
@@ -759,12 +392,11 @@ export default function HomePage() {
           // =========================================
           // VIEW B: RESULTS & COMPARISON SCREEN (Image 2)
           // =========================================
-          <div className="flex-1 flex flex-col lg:flex-row overflow-y-auto lg:overflow-hidden">
-            {/* Center Comparison Area */}
-            <main className="flex-1 flex flex-col bg-white lg:overflow-hidden lg:border-r border-slate-200">
+          <div className="flex-1 flex flex-col overflow-hidden">
+            <main className="flex-1 flex flex-col bg-white overflow-hidden">
               {/* Document Header Bar */}
-              <div className="p-4 border-b border-slate-200 flex items-center justify-between shrink-0">
-                <div>
+              <div className="p-4 border-b border-slate-200 flex items-center justify-between gap-2 shrink-0">
+                <div className="min-w-0">
                   <h2 className="text-sm font-bold text-slate-900 truncate max-w-md">
                     {revisedDocument?.title ?? "文章の品質検証レポート"}
                   </h2>
@@ -810,9 +442,20 @@ export default function HomePage() {
                 </div>
               </div>
 
-              {/* この道具は書き換えない。読むのは一つ、書かれた文章そのもの。 */}
-              <div className="flex-1 overflow-y-auto p-6">
-                <div className="max-w-3xl mx-auto space-y-4">
+              {/* この道具は書き換えない。本文はそのまま、指摘は左の余白に出す。 */}
+              <div className="flex-1 overflow-y-auto p-4 sm:p-6">
+                <div className="mx-auto max-w-6xl flex items-start gap-2 lg:gap-6">
+                  <div className={narrow ? "w-9 shrink-0" : "w-96 shrink-0"}>
+                    <MarginNotes
+                      bodyRef={bodyRef}
+                      findings={findings}
+                      openIds={openFindingIds}
+                      onToggle={toggleNote}
+                      renderCard={(finding) => <FindingCard finding={finding} />}
+                      narrow={narrow}
+                    />
+                  </div>
+                <div ref={bodyRef} className="min-w-0 flex-1 max-w-3xl space-y-4">
                     <div className="flex items-center justify-between gap-3">
                       <div className="text-xs font-bold text-slate-600">
                         本文{" "}
@@ -920,215 +563,13 @@ export default function HomePage() {
                       ))}
                     </article>
                 </div>
+                </div>
               </div>
 
             </main>
-
-            {/* =========================================
-                RIGHT PANEL: INSPECTION & JEV CONFIDENCE
-                (Image 2 - Component 4 & 5)
-               ========================================= */}
-            <aside className="hidden lg:flex w-96 shrink-0 bg-white border-l border-slate-200 flex-col justify-between overflow-y-auto">
-              {findingDetail}
-            </aside>
           </div>
         )}
       </div>
-
-      {/* Finding sheet — phones only; wide screens use the panel beside the document */}
-      {sheetOpen && currentFinding && (
-        <div className="lg:hidden fixed inset-0 z-[60] flex flex-col justify-end">
-          <button
-            type="button"
-            aria-label="閉じる"
-            className="absolute inset-0 bg-slate-900/30 cursor-default"
-            onClick={() => setSheetOpen(false)}
-          />
-          <div
-            ref={sheetRef}
-            role="dialog"
-            aria-modal="true"
-            aria-label={currentFinding.title}
-            tabIndex={-1}
-            className="relative bg-white rounded-t-2xl shadow-2xl max-h-[75vh] overflow-y-auto outline-none"
-          >
-            <div className="sticky top-0 bg-white flex items-center justify-between px-4 py-3 border-b border-slate-100">
-              <span className="text-xs font-bold text-slate-800">{currentFinding.title}</span>
-              <button
-                type="button"
-                onClick={() => setSheetOpen(false)}
-                className="text-slate-400 hover:text-slate-700 text-sm px-2 py-1 rounded hover:bg-slate-100"
-              >
-                閉じる
-              </button>
-            </div>
-            {findingDetail}
-          </div>
-        </div>
-      )}
-
-      {/* History Modal */}
-      {showHistoryModal && (
-        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl shadow-xl max-w-lg w-full p-6 space-y-4">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-              <div className="flex items-center gap-2">
-                <Clock className="w-5 h-5 text-blue-600" />
-                <h3 className="font-bold text-slate-900">過去の検証履歴</h3>
-              </div>
-              <button
-                onClick={() => setShowHistoryModal(false)}
-                className="text-slate-400 hover:text-slate-600 text-sm font-bold"
-              >
-                ✕
-              </button>
-            </div>
-
-            <div className="max-h-80 overflow-y-auto space-y-2">
-              {historyItems.length === 0 ? (
-                <div className="text-center py-8 text-xs text-slate-400">
-                  検証履歴はまだありません。
-                </div>
-              ) : (
-                historyItems.map((h) => (
-                  <div
-                    key={h.id}
-                    onClick={() => {
-                      setInputText(h.text);
-                      setShowHistoryModal(false);
-                      setAnalysisResult(null);
-                    }}
-                    className="p-3 rounded-xl border border-slate-200 hover:border-blue-400 hover:bg-blue-50/40 cursor-pointer transition text-xs space-y-1"
-                  >
-                    <div className="flex items-center justify-between text-slate-400 text-[10px]">
-                      <span>{h.time}</span>
-                      <span className="text-blue-600 font-bold">復元して確認</span>
-                    </div>
-                    <p className="text-slate-800 line-clamp-2">{h.text}</p>
-                  </div>
-                ))
-              )}
-            </div>
-
-            <div className="flex justify-end pt-2">
-              <button
-                onClick={() => setShowHistoryModal(false)}
-                className="px-4 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs transition"
-              >
-                閉じる
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Draft Modal */}
-      {showDraftModal && (
-        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl shadow-xl max-w-md w-full p-6 space-y-4">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-              <div className="flex items-center gap-2">
-                <FileText className="w-5 h-5 text-blue-600" />
-                <h3 className="font-bold text-slate-900">下書きの保存・復元</h3>
-              </div>
-              <button
-                onClick={() => setShowDraftModal(false)}
-                className="text-slate-400 hover:text-slate-600 text-sm font-bold"
-              >
-                ✕
-              </button>
-            </div>
-
-            <p className="text-xs text-slate-600 leading-relaxed">
-              現在入力中の文章をブラウザのローカルストレージへ保存、または保存済み下書きを復元できます。
-            </p>
-
-            <div className="flex gap-3 pt-2">
-              <button
-                onClick={() => {
-                  if (!inputText.trim()) {
-                    alert("保存するテキストが入力されていません。");
-                    return;
-                  }
-                  localStorage.setItem("jev_draft_text", inputText);
-                  alert("下書きをブラウザに保存しました。");
-                  setShowDraftModal(false);
-                }}
-                className="flex-1 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs transition shadow-sm"
-              >
-                現在の下書きを保存
-              </button>
-
-              <button
-                onClick={() => {
-                  const draft = localStorage.getItem("jev_draft_text");
-                  if (draft) {
-                    setInputText(draft);
-                    // The result on screen belongs to the article it was run
-                    // on, not to the one just restored.
-                    setAnalysisResult(null);
-                    setAdoptedOverrides({});
-                    setSelectedFindingId(null);
-                    alert("保存された下書きを復元しました。");
-                    setShowDraftModal(false);
-                  } else {
-                    alert("保存された下書きはありません。");
-                  }
-                }}
-                className="flex-1 py-2.5 rounded-xl border border-slate-300 hover:bg-slate-50 text-slate-700 font-bold text-xs transition"
-              >
-                下書きを読み込む
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Rich Guide Modal */}
-      {showGuideModal && (
-        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl shadow-xl max-w-lg w-full p-6 space-y-4">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-              <div className="flex items-center gap-2">
-                <HelpCircle className="w-5 h-5 text-blue-600" />
-                <h3 className="font-bold text-slate-900">文章品質保証システム 使い方ガイド</h3>
-              </div>
-              <button
-                onClick={() => setShowGuideModal(false)}
-                className="text-slate-400 hover:text-slate-600 text-sm font-bold"
-              >
-                ✕
-              </button>
-            </div>
-
-            <div className="space-y-3 text-xs text-slate-600 leading-relaxed">
-              <div className="p-3 bg-blue-50/50 rounded-xl border border-blue-100 space-y-1">
-                <div className="font-bold text-blue-900">1. 事実の自動検証（ファクトチェック）</div>
-                <p>公的発表や一次ソース、Web信頼情報源と照合し、数値や日付の誤認をJEV判定エンジンで検出します。</p>
-              </div>
-
-              <div className="p-3 bg-purple-50/50 rounded-xl border border-purple-100 space-y-1">
-                <div className="font-bold text-purple-900">2. AI癖・不自然な表現の検知</div>
-                <p>機械的な同語反復やAI特有の紋切り型フレーズを抽出し、その箇所に印を付けて知らせます。文章は書き換えません。</p>
-              </div>
-
-              <div className="p-3 bg-emerald-50/50 rounded-xl border border-emerald-100 space-y-1">
-                <div className="font-bold text-emerald-900">3. 書き換えはしません</div>
-                <p>この道具は文章を書き換えません。裏付けの弱い箇所を数値で示すだけです。どう直すかは書き手が決めます。</p>
-              </div>
-            </div>
-
-            <div className="flex justify-end pt-2">
-              <button
-                onClick={() => setShowGuideModal(false)}
-                className="px-5 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs transition"
-              >
-                閉じる
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

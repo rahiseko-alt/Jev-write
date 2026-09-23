@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Jev-write | 文章品質保証システム",
-  description: "事実確認・AI表現検査・安全修正。JEV原子判定と事実台帳でハルシネーションを防ぎ、自然な日本語へ推敲します。",
+  title: "Proofee",
+  description: "書いた文章の裏付けの弱い箇所を、根拠と数値で知らせます。文章は書き換えません。",
   keywords: [
     "ファクトチェック",
     "文章校正",
