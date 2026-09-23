@@ -233,6 +233,7 @@ export async function runOrchestrator(
         (provider) => provider.servedByFallback === true
       ),
       unauthorizedChangeDetected: deltaResult.unauthorizedChangeDetected,
+      revisionRolledBack: deltaResult.rolledBack,
     };
 
     store.updateJob(jobId, {

@@ -11,6 +11,7 @@ import {
   JEVUnauthorizedChange,
 } from "./types";
 import { RatingVerdict } from "../google-factcheck/types";
+import { figuresIn } from "@/lib/text/figures";
 
 export class MockJEVClient implements JEVClient {
   /** A stand-in, and it says so, so the reader is never shown its output as a real check. */
@@ -514,8 +515,8 @@ export class MockJEVClient implements JEVClient {
     const unauthorizedChanges: JEVUnauthorizedChange[] = [];
 
     // 1. Numerical hallucination check
-    const originalNumbers: string[] = original.match(/\d+[\d,]*(?:ドル|円|%|人|個|GB|MB|kg|km)?/g) || [];
-    const revisedNumbers: string[] = revised.match(/\d+[\d,]*(?:ドル|円|%|人|個|GB|MB|kg|km)?/g) || [];
+    const originalNumbers = figuresIn(original).map((f) => f.text);
+    const revisedNumbers = figuresIn(revised).map((f) => f.text);
 
     for (const revNum of revisedNumbers) {
       const inOriginal = originalNumbers.includes(revNum);

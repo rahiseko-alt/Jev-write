@@ -69,6 +69,28 @@ describe("Delta Check", () => {
     expect(delta.verifiedText).toContain("799ドル");
   });
 
+  it("restores a decimal figure without discarding the authorised correction", async () => {
+    const original = "重量は3.3kgです。価格は799ドルです。";
+    const revised = "重量は2.8kgです。価格は699ドルです。";
+    const plan: RewritePlan = { ...EMPTY_PLAN };
+    plan.corrections = [
+      {
+        claimId: "c1",
+        originalClaim: "価格は799ドルです",
+        correctedClaim: "価格は699ドルです",
+        verdict: "CONTRADICTED",
+        evidenceIds: [],
+      },
+    ] as unknown as RewritePlan["corrections"];
+
+    const delta = await runDeltaCheck(original, revised, plan, {
+      jev: SILENT_JEV,
+    });
+
+    expect(delta.unauthorizedChangeDetected).toBe(true);
+    expect(delta.verifiedText).toBe("重量は3.3kgです。価格は699ドルです。");
+  });
+
   it("takes the rewrite back when the invented figure cannot be traced", async () => {
     const original = "この製品は高い評価を受けています。";
     const revised = "この製品は利用者の92%から高い評価を受けています。";

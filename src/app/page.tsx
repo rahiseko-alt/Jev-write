@@ -862,7 +862,7 @@ export default function HomePage() {
                       <div className="flex items-start gap-2 px-4 py-3 rounded-xl border border-amber-200 bg-amber-50 text-xs text-amber-900">
                         <AlertTriangle className="w-4 h-4 shrink-0 text-amber-600 mt-0.5" />
                         <span>
-                          この結果の一部は、検証に使う外部サービスへ接続できなかったため簡易処理で作成されています。事実確認としては信頼できません。
+                          この修正版の一部は、検証に使う外部サービスへ接続できなかったため簡易処理で作成されています。事実確認としては信頼できません。
                         </span>
                       </div>
                     )}
@@ -871,7 +871,9 @@ export default function HomePage() {
                       <div className="flex items-start gap-2 px-4 py-3 rounded-xl border border-amber-200 bg-amber-50 text-xs text-amber-900">
                         <AlertTriangle className="w-4 h-4 shrink-0 text-amber-600 mt-0.5" />
                         <span>
-                          書き換えの途中で、根拠のない書き換えが見つかりました。その箇所は元の文章に戻してあります。気になる場合は原文と見比べてください。
+                          {analysisResult?.revisionRolledBack
+                            ? "書き換えの途中で、根拠のない書き換えが見つかりました。安全のため、文章全体を原文のまま戻しています。"
+                            : "書き換えの途中で、根拠のない書き換えが見つかりました。その箇所は原文の内容に戻してあります。気になる場合は原文と見比べてください。"}
                         </span>
                       </div>
                     )}

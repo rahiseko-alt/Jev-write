@@ -1,4 +1,5 @@
 import type { Claim } from "@/types";
+import { Figure, figuresIn } from "@/lib/text/figures";
 
 /**
  * What correction the Evidence justifies for a Claim — and nothing more.
@@ -10,67 +11,9 @@ import type { Claim } from "@/types";
  * facts into another's sentence.
  */
 
-/** A number with the unit it was written with, and the words that introduce it. */
-type Figure = {
-  text: string;
-  value: string;
-  unit: string;
-  label: string;
-};
-
-const UNITS = [
-  "円",
-  "ドル",
-  "人",
-  "個",
-  "倍",
-  "%",
-  "％",
-  "mm",
-  "cm",
-  "kg",
-  "g",
-  "インチ",
-  "Hz",
-  "GB",
-  "TB",
-  "MB",
-  "MP",
-  "fps",
-  "Gbps",
-  "mAh",
-];
-
-const LABEL_LENGTH = 12;
-
-function figurePattern(): RegExp {
-  return new RegExp(`(\\d[\\d,.]*)\\s*(${UNITS.join("|")})`, "gi");
-}
-
-/** Every figure in a text, each carrying the words that precede it. */
-function figuresIn(text: string): Figure[] {
-  const found: Figure[] = [];
-  const pattern = figurePattern();
-  let match: RegExpExecArray | null;
-
-  while ((match = pattern.exec(text)) !== null) {
-    const start = match.index;
-    found.push({
-      text: match[0],
-      value: match[1].replace(/,/g, ""),
-      unit: match[2].toLowerCase(),
-      label: labelBefore(text, start),
-    });
-  }
-
-  return found;
-}
-
-/** The words immediately before a figure, which say what it is a figure of. */
-function labelBefore(text: string, at: number): string {
-  const run = text.slice(Math.max(0, at - LABEL_LENGTH), at);
-  const words = run.match(/[^\s、。（）()「」『』:：,]+$/);
-  return words ? words[0] : "";
+/** Only measurements are compared here: a year is not a figure of anything. */
+function measurements(text: string): Figure[] {
+  return figuresIn(text, { requireUnit: true });
 }
 
 /**
@@ -96,13 +39,13 @@ export function correctionFromEvidence(
   const claimText = claim.normalizedText || claim.originalText;
   if (!claimText || !evidenceText) return undefined;
 
-  const inEvidence = figuresIn(evidenceText);
+  const inEvidence = measurements(evidenceText);
   if (inEvidence.length === 0) return undefined;
 
   let corrected = claimText;
   let changed = false;
 
-  for (const figure of figuresIn(claimText)) {
+  for (const figure of measurements(claimText)) {
     const match = counterpart(figure, inEvidence);
     if (!match || match.value === figure.value) continue;
     if (!corrected.includes(figure.text)) continue;

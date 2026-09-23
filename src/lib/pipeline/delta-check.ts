@@ -1,5 +1,6 @@
 import { RewritePlan } from "@/types";
 import { JEVClient, LLMProvider, getJEVClient, getLLMProvider } from "@/lib/providers";
+import { Figure, figuresIn } from "@/lib/text/figures";
 
 export interface DeltaCheckOptions {
   jev?: JEVClient;
@@ -21,41 +22,6 @@ export interface DeltaCheckResult {
   surgicalFixApplied: boolean;
   /** True when the rewrite was taken back wholesale because it could not be made safe. */
   rolledBack: boolean;
-}
-
-/** A figure, with the unit it was written in and the words that introduce it. */
-type Figure = {
-  text: string;
-  index: number;
-  unit: string;
-  label: string;
-};
-
-const NUMBER_PATTERN = /\d+[\d,]*(?:万|億|兆|%|円|ドル|人|個|GB|MB)?/g;
-const LABEL_LENGTH = 12;
-
-function figuresIn(text: string): Figure[] {
-  const found: Figure[] = [];
-  const pattern = new RegExp(NUMBER_PATTERN.source, "g");
-  let match: RegExpExecArray | null;
-
-  while ((match = pattern.exec(text)) !== null) {
-    found.push({
-      text: match[0],
-      index: match.index,
-      unit: match[0].replace(/^[\d,]+/, ""),
-      label: labelBefore(text, match.index),
-    });
-  }
-
-  return found;
-}
-
-/** The words immediately before a figure, which say what it is a figure of. */
-function labelBefore(text: string, at: number): string {
-  const run = text.slice(Math.max(0, at - LABEL_LENGTH), at);
-  const words = run.match(/[^\s、。（）()「」『』:：,]+$/);
-  return words ? words[0] : "";
 }
 
 /**

@@ -129,6 +129,11 @@ export type AnalysisResult = {
    * the reader is told it happened.
    */
   unauthorizedChangeDetected?: boolean;
+  /**
+   * True when the rewrite was taken back wholesale because it could not be
+   * made safe — as opposed to a change put right where it stood.
+   */
+  revisionRolledBack?: boolean;
 };
 
 export type JobStatus =

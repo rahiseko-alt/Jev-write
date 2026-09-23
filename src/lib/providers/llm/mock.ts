@@ -488,8 +488,10 @@ function applyStyleRepair(
 }
 
 function tidy(text: string): string {
+  // Nothing is deleted here on a hunch: a phrase that reads as an AI-tell is
+  // rule AI012's to find, so it comes with a Finding the reader can refuse.
+  // A silent deletion would change the document at a span carrying no mark.
   return text
-    .replace(/今後の動向からも?目が離せません[。！？]?/g, "")
     .replace(/([。！？])\1+/g, "$1")
     .replace(/^[、,。\s]+/, "")
     .replace(/[、,]\s*[。！？]/g, "。")
