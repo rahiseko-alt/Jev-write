@@ -32,27 +32,11 @@ export const CAUTION_THRESHOLD = readThreshold("JEV_CAUTION_THRESHOLD", 0.5);
 export const FLAG_THRESHOLD = thresholdOf(process.env.NEXT_PUBLIC_JEV_FLAG_THRESHOLD, 0.8);
 
 /**
- * The page stage's line (ADR-0018, stage 1). At or above this, JEV has not
- * ruled the page out as being about something other than what the sentence
- * is about, judging from its title, address and search excerpts, and the
- * page goes on to be read section by section. Set below the section line on
- * purpose: this stage sees only the search result, a page it drops is lost
- * for good, and one it lets through costs a few more questions. 0.2 is where
- * the official Noul page draws a clear "no" in its own routing example
- * (docs.typesafe.ai/primitives/noul: YES 0.8, NO 0.2, the middle to a
- * person; "lower it when missing a true yes is expensive"), so only a clear
- * no stops a page here. `JEV_PAGE_RELEVANCE_THRESHOLD` moves it without a
- * code change.
- */
-export const PAGE_RELEVANCE_THRESHOLD = readThreshold("JEV_PAGE_RELEVANCE_THRESHOLD", 0.2);
-
-/**
- * The section stage's line (ADR-0018, stage 2; ADR-0014). At or above this, a
- * section is judged to be about what the sentence is about and goes into the
- * 信頼度 question. The starting point is the official cookbook's relevance
- * floor (docs.typesafe.ai/cookbooks/classifying_rag_passages: `relevant_min`
- * 0.45, "a starting point, not a default"). `JEV_RELEVANCE_THRESHOLD` moves it
- * without a code change.
+ * At or above this, a section of a page is judged to speak to the sentence
+ * and goes into the 信頼度 question (ADR-0014). The starting point is the
+ * official cookbook's relevance floor (docs.typesafe.ai/cookbooks/
+ * classifying_rag_passages: `relevant_min` 0.45, "a starting point, not a
+ * default"). `JEV_RELEVANCE_THRESHOLD` moves it without a code change.
  */
 export const RELEVANCE_THRESHOLD = readThreshold("JEV_RELEVANCE_THRESHOLD", 0.45);
 

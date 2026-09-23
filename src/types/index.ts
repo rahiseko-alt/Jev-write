@@ -125,35 +125,23 @@ export type EvidenceTrace = {
    * broke the rules (ADR-0019), as written, with what was searched instead.
    */
   queryViolations?: QueryViolation[];
-  /** How many pages the search returned: the claim's candidates. */
+  /** How many pages the search returned. */
   found: number;
-  /**
-   * How many JEV judged, at the page stage, to be about something other than
-   * what the claim is about (ADR-0018: below the page stage's line).
-   */
+  /** No longer used: JEV decides relevance within its own answer. */
   offSubject: number;
   /** How many could not be read (fetch failed, or the page was empty). */
   unreadable: number;
-  /** How many were read section by section and had no section JEV judged about the claim's target. */
+  /** How many were read and judged to say nothing about the claim. */
   saidNothing: number;
   /** How many gave a relation JEV was too unsure of to act on. */
   weak: number;
   /** How many became Evidence. */
   used: number;
   /**
-   * How many candidates JEV judged about the claim's target at the page stage
-   * but that were over the section stage's budget, and so not read section
-   * by section (ADR-0018). Counted so none is dropped without saying so.
+   * How many candidates were over JEV's input ceiling and not asked about
+   * (ADR-0016). Counted so none is dropped without saying so.
    */
   overCap?: number;
-  /** Why the `overCap` candidates were left out, and in what order the budget was filled. */
-  overCapReason?: string;
-  /**
-   * How many candidates the page stage could not judge (JEV failed after its
-   * retries, or the page was too large to ask about). They were not dropped:
-   * they went on to the section stage unscreened (ADR-0018).
-   */
-  unscreened?: number;
   /** How many independent origins (a site, or sites carrying the same text) the Evidence came from. */
   origins?: number;
 };

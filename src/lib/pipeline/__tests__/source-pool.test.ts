@@ -112,39 +112,6 @@ describe("候補の出し方（ADR-0016）", () => {
     ]);
   });
 
-  it("ページごとの検索の抜粋を、検索した順に重複なく返す（段1の材料、ADR-0018）", async () => {
-    const results: Record<string, { url: string; title: string; content: string }[]> = {
-      first: [
-        { url: "https://example.com/a", title: "A", content: "一つ目の検索での抜粋。" },
-        { url: "https://example.com/b", title: "B", content: "" },
-      ],
-      second: [
-        { url: "https://example.com/a", title: "A", content: "二つ目の検索での抜粋。" },
-        { url: "https://example.com/a?ref=x", title: "A", content: "一つ目の検索での抜粋。" },
-      ],
-    };
-    const search = {
-      async search(query: string) {
-        return { results: results[query] ?? [] };
-      },
-    } as any;
-    const fetchProvider = {
-      async fetchUrl(url: string) {
-        // The tracking address leads to the same page.
-        const landed = url.replace("?ref=x", "");
-        return { url: landed, title: "t", content: `${landed} の本文。` };
-      },
-    } as any;
-    const pool = createSourcePool({ search, fetchProvider, resultsPerQuery: 4 });
-    await pool.seed(["first", "second"]);
-
-    expect(pool.excerptsOf("https://example.com/a")).toEqual([
-      "一つ目の検索での抜粋。",
-      "二つ目の検索での抜粋。",
-    ]);
-    expect(pool.excerptsOf("https://example.com/b")).toEqual([]);
-  });
-
   it("検索や取得が返ってきた順が違っても、同じ候補が同じ順で出る", async () => {
     const pages = {
       a: [
