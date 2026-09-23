@@ -35,27 +35,6 @@ export function FindingCard({ finding }: { finding: Finding }): JSX.Element {
         </span>
       )}
 
-      {/* What a page writes for a date or amount in the sentence, as the page writes it (ADR-0012). */}
-      {isFact && finding.valueConflicts && finding.valueConflicts.length > 0 && (
-        <ul className="space-y-1">
-          {finding.valueConflicts.map((conflict, i) => (
-            <li key={`${conflict.sourceUrl}-${conflict.found}-${i}`} className="leading-snug">
-              <span className="font-bold text-slate-900">資料では {conflict.found}</span>
-              <span className="text-slate-500">（文中は {conflict.stated}）</span>
-              <a
-                href={conflict.sourceUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="block text-blue-600 hover:underline break-all"
-              >
-                {conflict.sourceTitle || conflict.sourceUrl}
-                <ExternalLink className="inline w-3 h-3 ml-0.5 align-[-2px]" />
-              </a>
-            </li>
-          ))}
-        </ul>
-      )}
-
       {/* No number came back: what happened instead is all there is to say. */}
       {isFact && finding.confidence === null && finding.explanation && (
         <p className="text-[11px] font-bold text-red-600 leading-snug">{finding.explanation}</p>

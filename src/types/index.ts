@@ -89,24 +89,6 @@ export type ClaimResult = {
   lookupFailed?: boolean;
   /** Where this claim's evidence went: what was found, and what was dropped. */
   evidenceTrace?: EvidenceTrace;
-  /**
-   * Pages whose date or amount for the matter the sentence speaks of is not
-   * the sentence's. JEV picked the page's value; code compared it. Present
-   * only when there is one.
-   */
-  valueConflicts?: ValueConflict[];
-};
-
-/** A page's value that differs from the sentence's, both as written. */
-export type ValueConflict = {
-  /** The sentence's value, as written in the article. */
-  stated: string;
-  /** The page's value for the same matter, as written on the page. */
-  found: string;
-  sourceUrl: string;
-  sourceTitle: string;
-  /** How sure JEV was of its pick, as returned. Used to act on it, not shown. */
-  confidence: number;
 };
 
 /**
