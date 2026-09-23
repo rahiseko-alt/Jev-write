@@ -272,6 +272,17 @@ describe("Delta Check", () => {
 });
 
 describe("Orchestrator End-to-End", () => {
+  it("says which service answered and which stood in", async () => {
+    const result = await runOrchestrator("これはテスト用の短い文章です。");
+
+    const services = result.providerStatuses?.map((s) => s.service) ?? [];
+    expect(services).toContain("文章の生成");
+    expect(services).toContain("判定（JEV）");
+    expect(services).toContain("ウェブ検索");
+    // In a test run every one of them is a stand-in, and each says so itself.
+    expect(result.providerStatuses?.every((s) => s.stoodIn)).toBe(true);
+  });
+
   it("records that a run answered by stand-ins was not a real check", async () => {
     // In a test run every provider is a stand-in, so the result must say so
     // rather than look like a completed check.

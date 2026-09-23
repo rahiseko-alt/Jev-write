@@ -1,6 +1,7 @@
 import { Claim, Importance } from "@/types";
 import { LLMProvider, RewriteInput, SurgicalFixInput } from "./types";
 import { MockLLMProvider } from "./mock";
+import { recordFailure } from "../diagnostics";
 
 export interface AnthropicLLMOptions {
   apiKey?: string;
@@ -13,6 +14,9 @@ export class AnthropicLLMProvider implements LLMProvider {
   private model: string;
   private baseUrl: string;
   private fallback: MockLLMProvider;
+  /** What went wrong with the real service during this run, for the reader. */
+  failureCount = 0;
+  lastError?: string;
 
   /** Whether any call in this run was answered by the mock instead. */
   servedByFallback = false;
@@ -26,7 +30,7 @@ export class AnthropicLLMProvider implements LLMProvider {
     this.model =
       options.model ||
       process.env.ANTHROPIC_MODEL ||
-      "claude-3-5-sonnet-20241022";
+      "claude-sonnet-5";
     this.baseUrl = (
       options.baseUrl ||
       process.env.ANTHROPIC_BASE_URL ||
@@ -143,6 +147,7 @@ Return ONLY a valid JSON object with this exact structure, nothing else:
     } catch (err) {
       console.warn("Anthropic extractClaims failed, falling back to mock LLM:", err);
       this.servedByFallback = true;
+      recordFailure(this, err);
       return await this.fallback.extractClaims(text);
     }
   }
@@ -173,6 +178,7 @@ Entities: ${claim.entities?.join(", ") || "N/A"}`;
     } catch (err) {
       console.warn("Anthropic generateSearchQueries failed, falling back to mock LLM:", err);
       this.servedByFallback = true;
+      recordFailure(this, err);
       return await this.fallback.generateSearchQueries(claim);
     }
   }
@@ -221,6 +227,7 @@ Entities: ${claim.entities?.join(", ") || "N/A"}`;
     } catch (err) {
       console.warn("Anthropic rewrite failed, falling back to mock LLM:", err);
       this.servedByFallback = true;
+      recordFailure(this, err);
       return await this.fallback.rewrite(input);
     }
   }

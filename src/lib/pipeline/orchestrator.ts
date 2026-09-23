@@ -1,5 +1,6 @@
 import {
   AnalysisResult,
+  ProviderStatus,
   JobProgressEvent,
   JobStatus,
   StageTiming,
@@ -191,6 +192,19 @@ export async function runOrchestrator(
       durationMs: Date.now() - deltaStartTime,
     });
 
+    const providerStatuses: ProviderStatus[] = [
+      { service: "文章の生成", provider: llm },
+      { service: "判定（JEV）", provider: jev },
+      { service: "ファクトチェック照会", provider: factCheck },
+      { service: "ウェブ検索", provider: search },
+      { service: "ページの取得", provider: fetchProvider },
+    ].map(({ service, provider }) => ({
+      service,
+      stoodIn: provider.servedByFallback === true,
+      failureCount: provider.failureCount ?? 0,
+      lastError: provider.lastError,
+    }));
+
     // Synthesize final result summary
     let supported = 0;
     let contradicted = 0;
@@ -229,9 +243,8 @@ export async function runOrchestrator(
       styleIssues: styleResult,
       sources: factResult.evidences,
       timings,
-      servedByFallback: [llm, factCheck, jev, search, fetchProvider].some(
-        (provider) => provider.servedByFallback === true
-      ),
+      servedByFallback: providerStatuses.some((status) => status.stoodIn),
+      providerStatuses,
       unauthorizedChangeDetected: deltaResult.unauthorizedChangeDetected,
       revisionRolledBack: deltaResult.rolledBack,
     };

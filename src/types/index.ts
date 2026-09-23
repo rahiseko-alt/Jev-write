@@ -134,6 +134,23 @@ export type AnalysisResult = {
    * made safe — as opposed to a change put right where it stood.
    */
   revisionRolledBack?: boolean;
+  /**
+   * What each outside service did during this run. A run that found nothing
+   * because every check ran and found nothing, and a run that found nothing
+   * because a service never answered, look identical without this.
+   */
+  providerStatuses?: ProviderStatus[];
+};
+
+export type ProviderStatus = {
+  /** What this service does, in the reader's words. */
+  service: string;
+  /** True when a stand-in answered in its place. */
+  stoodIn: boolean;
+  /** How many calls to it failed during this run. */
+  failureCount: number;
+  /** The first failure's message, with anything credential-shaped removed. */
+  lastError?: string;
 };
 
 export type JobStatus =

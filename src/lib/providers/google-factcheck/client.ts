@@ -4,6 +4,7 @@ import {
   GoogleFactCheckClient,
   GoogleFactCheckOptions,
 } from "./types";
+import { recordFailure } from "../diagnostics";
 
 /**
  * The Google Fact Check Tools adapter.
@@ -13,6 +14,9 @@ import {
  * reached, the caller is told, and the claim goes on as unverified.
  */
 export class HTTPGoogleFactCheckClient implements GoogleFactCheckClient {
+  /** What went wrong with the real service during this run, for the reader. */
+  failureCount = 0;
+  lastError?: string;
   private apiKey: string;
   private defaultLanguage: string;
   private timeoutMs: number;
@@ -29,9 +33,11 @@ export class HTTPGoogleFactCheckClient implements GoogleFactCheckClient {
 
   async searchClaims(query: string, languageCode?: string): Promise<FactCheckSearchResult> {
     if (!this.apiKey) {
-      throw new Error(
+      const missing = new Error(
         "Google Fact Check API key is not configured (GOOGLE_FACTCHECK_API_KEY)."
       );
+      recordFailure(this, missing);
+      throw missing;
     }
 
     const trimmedQuery = query.trim();
@@ -75,6 +81,9 @@ export class HTTPGoogleFactCheckClient implements GoogleFactCheckClient {
         claims,
         nextPageToken: data.nextPageToken,
       };
+    } catch (err) {
+      recordFailure(this, err);
+      throw err;
     } finally {
       clearTimeout(timer);
     }

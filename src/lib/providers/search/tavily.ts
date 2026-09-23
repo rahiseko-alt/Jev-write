@@ -1,4 +1,5 @@
 import { SearchOptions, SearchProvider, SearchResponse, SearchResultItem } from "./types";
+import { recordFailure } from "../diagnostics";
 
 export interface TavilySearchOptions {
   apiKey?: string;
@@ -24,6 +25,9 @@ function createSearchResponse(query: string, results: SearchResultItem[]): Searc
 }
 
 export class TavilySearchProvider implements SearchProvider {
+  /** What went wrong with the real service during this run, for the reader. */
+  failureCount = 0;
+  lastError?: string;
   private apiKey: string;
   private baseUrl: string;
   private defaultMaxResults: number;
@@ -46,7 +50,9 @@ export class TavilySearchProvider implements SearchProvider {
     // into an INSUFFICIENT verdict upstream; it must not become invented
     // Evidence down here.
     if (!this.apiKey) {
-      throw new Error("Tavily search is not configured: no API key");
+      const missing = new Error("Tavily search is not configured: no API key");
+      recordFailure(this, missing);
+      throw missing;
     }
 
     const trimmedQuery = query.trim();
@@ -106,6 +112,7 @@ export class TavilySearchProvider implements SearchProvider {
       return createSearchResponse(trimmedQuery, results);
     } catch (err) {
       console.warn("Tavily search failed:", err);
+      recordFailure(this, err);
       throw err;
     } finally {
       clearTimeout(timer);

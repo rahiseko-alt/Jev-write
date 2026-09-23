@@ -1,6 +1,7 @@
 import { Claim, Importance } from "@/types";
 import { LLMProvider, RewriteInput, SurgicalFixInput } from "./types";
 import { MockLLMProvider } from "./mock";
+import { recordFailure } from "../diagnostics";
 
 const DEFAULT_RETRY_MS = 1000;
 const MAX_RETRY_MS = 20000;
@@ -22,6 +23,9 @@ export class OpenAILLMProvider implements LLMProvider {
   private model: string;
   private baseUrl: string;
   private fallback: MockLLMProvider;
+  /** What went wrong with the real service during this run, for the reader. */
+  failureCount = 0;
+  lastError?: string;
 
   constructor(options: OpenAILLMOptions = {}) {
     this.apiKey = options.apiKey || process.env.OPENAI_API_KEY || "";
@@ -137,6 +141,7 @@ Return a JSON object with this exact structure:
     } catch (err) {
       console.warn("OpenAI extractClaims failed, falling back to mock LLM:", err);
       this.servedByFallback = true;
+      recordFailure(this, err);
       return await this.fallback.extractClaims(text);
     }
   }
@@ -172,6 +177,7 @@ Entities: ${claim.entities?.join(", ") || "N/A"}`;
     } catch (err) {
       console.warn("OpenAI generateSearchQueries failed, falling back to mock LLM:", err);
       this.servedByFallback = true;
+      recordFailure(this, err);
       return await this.fallback.generateSearchQueries(claim);
     }
   }
@@ -222,6 +228,7 @@ Entities: ${claim.entities?.join(", ") || "N/A"}`;
     } catch (err) {
       console.warn("OpenAI rewrite failed, falling back to mock LLM:", err);
       this.servedByFallback = true;
+      recordFailure(this, err);
       return await this.fallback.rewrite(input);
     }
   }

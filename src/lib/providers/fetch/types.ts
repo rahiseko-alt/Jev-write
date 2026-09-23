@@ -18,6 +18,10 @@ export interface FetchOptions {
 export interface FetchProvider {
   /** True when this provider answered with a stand-in rather than the real service. */
   servedByFallback?: boolean;
+  /** How many calls to the real service failed during this run. */
+  failureCount?: number;
+  /** The first failure's message, with anything credential-shaped removed. */
+  lastError?: string;
   fetchUrl(url: string, options?: FetchOptions): Promise<FetchedPage>;
   fetch(url: string, options?: FetchOptions): Promise<FetchedPage>;
 }

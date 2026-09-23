@@ -1,4 +1,5 @@
 import { FetchedPage, FetchOptions, FetchProvider } from "./types";
+import { recordFailure } from "../diagnostics";
 
 export interface HTTPFetchProviderOptions {
   defaultTimeoutMs?: number;
@@ -7,6 +8,9 @@ export interface HTTPFetchProviderOptions {
 }
 
 export class HTTPFetchProvider implements FetchProvider {
+  /** What went wrong with the real service during this run, for the reader. */
+  failureCount = 0;
+  lastError?: string;
   private defaultTimeoutMs: number;
   private maxContentLength: number;
   private userAgent: string;
@@ -67,6 +71,7 @@ export class HTTPFetchProvider implements FetchProvider {
       };
     } catch (err) {
       console.warn(`HTTPFetchProvider fetch failed with error for ${url}:`, err);
+      recordFailure(this, err);
       return {
         url,
         title: "",
