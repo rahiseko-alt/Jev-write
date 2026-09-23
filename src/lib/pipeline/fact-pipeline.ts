@@ -1,4 +1,5 @@
 import { correctionFromEvidence } from "./correction";
+import { SourcePool, createSourcePool } from "./source-pool";
 import { CAUTION_THRESHOLD, bandOf } from "@/lib/jev/bands";
 import { describeFailure } from "@/lib/providers/diagnostics";
 import {
@@ -50,8 +51,11 @@ export interface FactPipelineOutput {
 /** How many candidates one claim asks JEV about. They ride in one request. */
 const MAX_SOURCES_PER_CLAIM = 5;
 
-/** How many ways of asking the web about one claim. */
-const QUERIES_PER_CLAIM = 2;
+/** How many ways of asking the web about the whole text, before any claim. */
+const QUERIES_PER_DOCUMENT = 6;
+
+/** One more search, for a claim the shared pages have nothing for. */
+const QUERIES_PER_CLAIM = 1;
 
 /** How many pages each of those asks for. */
 const RESULTS_PER_QUERY = 4;
@@ -102,6 +106,30 @@ export async function runFactPipeline(
     claimsCount: extractedClaims.length,
   });
 
+  // One pool of pages for the whole run. Searching per claim asked the same
+  // questions over and over and spent the search budget on duplicates.
+  const pool = createSourcePool({
+    search,
+    fetchProvider,
+    resultsPerQuery: RESULTS_PER_QUERY,
+  });
+
+  let documentQueries: string[] = [];
+  try {
+    if (typeof llm.generateDocumentQueries === "function") {
+      documentQueries = (await llm.generateDocumentQueries(text))
+        .map((query) => query.trim())
+        .filter(Boolean)
+        .slice(0, QUERIES_PER_DOCUMENT);
+    }
+  } catch (err) {
+    console.warn("Document-level search queries could not be written:", err);
+  }
+
+  if (documentQueries.length > 0) {
+    await pool.seed(documentQueries);
+  }
+
   const claimResults: ClaimResult[] = [];
   const factLedger: FactLedgerItem[] = [];
   const allEvidences: Evidence[] = [];
@@ -113,6 +141,7 @@ export async function runFactPipeline(
       return await verifyClaim({
         claim,
         articleText: text,
+        pool,
         index,
         llm,
         factCheck,
@@ -184,6 +213,8 @@ async function verifyClaim(params: {
   claim: Claim;
   /** The whole block being checked: what the claim has to hold together with. */
   articleText: string;
+  /** The pages this run has already found and read, shared by every claim. */
+  pool: SourcePool;
   index: number;
   llm: LLMProvider;
   factCheck: GoogleFactCheckClient;
@@ -196,8 +227,7 @@ async function verifyClaim(params: {
   evidences: Evidence[];
   isFactCheckHit: boolean;
 }> {
-  const { claim, articleText, index, llm, factCheck, jev, search, fetchProvider } =
-    params;
+  const { claim, articleText, pool, index, llm, factCheck, jev, fetchProvider } = params;
   /** JEV's reading of whether the claim holds up, kept whatever the sources said. */
   let consistency: ClaimResult["consistency"];
   const claimEvidences: Evidence[] = [];
@@ -317,57 +347,44 @@ async function verifyClaim(params: {
 
   // Step 3: Fallback to Web Search if no usable Google Fact Check hit
   if (!isFactCheckHit) {
-    // What to search for is a writing job, and the generation side has one
-    // for it. A query assembled here out of the claim's parts asked for
-    // "フリノバギルド 登録者数の推移 2026年4月 公式" and found nothing.
-    let queries: string[] = [];
-    try {
-      queries = (await llm.generateSearchQueries(claim))
-        .map((query) => query.trim())
-        .filter(Boolean)
-        .slice(0, QUERIES_PER_CLAIM);
-    } catch (err) {
-      console.warn(`Search queries could not be written for claim ${claim.id}:`, err);
-    }
+    // The pages were gathered for the whole text before any claim was looked
+    // at, so most claims cost no search at all. Only a claim the pool has
+    // nothing for pays for one of its own (ADR-0007: ask once, not per claim).
+    let pooled = pool.candidatesFor(claim, MAX_SOURCES_PER_CLAIM);
 
-    if (queries.length === 0) {
-      queries = [claim.normalizedText || claim.originalText];
-    }
-
-    trace.query = queries.join(" / ");
-
-    let searchResults: SearchResultItem[] = [];
-    try {
-      const responses = await Promise.all(
-        queries.map((query) => search.search(query, { maxResults: RESULTS_PER_QUERY }))
-      );
-
-      // The same page found by two queries is one candidate, not two.
-      const seen = new Set<string>();
-      for (const response of responses) {
-        for (const result of response.results || []) {
-          if (seen.has(result.url)) continue;
-          seen.add(result.url);
-          searchResults.push(result);
-        }
+    if (pooled.length === 0) {
+      let queries: string[] = [];
+      try {
+        queries = (await llm.generateSearchQueries(claim))
+          .map((query) => query.trim())
+          .filter(Boolean)
+          .slice(0, QUERIES_PER_CLAIM);
+      } catch (err) {
+        console.warn(`Search queries could not be written for claim ${claim.id}:`, err);
       }
-      trace.found = searchResults.length;
-    } catch (err) {
-      // ADR-0003: the lookup failed, so the claim stays unverified and the
-      // pipeline carries on. It does not get made up for.
-      console.warn(`Web search failed for claim ${claim.id}:`, err);
-      lookupFailed = true;
+
+      const query = queries[0] || claim.normalizedText || claim.originalText;
+      await pool.addQuery(query);
+      pooled = pool.candidatesFor(claim, MAX_SOURCES_PER_CLAIM);
     }
 
-    // Sort by source priority
-    const sortedResults = [...searchResults]
-      .sort(
-      (a, b) => {
+    trace.query = pool.queries().join(" / ");
+    trace.found = pooled.length;
+    lookupFailed = pool.searchFailed() && pooled.length === 0;
+
+    const candidates = pooled
+      .slice()
+      .sort((a, b) => {
         const typeA = mapDomainToSourceType(a.url);
         const typeB = mapDomainToSourceType(b.url);
         return (SOURCE_PRIORITY[typeA] || 6) - (SOURCE_PRIORITY[typeB] || 6);
-      }
-    );
+      })
+      .map((page) => ({
+        res: { url: page.url, title: page.title } as SearchResultItem,
+        fetched: page,
+        text: page.text,
+        excerpt: extractRelevantExcerpt(page.text, claim, 2500),
+      }));
 
     const relationCounts = {
       supports: 0,
@@ -377,43 +394,6 @@ async function verifyClaim(params: {
     };
 
     let bestExplanation: string | undefined;
-
-    // Every candidate is read first, then JEV is asked about all of them in
-    // one request (ADR-0007): questions are answered in parallel, so asking
-    // about five pages costs about what asking about one costs. Nothing is
-    // discarded before JEV sees it, and the numbers it returns are kept.
-    const candidates = await Promise.all(
-      sortedResults.slice(0, MAX_SOURCES_PER_CLAIM).map(async (res) => {
-        let fetched: any = {
-          url: res.url,
-          title: res.title,
-          siteName: "",
-          author: "",
-          publishedAt: "",
-          statusCode: 200,
-        };
-
-        try {
-          fetched =
-            typeof fetchProvider.fetchUrl === "function"
-              ? await fetchProvider.fetchUrl(res.url)
-              : await (fetchProvider as any).fetch(res.url);
-        } catch (err) {
-          console.warn(`Fetch failed for ${res.url}:`, err);
-        }
-
-        const pageText = fetched.content || (fetched as any).text || "";
-        const snippet = res.content || (res as any).snippet || "";
-        const text = pageText.trim().length > 0 ? pageText : snippet;
-
-        return {
-          res,
-          fetched,
-          text,
-          excerpt: extractRelevantExcerpt(text, claim, 2500),
-        };
-      })
-    );
 
     const readable = candidates.filter((candidate) => candidate.text.trim().length > 0);
     trace.unreadable = candidates.length - readable.length;
