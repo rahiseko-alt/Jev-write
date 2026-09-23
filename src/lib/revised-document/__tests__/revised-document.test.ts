@@ -71,10 +71,22 @@ const THREE_PARAGRAPHS_REVISED = [
 ].join("\n\n");
 
 describe("buildRevisedDocument", () => {
+  describe("the document it marks up", () => {
+    it("is the one the analysis ran on, not the one being typed", () => {
+      const view = buildRevisedDocument({
+        analysis: analysis(THREE_PARAGRAPHS, THREE_PARAGRAPHS_REVISED),
+        adoption: {},
+      });
+
+      expect(view.originalText).toBe(THREE_PARAGRAPHS);
+      expect(view.paragraphs).toHaveLength(3);
+      expect(view.comparison.map((pair) => pair.original).join("")).not.toBe("");
+    });
+  });
+
   describe("paragraph structure", () => {
     it("returns one paragraph per paragraph in the original", () => {
       const view = buildRevisedDocument({
-        originalText: THREE_PARAGRAPHS,
         analysis: analysis(THREE_PARAGRAPHS, THREE_PARAGRAPHS_REVISED),
         adoption: {},
       });
@@ -84,7 +96,6 @@ describe("buildRevisedDocument", () => {
 
     it("does not split a paragraph into one entry per sentence", () => {
       const view = buildRevisedDocument({
-        originalText: "一文目。二文目。三文目。",
         analysis: analysis("一文目。二文目。三文目。", "一文目。二文目。三文目。"),
         adoption: {},
       });
@@ -95,7 +106,6 @@ describe("buildRevisedDocument", () => {
 
     it("keeps each paragraph's text intact", () => {
       const view = buildRevisedDocument({
-        originalText: THREE_PARAGRAPHS,
         analysis: analysis(THREE_PARAGRAPHS, THREE_PARAGRAPHS_REVISED),
         adoption: {},
       });
@@ -109,7 +119,6 @@ describe("buildRevisedDocument", () => {
 
     it("ignores blank lines beyond the paragraph breaks themselves", () => {
       const view = buildRevisedDocument({
-        originalText: "一つ目。\n\n\n二つ目。",
         analysis: analysis("一つ目。\n\n\n二つ目。", "一つ目。\n\n\n二つ目。"),
         adoption: {},
       });
@@ -119,7 +128,6 @@ describe("buildRevisedDocument", () => {
 
     it("returns no paragraphs for empty input", () => {
       const view = buildRevisedDocument({
-        originalText: "",
         analysis: analysis("", ""),
         adoption: {},
       });
@@ -134,7 +142,6 @@ describe("buildRevisedDocument", () => {
       const revised = "価格は12万円。\n\n発売日は4月1日。重さは500g。";
 
       const view = buildRevisedDocument({
-        originalText: original,
         analysis: analysis(original, revised),
         adoption: {},
       });
@@ -150,7 +157,6 @@ describe("buildRevisedDocument", () => {
       const revised = "一文目を直した。二文目。";
 
       const view = buildRevisedDocument({
-        originalText: original,
         analysis: analysis(original, revised),
         adoption: {},
       });
@@ -162,7 +168,6 @@ describe("buildRevisedDocument", () => {
       const original = "一文目。二文目。";
 
       const view = buildRevisedDocument({
-        originalText: original,
         analysis: analysis(original, ""),
         adoption: {},
       });
@@ -174,7 +179,6 @@ describe("buildRevisedDocument", () => {
   describe("clipboard body", () => {
     it("reproduces the original paragraph breaks", () => {
       const view = buildRevisedDocument({
-        originalText: THREE_PARAGRAPHS,
         analysis: analysis(THREE_PARAGRAPHS, THREE_PARAGRAPHS_REVISED),
         adoption: {},
       });
@@ -186,7 +190,6 @@ describe("buildRevisedDocument", () => {
       const original = "一文目。二文目。三文目。";
 
       const view = buildRevisedDocument({
-        originalText: original,
         analysis: analysis(original, original),
         adoption: {},
       });
@@ -200,7 +203,6 @@ describe("buildRevisedDocument", () => {
       const revised = "価格は12万円。";
 
       const view = buildRevisedDocument({
-        originalText: original,
         analysis: analysis(original, revised),
         adoption: {},
       });
@@ -212,7 +214,6 @@ describe("buildRevisedDocument", () => {
       const original = "価格は10万円。";
 
       const view = buildRevisedDocument({
-        originalText: original,
         analysis: analysis(original, "価格は12万円。", [
           claim("価格は10万円", "CONTRADICTED", "価格は12万円"),
         ]),
@@ -228,7 +229,6 @@ describe("buildRevisedDocument", () => {
       const original = "　一文目。二文目。\n\n　三文目。";
 
       const view = buildRevisedDocument({
-        originalText: original,
         analysis: analysis(original, original),
         adoption: {},
       });
@@ -242,7 +242,6 @@ describe("buildRevisedDocument", () => {
       const revised = "価格は12万円。\n\n発売日は4月1日。";
 
       const view = buildRevisedDocument({
-        originalText: original,
         analysis: analysis(original, revised),
         adoption: {},
       });
@@ -255,7 +254,6 @@ describe("buildRevisedDocument", () => {
       const original = "一文目。\n二文目。\n\n三文目。";
 
       const view = buildRevisedDocument({
-        originalText: original,
         analysis: analysis(original, original),
         adoption: {},
       });
@@ -272,7 +270,6 @@ describe("buildRevisedDocument", () => {
       const revised = "価格は12万円。\n\n発売日は4月1日。";
 
       const view = buildRevisedDocument({
-        originalText: original,
         analysis: analysis(original, revised),
         adoption: {},
       });
@@ -289,7 +286,6 @@ describe("buildRevisedDocument", () => {
       const original = "価格は10万円。";
 
       const view = buildRevisedDocument({
-        originalText: original,
         analysis: analysis(original, "価格は12万円。", [
           claim("価格は10万円。", "CONTRADICTED", "価格は12万円。"),
         ]),
@@ -304,7 +300,6 @@ describe("buildRevisedDocument", () => {
       const original = "価格は10万円。";
 
       const view = buildRevisedDocument({
-        originalText: original,
         analysis: analysis(original, "価格は12万円。", [
           claim("価格は10万円。", "CONTRADICTED", "価格は12万円。"),
         ]),
@@ -319,7 +314,6 @@ describe("buildRevisedDocument", () => {
       const original = "まとめると、こうなる。";
 
       const view = buildRevisedDocument({
-        originalText: original,
         analysis: analysis(original, "こうなる。", [], [styleIssue("まとめると、こうなる。")]),
         adoption: { "style-0": false },
       });
@@ -332,7 +326,6 @@ describe("buildRevisedDocument", () => {
       const revised = "価格は12万円。\n\n発売日は4月1日。";
 
       const view = buildRevisedDocument({
-        originalText: original,
         analysis: analysis(original, revised, [
           claim("価格は10万円。", "CONTRADICTED", "価格は12万円。"),
           claim("発売日は3月1日。", "CONTRADICTED", "発売日は4月1日。"),
@@ -347,7 +340,6 @@ describe("buildRevisedDocument", () => {
       const original = "価格は10万円。";
 
       const view = buildRevisedDocument({
-        originalText: original,
         analysis: analysis(original, "価格は12万円。", [
           claim("価格は10万円。", "CONTRADICTED", "価格は12万円。"),
         ]),
@@ -365,7 +357,6 @@ describe("buildRevisedDocument", () => {
       const original = "　一文目。二文目。\n\n　三文目。";
 
       const view = buildRevisedDocument({
-        originalText: original,
         analysis: analysis(original, original),
         adoption: {},
       });
@@ -377,7 +368,6 @@ describe("buildRevisedDocument", () => {
       const original = "一文目。 二文目。";
 
       const view = buildRevisedDocument({
-        originalText: original,
         analysis: analysis(original, original),
         adoption: {},
       });
@@ -389,7 +379,6 @@ describe("buildRevisedDocument", () => {
       const original = "　まえがき。\n本文の一文目。 本文の二文目。\n\n　むすび。";
 
       const view = buildRevisedDocument({
-        originalText: original,
         analysis: analysis(original, original),
         adoption: {},
       });
@@ -403,7 +392,6 @@ describe("buildRevisedDocument", () => {
       const original = "一つ目。\n二つ目。\n\n三つ目。";
 
       const view = buildRevisedDocument({
-        originalText: original,
         analysis: analysis(original, original),
         adoption: {},
       });
@@ -415,7 +403,6 @@ describe("buildRevisedDocument", () => {
       const original = "一つ目。\n二つ目。\n\n三つ目。";
 
       const view = buildRevisedDocument({
-        originalText: original,
         analysis: analysis(original, original),
         adoption: {},
       });
@@ -432,7 +419,6 @@ describe("buildRevisedDocument", () => {
       const original = "価格は10万円。まとめると、こうなる。";
 
       const view = buildRevisedDocument({
-        originalText: original,
         analysis: analysis(original, original, [claim("価格は10万円。", "CONTRADICTED", "価格は12万円。")], [
           styleIssue("まとめると、こうなる。"),
         ]),
@@ -446,7 +432,6 @@ describe("buildRevisedDocument", () => {
       const original = "価格は10万円。\n\n発売日は3月1日。";
 
       const view = buildRevisedDocument({
-        originalText: original,
         analysis: analysis(original, original, [
           claim("発売日は3月1日。", "CONTRADICTED", "発売日は4月1日。"),
         ]),
@@ -460,7 +445,6 @@ describe("buildRevisedDocument", () => {
       const original = "　価格は10万円。";
 
       const view = buildRevisedDocument({
-        originalText: original,
         analysis: analysis(original, original, [
           claim("価格は10万円。", "CONTRADICTED", "価格は12万円。"),
         ]),
@@ -475,12 +459,10 @@ describe("buildRevisedDocument", () => {
       const claims = [claim("価格は10万円。", "CONTRADICTED", "価格は12万円。")];
 
       const adopted = buildRevisedDocument({
-        originalText: original,
         analysis: analysis(original, "価格は12万円。", claims),
         adoption: {},
       });
       const rejectedView = buildRevisedDocument({
-        originalText: original,
         analysis: analysis(original, "価格は12万円。", claims),
         adoption: { "fact-0": false },
       });
@@ -495,12 +477,10 @@ describe("buildRevisedDocument", () => {
       const scaled = { ...claim("価格は10万円。", "CONTRADICTED", "価格は12万円。"), confidence: 82 };
 
       const fromRatio = buildRevisedDocument({
-        originalText: original,
         analysis: analysis(original, original, [ratio]),
         adoption: {},
       });
       const fromScaled = buildRevisedDocument({
-        originalText: original,
         analysis: analysis(original, original, [scaled]),
         adoption: {},
       });
@@ -513,7 +493,6 @@ describe("buildRevisedDocument", () => {
       const original = "価格は10万円。";
 
       const view = buildRevisedDocument({
-        originalText: original,
         analysis: analysis(original, original, [
           claim("価格は10万円。", "CONTRADICTED", "価格は12万円。"),
         ]),
@@ -527,7 +506,6 @@ describe("buildRevisedDocument", () => {
   describe("whether anything was found", () => {
     it("reports nothing found when there are no claims and no style issues", () => {
       const view = buildRevisedDocument({
-        originalText: "一文目。",
         analysis: analysis("一文目。", "一文目。"),
         adoption: {},
       });
@@ -539,7 +517,6 @@ describe("buildRevisedDocument", () => {
       const original = "一文目。";
 
       const view = buildRevisedDocument({
-        originalText: original,
         analysis: analysis(original, original, [claim("一文目", "SUPPORTED")]),
         adoption: {},
       });
@@ -551,7 +528,6 @@ describe("buildRevisedDocument", () => {
       const original = "価格は10万円。";
 
       const view = buildRevisedDocument({
-        originalText: original,
         analysis: analysis(original, "価格は12万円。", [
           claim("価格は10万円", "CONTRADICTED", "価格は12万円"),
         ]),
@@ -565,7 +541,6 @@ describe("buildRevisedDocument", () => {
       const original = "価格は10万円。";
 
       const view = buildRevisedDocument({
-        originalText: original,
         analysis: analysis(original, original, [claim("価格は10万円", "INSUFFICIENT")]),
         adoption: {},
       });
@@ -577,7 +552,6 @@ describe("buildRevisedDocument", () => {
       const original = "まとめると、まとめると、こうなる。";
 
       const view = buildRevisedDocument({
-        originalText: original,
         analysis: analysis(original, "こうなる。", [], [styleIssue("まとめると、まとめると、")]),
         adoption: {},
       });
@@ -590,7 +564,6 @@ describe("buildRevisedDocument", () => {
       const undetected: StyleIssue = { ...styleIssue("一文目"), detected: false };
 
       const view = buildRevisedDocument({
-        originalText: original,
         analysis: analysis(original, original, [], [undetected]),
         adoption: {},
       });
@@ -617,7 +590,6 @@ describe("inline marks", () => {
     const revised = "アップルは2023年9月12日、iPhone 15 Proを発表した。";
 
     const view = buildRevisedDocument({
-      originalText: original,
       analysis: analysis(original, revised, [
         claim("アップルは2023年9月13日", "CONTRADICTED", "アップルは2023年9月12日"),
       ]),
@@ -634,7 +606,6 @@ describe("inline marks", () => {
     const revised = "こうなる。";
 
     const view = buildRevisedDocument({
-      originalText: original,
       analysis: analysis(original, revised, [], [styleIssue("まとめると、まとめると、こうなる。")]),
       adoption: {},
     });
@@ -648,7 +619,6 @@ describe("inline marks", () => {
     const original = "価格は10万円である。";
 
     const view = buildRevisedDocument({
-      originalText: original,
       analysis: analysis(original, original, [claim("価格は10万円である。", "INSUFFICIENT")]),
       adoption: {},
     });
@@ -662,7 +632,6 @@ describe("inline marks", () => {
     const original = "価格は10万円である。";
 
     const view = buildRevisedDocument({
-      originalText: original,
       analysis: analysis(original, original, [claim("価格は10万円である。", "SUPPORTED")]),
       adoption: {},
     });
@@ -675,7 +644,6 @@ describe("inline marks", () => {
     const revised = "価格は12万円である。";
 
     const view = buildRevisedDocument({
-      originalText: original,
       analysis: analysis(original, revised, [
         claim("価格は10万円である。", "CONTRADICTED", "まったく別の文言"),
       ]),
@@ -692,7 +660,6 @@ describe("inline marks", () => {
     const revised = "アップルは2023年9月12日、iPhone 15 Proを発表した。";
 
     const view = buildRevisedDocument({
-      originalText: original,
       analysis: analysis(original, revised, [
         claim("アップルは2023年9月13日", "CONTRADICTED", "アップルは2023年9月12日"),
       ]),
@@ -707,7 +674,6 @@ describe("inline marks", () => {
     const revised = "アップルは2023年9月12日、iPhone 15 Proを発表した。";
 
     const view = buildRevisedDocument({
-      originalText: original,
       analysis: analysis(original, revised, [
         claim("アップルは2023年9月13日", "CONTRADICTED", "アップルは2023年9月12日"),
       ]),
@@ -722,7 +688,6 @@ describe("inline marks", () => {
     const revised = "まとめると、価格は12万円である。";
 
     const view = buildRevisedDocument({
-      originalText: original,
       analysis: analysis(
         original,
         revised,
@@ -743,7 +708,6 @@ describe("a Finding that cannot be placed", () => {
     const original = "価格は10万円である。";
 
     const view = buildRevisedDocument({
-      originalText: original,
       analysis: analysis(original, original, [
         claim("この文章に存在しない主張", "CONTRADICTED", "訂正後の文言"),
       ]),
@@ -757,7 +721,6 @@ describe("a Finding that cannot be placed", () => {
     const original = "価格は10万円である。";
 
     const view = buildRevisedDocument({
-      originalText: original,
       analysis: analysis(original, original, [
         claim("この文章に存在しない主張", "CONTRADICTED", "訂正後の文言"),
       ]),
@@ -773,7 +736,6 @@ describe("a Finding that cannot be placed", () => {
     const revised = "価格は12万円である。";
 
     const view = buildRevisedDocument({
-      originalText: original,
       analysis: analysis(original, revised, [
         claim("この文章に存在しない主張", "CONTRADICTED", "訂正後の文言"),
       ]),
@@ -787,7 +749,6 @@ describe("a Finding that cannot be placed", () => {
     const original = "一文目。二文目。";
 
     const view = buildRevisedDocument({
-      originalText: original,
       analysis: analysis(original, original, [], [styleIssue("どこにも無い言い回し")]),
       adoption: {},
     });
@@ -810,7 +771,6 @@ describe("locating the changed wording", () => {
     const revised = "本体価格は69980円です。";
 
     const view = buildRevisedDocument({
-      originalText: original,
       analysis: analysis(original, revised, [
         claim("本体価格は49980円", "CONTRADICTED", "本体価格は69980円"),
       ]),
@@ -825,7 +785,6 @@ describe("locating the changed wording", () => {
     const revised = "12月の売上は15億円でした。";
 
     const view = buildRevisedDocument({
-      originalText: original,
       analysis: analysis(original, revised, [
         claim("12月の売上は12億円", "CONTRADICTED", "12月の売上は15億円"),
       ]),
@@ -842,7 +801,6 @@ describe("locating the changed wording", () => {
     const revised = "価格は12万円で、重さは600gです。";
 
     const view = buildRevisedDocument({
-      originalText: original,
       analysis: analysis(original, revised, [
         claim("価格は10万円", "CONTRADICTED", "価格は12万円"),
         claim("重さは500g", "CONTRADICTED", "重さは600g"),
@@ -859,7 +817,6 @@ describe("locating the changed wording", () => {
     const original = "価格は10万円である。";
 
     const view = buildRevisedDocument({
-      originalText: original,
       analysis: analysis(original, original, [
         claim("価格は10万円である。", "CONTRADICTED", "まったく別の文言"),
         claim("価格は10万円である。", "CONTRADICTED", "これも別の文言"),
@@ -876,7 +833,6 @@ describe("locating the changed wording", () => {
     const original = "価格は10万円である。";
 
     const view = buildRevisedDocument({
-      originalText: original,
       analysis: analysis(original, original, [claim("価格は10万円である。", "MIXED")]),
       adoption: {},
     });
@@ -891,7 +847,6 @@ describe("locating the changed wording", () => {
     const original = "PlayStation 5 Proは家庭用ゲーム機です。次の文。";
 
     const view = buildRevisedDocument({
-      originalText: original,
       analysis: analysis(original, original),
       adoption: {},
     });
@@ -905,7 +860,6 @@ describe("Finding headings", () => {
     const original = "価格は10万円である。";
 
     const view = buildRevisedDocument({
-      originalText: original,
       analysis: analysis(original, "価格は12万円である。", [
         claim("価格は10万円", "CONTRADICTED", "価格は12万円"),
       ]),
@@ -919,7 +873,6 @@ describe("Finding headings", () => {
     const original = "価格は10万円である。";
 
     const view = buildRevisedDocument({
-      originalText: original,
       analysis: analysis(original, original, [claim("価格は10万円である。", "INSUFFICIENT")]),
       adoption: {},
     });
@@ -931,7 +884,6 @@ describe("Finding headings", () => {
     const original = "売上は前年比120%だった。";
 
     const view = buildRevisedDocument({
-      originalText: original,
       analysis: analysis(original, "売上は前年比140%だった。", [
         claim("売上は前年比120%", "CONTRADICTED", "売上は前年比140%"),
       ]),
@@ -945,7 +897,6 @@ describe("Finding headings", () => {
     const original = "まとめると、こうなる。";
 
     const view = buildRevisedDocument({
-      originalText: original,
       analysis: analysis(original, "こうなる。", [], [styleIssue("まとめると、こうなる。")]),
       adoption: {},
     });
@@ -959,7 +910,6 @@ describe("Evidence and heading edges", () => {
     const original = "まとめると、こうなる。";
 
     const view = buildRevisedDocument({
-      originalText: original,
       analysis: analysis(original, "こうなる。", [], [styleIssue("まとめると、こうなる。")]),
       adoption: {},
     });
@@ -972,7 +922,6 @@ describe("Evidence and heading edges", () => {
     const original = "メインカメラは20MPである。";
 
     const view = buildRevisedDocument({
-      originalText: original,
       analysis: analysis(original, "メインカメラは48MPである。", [
         claim("メインカメラは20MP", "CONTRADICTED", "メインカメラは48MP"),
       ]),
@@ -986,7 +935,6 @@ describe("Evidence and heading edges", () => {
     const long = "売上は前年比120%で、これは全社の見通しを大きく上回る結果でした。";
 
     const view = buildRevisedDocument({
-      originalText: long,
       analysis: analysis(long, long, [claim(long, "INSUFFICIENT")]),
       adoption: {},
     });
@@ -1010,7 +958,6 @@ describe("a refused correction", () => {
 
   it("keeps its mark, on the reader's own wording", () => {
     const view = buildRevisedDocument({
-      originalText: original,
       analysis: analysis(original, revised, claims),
       adoption: { "fact-0": false },
     });
@@ -1020,7 +967,6 @@ describe("a refused correction", () => {
 
   it("is told apart from one that was accepted", () => {
     const accepted = buildRevisedDocument({
-      originalText: original,
       analysis: analysis(original, revised, claims),
       adoption: {},
     });
@@ -1030,7 +976,6 @@ describe("a refused correction", () => {
 
   it("goes back to the correction when it is accepted again", () => {
     const view = buildRevisedDocument({
-      originalText: original,
       analysis: analysis(original, revised, claims),
       adoption: { "fact-0": true },
     });
@@ -1041,7 +986,6 @@ describe("a refused correction", () => {
 
   it("is not something an unverified claim can be", () => {
     const view = buildRevisedDocument({
-      originalText: original,
       analysis: analysis(original, original, [claim("価格は10万円である。", "INSUFFICIENT")]),
       adoption: {},
     });
@@ -1051,7 +995,6 @@ describe("a refused correction", () => {
 
   it("is something a correction can be", () => {
     const view = buildRevisedDocument({
-      originalText: original,
       analysis: analysis(original, revised, claims),
       adoption: {},
     });
@@ -1061,7 +1004,6 @@ describe("a refused correction", () => {
 
   it("is not something a confirmed claim can be", () => {
     const view = buildRevisedDocument({
-      originalText: original,
       analysis: analysis(original, original, [claim("価格は10万円である。", "SUPPORTED")]),
       adoption: {},
     });
@@ -1080,7 +1022,6 @@ describe("refusing one correction among several", () => {
 
   it("puts back only the words that correction replaced", () => {
     const view = buildRevisedDocument({
-      originalText: original,
       analysis: analysis(original, revised, claims),
       adoption: { "fact-0": false },
     });
@@ -1090,7 +1031,6 @@ describe("refusing one correction among several", () => {
 
   it("leaves the correction accepted alongside it in place", () => {
     const view = buildRevisedDocument({
-      originalText: original,
       analysis: analysis(original, revised, claims),
       adoption: { "fact-1": false },
     });
@@ -1100,7 +1040,6 @@ describe("refusing one correction among several", () => {
 
   it("restores the sentence when both are refused", () => {
     const view = buildRevisedDocument({
-      originalText: original,
       analysis: analysis(original, revised, claims),
       adoption: { "fact-0": false, "fact-1": false },
     });
@@ -1113,7 +1052,6 @@ describe("refusing one correction among several", () => {
     const after = "価格は12万円である。";
 
     const view = buildRevisedDocument({
-      originalText: before,
       analysis: analysis(before, after, [claim("価格は10万円", "CONTRADICTED", "価格は12万円")], [
         styleIssue("まとめると、価格は10万円である。"),
       ]),
@@ -1125,7 +1063,6 @@ describe("refusing one correction among several", () => {
 
   it("offers nothing to adopt on a claim it could not place", () => {
     const view = buildRevisedDocument({
-      originalText: original,
       analysis: analysis(original, revised, [
         claim("この文章に存在しない主張", "CONTRADICTED", "訂正後の文言"),
       ]),
@@ -1137,7 +1074,6 @@ describe("refusing one correction among several", () => {
 
   it("offers nothing to adopt when the correction reads the same as the original", () => {
     const view = buildRevisedDocument({
-      originalText: original,
       analysis: analysis(original, original, [claim("価格は10万円", "CONTRADICTED")]),
       adoption: {},
     });
@@ -1150,7 +1086,6 @@ describe("refusing one correction among several", () => {
     const after = "こうなる。";
 
     const view = buildRevisedDocument({
-      originalText: before,
       analysis: analysis(before, after, [], [styleIssue(before)]),
       adoption: {},
     });
@@ -1165,7 +1100,6 @@ describe("what the panel shows beside the document", () => {
     const original = "これによってゲームのレンダリング速度は最大約50%向上するとされています。";
 
     const view = buildRevisedDocument({
-      originalText: original,
       analysis: analysis(original, original, [
         {
           claim: {
@@ -1193,7 +1127,6 @@ describe("what the panel shows beside the document", () => {
     const revised = "価格は12万円である。";
 
     const view = buildRevisedDocument({
-      originalText: original,
       analysis: analysis(original, revised, [
         claim("価格は10万円", "CONTRADICTED", "価格は12万円"),
       ]),
@@ -1209,7 +1142,6 @@ describe("what the panel shows beside the document", () => {
     const revised = "価格は12万円である。";
 
     const view = buildRevisedDocument({
-      originalText: original,
       analysis: analysis(original, revised, [
         claim("価格は10万円", "CONTRADICTED", "価格は12万円"),
       ]),

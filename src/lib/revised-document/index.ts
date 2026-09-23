@@ -143,7 +143,11 @@ export type RevisedDocumentView = {
 };
 
 export type RevisedDocumentInput = {
-  originalText: string;
+  /**
+   * The analysis to render. The document it marks up is the text this
+   * analysis ran on, which the analysis carries itself — never whatever is
+   * in the editor at the moment, which may by now be another article.
+   */
   analysis: AnalysisResult;
   /** Finding id to whether its correction is adopted. Missing means adopted. */
   adoption: Record<string, boolean>;
@@ -344,7 +348,8 @@ function resolveSentence(
 export function buildRevisedDocument(
   input: RevisedDocumentInput
 ): RevisedDocumentView {
-  const { originalText, analysis, adoption } = input;
+  const { analysis, adoption } = input;
+  const originalText = analysis.originalText ?? "";
 
   const sourceParagraphs = splitParagraphs(originalText);
   const originalSentences = sourceParagraphs.flatMap((p) => p.sentences);

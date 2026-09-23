@@ -150,12 +150,11 @@ export default function HomePage() {
     () =>
       analysisResult
         ? buildRevisedDocument({
-            originalText: inputText,
             analysis: analysisResult,
             adoption: adoptedOverrides,
           })
         : null,
-    [analysisResult, inputText, adoptedOverrides]
+    [analysisResult, adoptedOverrides]
   );
 
   const originalLines = useMemo(
@@ -291,6 +290,7 @@ export default function HomePage() {
 
       if (finalResult) {
         setAnalysisResult(finalResult);
+        setAdoptedOverrides({});
         setSelectedFindingId(null);
         setSheetOpen(false);
 
@@ -1234,6 +1234,11 @@ export default function HomePage() {
                   const draft = localStorage.getItem("jev_draft_text");
                   if (draft) {
                     setInputText(draft);
+                    // The result on screen belongs to the article it was run
+                    // on, not to the one just restored.
+                    setAnalysisResult(null);
+                    setAdoptedOverrides({});
+                    setSelectedFindingId(null);
                     alert("保存された下書きを復元しました。");
                     setShowDraftModal(false);
                   } else {
