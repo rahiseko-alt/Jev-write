@@ -123,9 +123,23 @@ export function attentionOf(finding: Finding): number | null {
   return null;
 }
 
-/** The Findings in the order a reader should work through them. */
+/**
+ * A Finding that should mark the document but found no sentence to mark.
+ * Without saying so, it would drop out of the document silently: the reader
+ * counts the marks, not the list. A confirmed claim leaves no mark anyway.
+ */
+export function isUnplaced(finding: Finding): boolean {
+  return finding.lineIndex < 0 && finding.markKind !== null;
+}
+
+/**
+ * The Findings in the order a reader should work through them. The unplaced
+ * come first whatever their number: nothing in the document points to them.
+ */
 export function sortByAttention(findings: Finding[]): Finding[] {
   return [...findings].sort((a, b) => {
+    const lost = Number(isUnplaced(b)) - Number(isUnplaced(a));
+    if (lost !== 0) return lost;
     const left = attentionOf(a);
     const right = attentionOf(b);
     if (left === null && right === null) return 0;

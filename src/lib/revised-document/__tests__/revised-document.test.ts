@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildRevisedDocument, sortByAttention } from "@/lib/revised-document";
+import { buildRevisedDocument, isUnplaced, sortByAttention } from "@/lib/revised-document";
 import { BAND_LABEL } from "@/lib/jev/bands";
 import type { AnalysisResult, ClaimResult, StyleIssue } from "@/types";
 
@@ -756,5 +756,38 @@ describe("書き換えない", () => {
     expect(view.clipboardText).toBe(original);
     expect(view.findings[0].adoptable).toBe(false);
     expect(view.findings[0].revisedText).toBe(view.findings[0].originalText);
+  });
+});
+
+describe("本文のどこにも結びつかない指摘", () => {
+  it("場所不明として、数値に関わらず一覧の先頭に出す", () => {
+    const original = "名古屋駅から徒歩8分。";
+    const placed = claim("名古屋駅から徒歩8分である。", "INSUFFICIENT");
+    placed.confidence = 0.1;
+    const lost = claim("まったく別の話題についての記述である。", "INSUFFICIENT");
+    lost.confidence = 0.9;
+
+    const view = buildRevisedDocument({
+      analysis: analysis(original, original, [placed, lost]),
+      adoption: {},
+    });
+
+    const order = sortByAttention(view.findings);
+    expect(isUnplaced(order[0])).toBe(true);
+    expect(order[0].originalText).toContain("まったく別の話題");
+    expect(isUnplaced(order[1])).toBe(false);
+  });
+
+  it("資料と一致して印を付けない指摘は、場所不明に数えない", () => {
+    const original = "名古屋駅から徒歩8分。";
+    const lost = claim("まったく別の話題についての記述である。", "SUPPORTED");
+
+    const view = buildRevisedDocument({
+      analysis: analysis(original, original, [lost]),
+      adoption: {},
+    });
+
+    expect(view.findings[0].lineIndex).toBe(-1);
+    expect(isUnplaced(view.findings[0])).toBe(false);
   });
 });

@@ -33,6 +33,7 @@ import { mergeAnalyses } from "@/lib/pipeline/merge-results";
 import {
   attentionOf,
   buildRevisedDocument,
+  isUnplaced,
   sortByAttention,
   type Finding,
   type MarkKind,
@@ -418,6 +419,18 @@ export default function HomePage() {
                     )}
                   </div>
 
+                  {/* 本文に印が無い指摘。黙って落とさず、そう言う。 */}
+                  {isUnplaced(currentFinding) && (
+                    <div className="flex items-start gap-2 rounded-xl border border-slate-300 bg-slate-100 px-4 py-3 text-xs text-slate-800">
+                      <HelpCircle className="w-4 h-4 shrink-0 text-slate-600 mt-0.5" />
+                      <span>
+                        <span className="font-bold">場所不明</span>
+                        ：本文のどの文の話か特定できず、本文に印を付けられませんでした。
+                        下の主張の文面を手がかりに、本文の該当箇所をお探しください。
+                      </span>
+                    </div>
+                  )}
+
                   {/* Header Title & Category Badge */}
                   <div className="flex items-start justify-between gap-2">
                     <div className="flex items-center gap-2">
@@ -519,7 +532,9 @@ export default function HomePage() {
 
                     {/* 原文 */}
                     <div className="space-y-1">
-                      <span className="text-slate-400 font-medium">この文</span>
+                      <span className="text-slate-400 font-medium">
+                        {isUnplaced(currentFinding) ? "主張の文面（本文の言葉とは異なります）" : "この文"}
+                      </span>
                       <div className="bg-red-50 text-red-900 border border-red-200 rounded-lg p-2 leading-relaxed">
                         {currentFinding.sentenceBefore || currentFinding.originalText}
                       </div>
@@ -715,7 +730,7 @@ export default function HomePage() {
               <div className="flex items-center justify-between">
                 <h1 className="text-xl font-bold text-slate-900">原文を入力</h1>
                 <button
-                  onClick={() => alert("入力した文章のファクトチェック、AI表現の検査、自動修正を行います。")}
+                  onClick={() => alert("入力した文章のファクトチェック、AI表現の検査を行い、裏付けの弱い箇所を知らせます。文章は書き換えません。")}
                   className="flex items-center gap-1.5 text-xs text-blue-600 hover:text-blue-700 font-medium"
                 >
                   <HelpCircle className="w-4 h-4" />
@@ -741,7 +756,7 @@ export default function HomePage() {
                   <textarea
                     value={inputText}
                     onChange={(e) => setInputText(e.target.value)}
-                    placeholder="ここに原文を貼り付ける\n事実の正確さ、AIっぽい表現、根拠の有無をチェックし、より良い文章にするための修正文を提案します。"
+                    placeholder="ここに原文を貼り付ける\n事実の正確さ、AIっぽい表現、根拠の有無をチェックし、裏付けの弱い箇所を知らせます。文章は書き換えません。"
                     className="w-full h-80 resize-none border-0 p-0 text-slate-800 placeholder:text-slate-300 focus:ring-0 text-sm leading-relaxed bg-transparent"
                   />
 
@@ -1151,8 +1166,8 @@ export default function HomePage() {
               </div>
 
               <div className="p-3 bg-purple-50/50 rounded-xl border border-purple-100 space-y-1">
-                <div className="font-bold text-purple-900">2. AI癖・不自然な表現の是正</div>
-                <p>機械的な同語反復やAI特有の紋切り型フレーズを抽出し、自然で流麗な日本語表現へと校正します。</p>
+                <div className="font-bold text-purple-900">2. AI癖・不自然な表現の検知</div>
+                <p>機械的な同語反復やAI特有の紋切り型フレーズを抽出し、その箇所に印を付けて知らせます。文章は書き換えません。</p>
               </div>
 
               <div className="p-3 bg-emerald-50/50 rounded-xl border border-emerald-100 space-y-1">
