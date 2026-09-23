@@ -1,6 +1,10 @@
 import { Claim, Importance } from "@/types";
 import { LLMProvider, RewriteInput, SurgicalFixInput } from "./types";
 import { recordFailure } from "../diagnostics";
+import {
+  SEARCH_QUERY_SYSTEM_PROMPT,
+  buildSearchQueryUserPrompt,
+} from "./search-queries";
 
 const DEFAULT_RETRY_MS = 1000;
 const MAX_RETRY_MS = 20000;
@@ -166,15 +170,8 @@ Return a JSON object with this exact structure:
 
   async generateSearchQueries(claim: Claim): Promise<string[]> {
     try {
-      const systemPrompt = `Generate 2 to 4 concise, effective search engine queries to verify or debunk the given factual claim.
-Target official sources, news databases, or encyclopedia entries.
-Return a JSON object: { "queries": ["query 1", "query 2", ...] }`;
-
-      const userPrompt = `Claim: ${claim.normalizedText}
-Subject: ${claim.subject || "N/A"}
-Numbers: ${claim.numbers?.join(", ") || "N/A"}
-Dates: ${claim.dates?.join(", ") || "N/A"}
-Entities: ${claim.entities?.join(", ") || "N/A"}`;
+      const systemPrompt = SEARCH_QUERY_SYSTEM_PROMPT;
+      const userPrompt = buildSearchQueryUserPrompt(claim);
 
       const rawContent = await this.callChatCompletion(
         [
