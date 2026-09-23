@@ -95,6 +95,31 @@ export type ClaimResult = {
    * found nothing, and the reader is told which happened.
    */
   lookupFailed?: boolean;
+  /** Where this claim's evidence went: what was found, and what was dropped. */
+  evidenceTrace?: EvidenceTrace;
+};
+
+/**
+ * The trail of one claim's search for evidence.
+ *
+ * "Nothing found" has several causes that look identical on screen: nobody
+ * writes about it, the pages found were about something else, the pages could
+ * not be read, or they were read and said nothing about the claim. This keeps
+ * them apart, so a miss can be traced to where it happened rather than guessed at.
+ */
+export type EvidenceTrace = {
+  /** What was actually asked of the search. */
+  query: string;
+  /** How many pages the search returned. */
+  found: number;
+  /** How many of them never named what the claim is about. */
+  offSubject: number;
+  /** How many could not be read (fetch failed, or the page was empty). */
+  unreadable: number;
+  /** How many were read and judged to say nothing about the claim. */
+  saidNothing: number;
+  /** How many became Evidence. */
+  used: number;
 };
 
 export type StageTiming = {

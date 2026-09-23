@@ -4,6 +4,7 @@ import { describeFailure } from "@/lib/providers/diagnostics";
 import {
   Claim,
   ClaimResult,
+  EvidenceTrace,
   ClaimVerdict,
   Evidence,
   FactLedgerItem,
@@ -179,6 +180,17 @@ async function verifyClaim(params: {
   // A lookup that could not be made at all, as opposed to one that ran and
   // found nothing. The reader is told which of the two happened.
   let lookupFailed = false;
+
+  // Where this claim's evidence went. "Nothing found" has several causes and
+  // they look identical on screen unless they are counted apart (ADR-0006).
+  const trace: EvidenceTrace = {
+    query: "",
+    found: 0,
+    offSubject: 0,
+    unreadable: 0,
+    saidNothing: 0,
+    used: 0,
+  };
   let verdict: ClaimVerdict = "INSUFFICIENT";
   let correctedClaim: string | undefined;
   let reason: string | undefined;
@@ -276,10 +288,12 @@ async function verifyClaim(params: {
   // Step 3: Fallback to Web Search if no usable Google Fact Check hit
   if (!isFactCheckHit) {
     const searchQuery = buildWebSearchQuery(claim);
+    trace.query = searchQuery;
     let searchResults: SearchResultItem[] = [];
     try {
       const searchResponse = await search.search(searchQuery, { maxResults: 3 });
       searchResults = searchResponse.results || [];
+      trace.found = searchResults.length;
     } catch (err) {
       // ADR-0003: the lookup failed, so the claim stays unverified and the
       // pipeline carries on. It does not get made up for.
@@ -340,6 +354,12 @@ async function verifyClaim(params: {
           .join(" ");
 
         if (!isAboutSubject(everythingKnown, claim)) {
+          trace.offSubject++;
+          continue;
+        }
+
+        if (content.trim().length === 0) {
+          trace.unreadable++;
           continue;
         }
 
@@ -358,6 +378,11 @@ async function verifyClaim(params: {
         const relation = (evalResult.choice as keyof typeof relationCounts) || "says_nothing";
         if (relationCounts[relation] !== undefined) {
           relationCounts[relation]++;
+        }
+        if (relation === "supports" || relation === "contradicts") {
+          trace.used++;
+        } else {
+          trace.saidNothing++;
         }
 
         if (relation === "supports" || relation === "contradicts") {
@@ -464,6 +489,7 @@ async function verifyClaim(params: {
     evidence: claimEvidences,
     confidence,
     lookupFailed,
+    evidenceTrace: trace,
   };
 
   return {

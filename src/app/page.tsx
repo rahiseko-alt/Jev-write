@@ -508,6 +508,27 @@ export default function HomePage() {
                         {currentFinding.explanation}
                       </p>
                     </div>
+
+                    {/* 根拠がどこで消えたか。「何も無い」には理由がいくつもある。 */}
+                    {currentFinding.evidenceTrace && (
+                      <details className="space-y-1">
+                        <summary className="text-slate-400 font-medium cursor-pointer select-none">
+                          根拠の探し方を見る
+                        </summary>
+                        <div className="mt-1 space-y-1 bg-slate-50 p-2.5 rounded-lg border border-slate-100 text-slate-600">
+                          <p className="break-all">
+                            検索語: 「{currentFinding.evidenceTrace.query || "（なし）"}」
+                          </p>
+                          <p>
+                            候補 {currentFinding.evidenceTrace.found} 件 ／ 別の話題として除外{" "}
+                            {currentFinding.evidenceTrace.offSubject} 件 ／ 本文を読めず{" "}
+                            {currentFinding.evidenceTrace.unreadable} 件 ／ 主張に触れていないと判定{" "}
+                            {currentFinding.evidenceTrace.saidNothing} 件 ／ 根拠に採用{" "}
+                            {currentFinding.evidenceTrace.used} 件
+                          </p>
+                        </div>
+                      </details>
+                    )}
                   </div>
 
                   {/* 採用 / 元に戻す, where there is a correction to weigh */}
