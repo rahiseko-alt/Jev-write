@@ -32,7 +32,9 @@ import {
 import { splitIntoBlocks } from "@/lib/text/blocks";
 import { mergeAnalyses } from "@/lib/pipeline/merge-results";
 import {
+  attentionOf,
   buildRevisedDocument,
+  sortByAttention,
   type Finding,
   type MarkKind,
   type Segment,
@@ -108,6 +110,12 @@ function MarkedText({
   );
 }
 
+/** The leading number as a percentage, or null when JEV gave none. */
+function attentionPercent(finding: Finding): number | null {
+  const value = attentionOf(finding);
+  return value === null ? null : Math.round(value * 100);
+}
+
 export default function HomePage() {
   // Navigation & View Mode
   const [inputText, setInputText] = useState("");
@@ -171,14 +179,20 @@ export default function HomePage() {
     [revisedDocument]
   );
 
-  // Findings the category filter lets through
+  // Findings the category filter lets through, weakest first: the reader works
+  // down the numbers rather than through the document.
   const filteredFindings = useMemo(() => {
-    if (categoryFilter === "all") return findings;
-    if (categoryFilter === "fact") return findings.filter((i) => i.kind === "corrected");
-    if (categoryFilter === "warning") return findings.filter((i) => i.kind === "unverified");
-    if (categoryFilter === "style") return findings.filter((i) => i.kind === "ai-tell");
-    if (categoryFilter === "verified") return findings.filter((i) => i.kind === "confirmed");
-    return findings;
+    const kept =
+      categoryFilter === "fact"
+        ? findings.filter((i) => i.kind === "corrected")
+        : categoryFilter === "warning"
+        ? findings.filter((i) => i.kind === "unverified")
+        : categoryFilter === "style"
+        ? findings.filter((i) => i.kind === "ai-tell")
+        : categoryFilter === "verified"
+        ? findings.filter((i) => i.kind === "confirmed")
+        : findings;
+    return sortByAttention(kept);
   }, [findings, categoryFilter]);
 
   // The Finding on show, and where it sits in the list the reader is paging.
@@ -396,6 +410,28 @@ export default function HomePage() {
                         <ChevronRight className="w-4 h-4" />
                       </button>
                     </div>
+                  </div>
+
+                  {/* 裏付けの強さ。この数値が主役で、札はその下の説明にすぎない。 */}
+                  <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 space-y-1">
+                    <div className="flex items-end gap-2">
+                      <span className="text-4xl font-bold tabular-nums text-slate-900 leading-none">
+                        {attentionPercent(currentFinding) ?? "—"}
+                        {attentionPercent(currentFinding) !== null && (
+                          <span className="text-xl font-bold">%</span>
+                        )}
+                      </span>
+                      <span className="text-[11px] text-slate-500 pb-1">
+                        {currentFinding.consistency
+                          ? "記事と資料に照らして辻褄が合う確率"
+                          : currentFinding.confidence !== null
+                          ? "JEVの確信度"
+                          : "JEVの数値なし"}
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-slate-500 leading-snug">
+                      この数値が低いほど、人が確かめる値打ちがあります。低い順に並べています。
+                    </p>
                   </div>
 
                   {/* Header Title & Category Badge */}
