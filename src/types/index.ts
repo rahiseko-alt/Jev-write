@@ -114,6 +114,13 @@ export type EvidenceTrace = {
   weak: number;
   /** How many became Evidence. */
   used: number;
+  /**
+   * How many candidates were over JEV's input ceiling and not asked about
+   * (ADR-0016). Counted so none is dropped without saying so.
+   */
+  overCap?: number;
+  /** How many independent origins (a site, or sites carrying the same text) the Evidence came from. */
+  origins?: number;
 };
 
 export type StageTiming = {

@@ -1,26 +1,17 @@
 import { describe, it, expect } from "vitest";
 import { createSourcePool } from "@/lib/pipeline/source-pool";
-import type { Claim } from "@/types";
 
-function claim(subject: string, entities: string[] = []): Claim {
-  return {
-    id: `claim-${subject}`,
-    originalText: `${subject}についての文。`,
-    normalizedText: `${subject}についての文。`,
-    subject,
-    entities,
-    importance: "normal",
-    factCheckRequired: true,
-  };
-}
+type Page = { url: string; title: string; body: string };
 
-function providers(pages: Record<string, { url: string; title: string; body: string }[]>) {
+function providers(pages: Record<string, Page[]>, delays: Record<string, number> = {}) {
   const searched: string[] = [];
   const fetched: string[] = [];
+  const wait = (ms = 0) => new Promise((resolve) => setTimeout(resolve, ms));
 
   const search = {
     async search(query: string) {
       searched.push(query);
+      await wait(delays[query]);
       return { results: (pages[query] ?? []).map((p) => ({ url: p.url, title: p.title })) };
     },
   } as any;
@@ -28,6 +19,7 @@ function providers(pages: Record<string, { url: string; title: string; body: str
   const fetchProvider = {
     async fetchUrl(url: string) {
       fetched.push(url);
+      await wait(delays[url]);
       const page = Object.values(pages)
         .flat()
         .find((p) => p.url === url);
@@ -50,42 +42,10 @@ describe("source pool", () => {
     await pool.seed(["フリノバ 会社概要"]);
     await pool.seed(["フリノバ 会社概要"]);
 
-    expect(pool.candidatesFor(claim("フリノバ"), 5)).toHaveLength(1);
-    expect(pool.candidatesFor(claim("フリノバ"), 5)).toHaveLength(1);
+    expect(pool.candidatesFor([])).toHaveLength(1);
+    expect(pool.candidatesFor(["フリノバ 会社概要"])).toHaveLength(1);
     expect(searched).toEqual(["フリノバ 会社概要"]);
     expect(fetched).toEqual(["https://example.com/a"]);
-  });
-
-  it("puts the page that mentions more of the claim's names first", async () => {
-    const { search, fetchProvider } = providers({
-      q: [
-        { url: "https://example.com/wide", title: "名古屋の場所", body: "フリノバがある。" },
-        {
-          url: "https://example.com/close",
-          title: "ギルドの案内",
-          body: "フリノバギルドはフリノバの取り組みである。",
-        },
-      ],
-    });
-    const pool = createSourcePool({ search, fetchProvider, resultsPerQuery: 4 });
-    await pool.seed(["q"]);
-
-    const ordered = pool.candidatesFor(claim("フリノバ", ["フリノバギルド"]), 5);
-
-    expect(ordered.map((page) => page.url)).toEqual([
-      "https://example.com/close",
-      "https://example.com/wide",
-    ]);
-  });
-
-  it("keeps a page out of a claim it never mentions", async () => {
-    const { search, fetchProvider } = providers({
-      q: [{ url: "https://example.com/other", title: "別の会社", body: "まったく別の話。" }],
-    });
-    const pool = createSourcePool({ search, fetchProvider, resultsPerQuery: 4 });
-    await pool.seed(["q"]);
-
-    expect(pool.candidatesFor(claim("フリノバ"), 5)).toHaveLength(0);
   });
 
   it("reports a search it could not make, rather than passing it off as nothing found", async () => {
@@ -108,50 +68,69 @@ describe("source pool", () => {
   });
 });
 
-describe("ページの選び方", () => {
-  it("主語を通して扱っているページを、一度だけ触れたページより前に置く", async () => {
+describe("候補の出し方（ADR-0016）", () => {
+  it("主語の出現回数で並べ替えず、主語に触れていないページも候補から外さない（#22・#39 の逆向きをしない）", async () => {
     const { search, fetchProvider } = providers({
       q: [
-        {
-          url: "https://example.com/listing",
-          title: "レンタルスペース一覧",
-          body: "名古屋のスペースを予約できます。フリノバもその一つです。他の施設も多数。",
-        },
+        { url: "https://example.com/listing", title: "一覧", body: "フリノバもその一つです。" },
         {
           url: "https://example.com/official",
           title: "フリノバについて",
-          body: "フリノバはフリーランスの場所です。フリノバの会員は……。フリノバの案内。",
+          body: "フリノバはフリノバのフリノバによるフリノバ。",
         },
+        { url: "https://example.com/other", title: "別の話", body: "まったく別の話。" },
       ],
     });
     const pool = createSourcePool({ search, fetchProvider, resultsPerQuery: 4 });
     await pool.seed(["q"]);
 
-    const ordered = pool.candidatesFor(claim("フリノバ"), 5);
-
-    expect(ordered[0].url).toBe("https://example.com/official");
+    // The search's own order, all three.
+    expect(pool.candidatesFor(["q"]).map((page) => page.url)).toEqual([
+      "https://example.com/listing",
+      "https://example.com/official",
+      "https://example.com/other",
+    ]);
   });
-});
 
-describe("a claim no page names by its subject", () => {
-  it("still gets the pages closest to its wording, so JEV judges them (ADR-0007)", async () => {
+  it("その主張の検索の結果を先に、残りの池をその後に、検索の順・順位の順で並べる", async () => {
     const { search, fetchProvider } = providers({
-      q: [
-        { url: "https://example.com/near", title: "口コミの効果", body: "少数の悪評は購買意欲を減退させることがある。" },
-        { url: "https://example.com/far", title: "天気", body: "明日は晴れる。" },
+      article: [{ url: "https://example.com/article", title: "記事の検索", body: "記事の検索で見つけた本文。" }],
+      own: [
+        { url: "https://example.go.jp/own-1", title: "所管官庁", body: "所管官庁の本文。" },
+        { url: "https://example.com/article", title: "記事の検索", body: "記事の検索で見つけた本文。" },
       ],
+      other: [{ url: "https://example.org/other", title: "別の主張", body: "別の主張の検索で見つけた本文。" }],
     });
     const pool = createSourcePool({ search, fetchProvider, resultsPerQuery: 4 });
-    await pool.seed(["q"]);
+    await pool.seed(["article"]);
+    await pool.seed(["own", "other"]);
 
-    const english: Claim = {
-      ...claim("A few negative reviews"),
-      originalText: "少数の悪評が購買意欲を急激に減退させる",
-      normalizedText: "A few negative reviews sharply reduce purchase intent.",
+    expect(pool.candidatesFor(["own", "article"]).map((page) => page.url)).toEqual([
+      "https://example.go.jp/own-1",
+      "https://example.com/article",
+      "https://example.org/other",
+    ]);
+  });
+
+  it("検索や取得が返ってきた順が違っても、同じ候補が同じ順で出る", async () => {
+    const pages = {
+      a: [
+        { url: "https://a.example/1", title: "a1", body: "本文a1。" },
+        { url: "https://a.example/2", title: "a2", body: "本文a2。" },
+      ],
+      b: [{ url: "https://b.example/1", title: "b1", body: "本文b1。" }],
     };
+    const fast = providers(pages, { a: 0, b: 0 });
+    const slow = providers(pages, { a: 30, "https://a.example/1": 20, b: 0 });
 
-    expect(pool.candidatesFor(english, 5)).toHaveLength(0);
-    const closest = pool.closestFor(english, 5);
-    expect(closest.map((p) => p.url)).toEqual(["https://example.com/near", "https://example.com/far"]);
+    const orders: string[][] = [];
+    for (const { search, fetchProvider } of [fast, slow]) {
+      const pool = createSourcePool({ search, fetchProvider, resultsPerQuery: 4 });
+      await pool.seed(["a", "b"]);
+      orders.push(pool.candidatesFor(["a", "b"]).map((page) => page.url));
+    }
+
+    expect(orders[0]).toEqual(["https://a.example/1", "https://a.example/2", "https://b.example/1"]);
+    expect(orders[1]).toEqual(orders[0]);
   });
 });
