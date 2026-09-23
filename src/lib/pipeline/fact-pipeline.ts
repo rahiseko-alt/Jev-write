@@ -393,7 +393,6 @@ async function verifyClaim(params: {
     const relationCounts = {
       supports: 0,
       contradicts: 0,
-      overstates: 0,
       says_nothing: 0,
       ambiguous: 0,
     };
@@ -435,14 +434,9 @@ async function verifyClaim(params: {
       readable.forEach((candidate, index) => {
         questions[`relation${index}`] = {
           type: "choice",
-          instructions:
-            `sources[${index}] の内容は、claim.text をどう扱っているか。` +
-            "claim.original は記事の原文であり、その限定語（「以上」「だけ」「必ず」「最も」など）や用語の使い方も含めて比べること。",
+          instructions: `sources[${index}] の内容は、claim.text をどう扱っているか。`,
           criteria: {
-            supports:
-              "claim.original と同じ事実を、限定語・程度・範囲・用語の定義まで含めて述べている",
-            overstates:
-              "中身は近いが、claim.original の方が強く言い切っている、範囲・程度が違う、または用語の定義や構成要素が資料と違う",
+            supports: "claim.text と同じ事実を述べている",
             contradicts:
               "claim.text と異なる事実を述べている（数値・日付・名称の食い違いを含む）",
             says_nothing:
@@ -456,9 +450,6 @@ async function verifyClaim(params: {
           others: articleWithoutClaim(articleText, claim),
           claim: {
             text: claim.normalizedText || claim.originalText,
-            // The rewording can drop "以上" or "だけ"; the article's own words
-            // are what the writer publishes, so they are compared too.
-            original: claim.originalText,
             subject: claim.subject || claim.entities?.[0] || "",
           },
           sources: readable.map((candidate) => ({
@@ -493,7 +484,7 @@ async function verifyClaim(params: {
         const relation = relationAnswer.choice as keyof typeof relationCounts;
         const certainty = relationAnswer.confidence ?? 0;
 
-        if (relation !== "supports" && relation !== "contradicts" && relation !== "overstates") {
+        if (relation !== "supports" && relation !== "contradicts") {
           trace.saidNothing++;
           continue;
         }
@@ -507,11 +498,9 @@ async function verifyClaim(params: {
 
         relationCounts[relation]++;
         trace.used++;
-        if (relation !== "overstates") {
-          (relation === "contradicts" ? contradictingSites : supportingSites).add(
-            siteOf(candidate.res.url)
-          );
-        }
+        (relation === "contradicts" ? contradictingSites : supportingSites).add(
+          siteOf(candidate.res.url)
+        );
 
         claimEvidences.push({
           id: `ev-${claim.id}-web-${index}`,
@@ -523,12 +512,10 @@ async function verifyClaim(params: {
           excerpt: candidate.excerpt.slice(0, 350),
           sourceType: mapDomainToSourceType(candidate.res.url),
           confidence: certainty,
-          // A page that says less than the claim neither supports nor
-          // contradicts it; it is shown without either label.
-          relation: relation === "overstates" ? undefined : relation,
+          relation,
         });
 
-        if (!bestExplanation && relation !== "overstates") {
+        if (!bestExplanation) {
           bestExplanation =
             relation === "contradicts"
               ? `このページは違うことを書いています（JEVの確信度 ${(certainty * 100).toFixed(0)}%）。どちらが正しいかはページを見てお確かめください。`
@@ -593,17 +580,6 @@ async function verifyClaim(params: {
       verdict = "INSUFFICIENT";
       confidence = strongest("contradicts");
       reason = `違うことを書いているページが1つのサイトにだけ見つかりました（JEVの確信度 ${(strongest("contradicts") * 100).toFixed(0)}%）。裏を取れていないので、根拠のページをご自身でお確かめください。`;
-    } else if (relationCounts.overstates > 0) {
-      // The pages are about the same thing but say less, or define the term
-      // differently. That is the exaggeration a writer has to check.
-      verdict = "INSUFFICIENT";
-      confidence = Math.max(
-        0,
-        ...claimEvidences.filter((item) => !item.relation).map((item) => item.confidence ?? 0)
-      );
-      reason =
-        "資料は近い内容を書いていますが、この文ほど強くは言っていないか、言葉の意味や構成が資料と違います。" +
-        "「以上」「だけ」などの言い切りや用語の使い方を、根拠のページでお確かめください。";
     } else if (relationCounts.contradicts > 0 && relationCounts.supports > 0) {
       verdict = "MIXED";
       confidence = Math.max(strongest("contradicts"), strongest("supports"));
