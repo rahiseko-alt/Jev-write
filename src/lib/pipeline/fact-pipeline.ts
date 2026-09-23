@@ -1,12 +1,14 @@
-import { PooledSource, SourcePool, createSourcePool } from "./source-pool";
-import { RELEVANCE_THRESHOLD } from "@/lib/jev/bands";
+import { PooledSource, createSourcePool } from "./source-pool";
+import { PAGE_RELEVANCE_THRESHOLD, RELEVANCE_THRESHOLD } from "@/lib/jev/bands";
+import { OriginPage, Section, planSupportRequests } from "./support-question";
 import {
-  OriginPage,
-  planRelevanceRequests,
-  planSupportRequests,
-  sectionsOf,
-  takeWithinBudget,
-} from "./support-question";
+  Ask,
+  Candidate,
+  SECTION_STAGE_TOKEN_BUDGET,
+  Selection,
+  readSections,
+  screenPages,
+} from "./source-selection";
 import { originsOf } from "./source-origin";
 import { describeFailure } from "@/lib/providers/diagnostics";
 import { QUERIES_PER_CLAIM } from "@/lib/providers/llm/search-queries";
@@ -61,6 +63,14 @@ const QUERIES_PER_DOCUMENT = 6;
  * sentence needs never gets found.
  */
 const RESULTS_PER_QUERY = 7;
+
+/** What one claim's own lookup in the fact-check database found. */
+type FactCheckLookup = {
+  reviews: Evidence[];
+  verdict: ClaimVerdict;
+  reason?: string;
+  isFactCheckHit: boolean;
+};
 
 /**
  * Execute Fact Verification Pipeline (Sections 7-17 of specification)
@@ -118,55 +128,118 @@ export async function runFactPipeline(
     pool.seed(extractedClaims.flatMap((claim) => claimQueries.get(claim.id) ?? [])),
   ]);
 
+  // The searches that were made with each claim in mind: its own, then the article's.
+  const queriesOf = (claim: Claim) => [...(claimQueries.get(claim.id) ?? []), ...documentQueries];
+
+  // The candidates (ADR-0016 step 1, ADR-0018 step 1): every page in the
+  // pool, for every claim. Each claim has them in its own order: its own
+  // searches first, then the article's, then the rest, each in the order the
+  // search ranked them. No score of this side's orders or cuts them.
+  const poolPages = pool.candidatesFor([]).filter((page) => page.text.trim().length > 0);
+  const webByKey = new Map<string, PooledSource>(poolPages.map((page) => [page.url, page]));
+  const pooledFor = extractedClaims.map((claim) => pool.candidatesFor(queriesOf(claim)));
+  const sentences = extractedClaims.map((claim) => claim.originalText);
+
+  const ask: Ask | undefined = typeof jev.ask === "function" ? jev.ask.bind(jev) : undefined;
+
+  // Each claim's own lookup in the fact-check database, and the page stage
+  // for every page and every claim (ADR-0018 step 2), at the same time. A
+  // lookup that fails leaves its claim, and only its claim, unverified.
+  const [lookups, screened] = await Promise.all([
+    Promise.all(
+      extractedClaims.map((claim) =>
+        lookUpFactChecks({ claim, factCheck, jev }).then(
+          (found): { found: FactCheckLookup } => ({ found }),
+          (error: unknown): { error: unknown } => ({ error })
+        )
+      )
+    ),
+    ask
+      ? screenPages({
+          claims: sentences,
+          pages: poolPages.map((page) => ({ ...candidateOf(page), excerpts: pool.excerptsOf(page.url) })),
+          ask,
+        })
+      : undefined,
+  ]);
+
+  if (screened && (screened.failures.length > 0 || screened.unaskable.length > 0)) {
+    // Not screened is not ruled out: those pages go on to the section stage
+    // for every claim (ADR-0018 step 3). The failures are JEV's, and the run
+    // reports them (ADR-0006, layer 4).
+    console.warn(
+      `JEV could not screen ${screened.failures.length} page request(s) and ${screened.unaskable.length} page(s) were too large to screen; they go on to the section stage unscreened (ADR-0018).`,
+      screened.failures[0]
+    );
+  }
+
+  // Each claim's own fact-check reviews, as candidates of that claim alone.
+  const factByKey = new Map<string, Evidence>();
+  const candidates = extractedClaims.map((_, c) => {
+    const lookup = lookups[c];
+    const own: Candidate[] = ("found" in lookup ? lookup.found.reviews : []).map((review, i) => {
+      const key = `factcheck:${c}:${i}`;
+      factByKey.set(key, review);
+      return { key, title: review.sourceTitle, url: review.sourceUrl, text: review.excerpt };
+    });
+    const readable = pooledFor[c].filter((page) => page.text.trim().length > 0);
+    return { own, pool: readable.map(candidateOf) };
+  });
+
+  // The section stage (ADR-0018 steps 3–5): the pages JEV did not rule out
+  // for a claim, within the budget, section by section.
+  const selections: Selection[] | undefined =
+    ask && screened ? await readSections({ claims: sentences, candidates, screened, ask }) : undefined;
+
   const claimResults: ClaimResult[] = [];
   const allEvidences: Evidence[] = [];
   let factHitsCount = 0;
 
-  // Process claims in parallel
-  const claimPromises = extractedClaims.map(async (claim) => {
-    try {
-      return await verifyClaim({
-        claim,
-        pool,
-        queries: [...(claimQueries.get(claim.id) ?? []), ...documentQueries],
-        factCheck,
-        jev,
-      });
-    } catch (err) {
-      // ADR-0003: one claim that could not be checked leaves that claim
-      // unverified; it does not throw away the other twenty. Nothing is
-      // invented in its place, and the failure is reported — on the claim
-      // and in the run's service report — rather than passed off as a check.
-      console.warn(`Claim ${claim.id} could not be checked:`, err);
-      const reason = `この主張の検証中に問題が起きたため、確認できませんでした（${describeFailure(err)}）。`;
-
-      return {
-        claimResult: {
+  // The 信頼度 question for every claim, in parallel.
+  const resolved = await Promise.all(
+    extractedClaims.map(async (claim, c) => {
+      try {
+        const lookup = lookups[c];
+        if ("error" in lookup) throw lookup.error;
+        if (!ask || !selections) {
+          throw new Error("JEVに問いを送る手段がありません（ask が未実装）。");
+        }
+        return await concludeClaim({
           claim,
-          verdict: "INSUFFICIENT" as ClaimVerdict,
-          reason,
-          evidence: [],
-          // No judgement was made, so there is no number to show. An invented
-          // one would be the very thing this product exists to replace.
-          confidence: undefined,
-          lookupFailed: true,
-        },
-        ledgerItem: {
-          claimId: claim.id,
-          originalClaim: claim.normalizedText || claim.originalText,
-          verdict: "INSUFFICIENT" as ClaimVerdict,
-          correctionReason: reason,
-          lockedFacts: [],
-          evidenceIds: [],
-          confidence: undefined,
-        },
-        evidences: [],
-        isFactCheckHit: false,
-      };
-    }
-  });
+          queries: queriesOf(claim),
+          pooled: pooledFor[c],
+          lookup: lookup.found,
+          selection: selections[c],
+          searchFailed: pool.searchFailed(),
+          webByKey,
+          factByKey,
+          ask,
+        });
+      } catch (err) {
+        // ADR-0003: one claim that could not be checked leaves that claim
+        // unverified; it does not throw away the other twenty. Nothing is
+        // invented in its place, and the failure is reported — on the claim
+        // and in the run's service report — rather than passed off as a check.
+        console.warn(`Claim ${claim.id} could not be checked:`, err);
+        const reason = `この主張の検証中に問題が起きたため、確認できませんでした（${describeFailure(err)}）。`;
 
-  const resolved = await Promise.all(claimPromises);
+        return {
+          claimResult: {
+            claim,
+            verdict: "INSUFFICIENT" as ClaimVerdict,
+            reason,
+            evidence: [],
+            // No judgement was made, so there is no number to show. An invented
+            // one would be the very thing this product exists to replace.
+            confidence: undefined,
+            lookupFailed: true,
+          },
+          evidences: [],
+          isFactCheckHit: false,
+        };
+      }
+    })
+  );
 
   for (const item of resolved) {
     claimResults.push(item.claimResult);
@@ -190,46 +263,31 @@ export async function runFactPipeline(
   };
 }
 
-async function verifyClaim(params: {
+/** A pool page as a candidate: its address is its key. */
+function candidateOf(page: PooledSource): Candidate {
+  return { key: page.url, title: page.title, url: page.url, text: page.text };
+}
+
+/** 240000 as "240,000", the same on every machine. */
+function withCommas(value: number): string {
+  return String(value).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+}
+
+/**
+ * One claim's lookup in the fact-check database. A match is decided by JEV;
+ * the reviews it finds are this claim's own candidates (ADR-0018: they skip
+ * the page stage, having been matched to the claim already).
+ */
+async function lookUpFactChecks(params: {
   claim: Claim;
-  /** The pages this run has already found and read, shared by every claim. */
-  pool: SourcePool;
-  /** The searches that were made with this claim in mind: its own, then the article's. */
-  queries: string[];
   factCheck: GoogleFactCheckClient;
   jev: JEVClient;
-}): Promise<{
-  claimResult: ClaimResult;
-  evidences: Evidence[];
-  isFactCheckHit: boolean;
-}> {
-  const { claim, pool, queries, factCheck, jev } = params;
-  const claimEvidences: Evidence[] = [];
-  // A lookup that could not be made at all, as opposed to one that ran and
-  // found nothing. The reader is told which of the two happened.
-  let lookupFailed = false;
-
-  // Where this claim's evidence went. "Nothing found" has several causes and
-  // they look identical on screen unless they are counted apart (ADR-0006).
-  const trace: EvidenceTrace = {
-    query: "",
-    found: 0,
-    offSubject: 0,
-    unreadable: 0,
-    saidNothing: 0,
-    weak: 0,
-    used: 0,
-    overCap: 0,
-    origins: 0,
-  };
+}): Promise<FactCheckLookup> {
+  const { claim, factCheck, jev } = params;
+  const reviews: Evidence[] = [];
   let verdict: ClaimVerdict = "INSUFFICIENT";
   let reason: string | undefined;
   let isFactCheckHit = false;
-  /**
-   * JEV's number for this claim, or nothing. Every value here comes from an
-   * answer; nothing is filled in to make the screen look decided (ADR-0008).
-   */
-  let confidence: number | undefined;
 
   // Step 2: Query Google Fact Check Tools API
   const query = buildFactCheckQuery(claim);
@@ -243,10 +301,9 @@ async function verifyClaim(params: {
       factHits = res.claims || [];
     }
   } catch (err) {
-    // ADR-0003: the lookup failed, so the claim stays unverified and the run
-    // carries on to the web search. Nothing is filled in for it.
+    // ADR-0003: the lookup failed, so the claim stays unverified by it and the
+    // run carries on to the web's pages. Nothing is filled in for it.
     console.warn(`Fact check lookup failed for claim ${claim.id}:`, err);
-    lookupFailed = true;
   }
 
   if (factHits && factHits.length > 0) {
@@ -267,10 +324,10 @@ async function verifyClaim(params: {
 
       if (isMatch) {
         isFactCheckHit = true;
-        const reviews = hit.claimReview || [];
+        const claimReviews = hit.claimReview || [];
 
-        for (let i = 0; i < reviews.length; i++) {
-          const review = reviews[i];
+        for (let i = 0; i < claimReviews.length; i++) {
+          const review = claimReviews[i];
           const ratingText = review.textualRating || "";
 
           // Rating normalization via JEV or textual rating keywords
@@ -293,7 +350,7 @@ async function verifyClaim(params: {
             reason = normResult.explanation || `FactCheck評価: ${ratingText}`;
           }
 
-          const evidence: Evidence = {
+          reviews.push({
             id: `ev-${claim.id}-fc-${i}`,
             claimId: claim.id,
             sourceUrl: review.url,
@@ -302,8 +359,7 @@ async function verifyClaim(params: {
             publishedAt: review.reviewDate || hit.claimDate,
             excerpt: `[FactCheck: ${review.textualRating}] ${review.title || hitClaimText}`,
             sourceType: "official",
-          };
-          claimEvidences.push(evidence);
+          });
         }
 
         break; // Matched primary fact check hit
@@ -311,102 +367,122 @@ async function verifyClaim(params: {
     }
   }
 
-  // Step 3: the pages. Gathered for every claim, whatever the fact-check
-  // lookup found: the one question below is asked of every sentence, and it
-  // is asked of everything that was collected (ADR-0011).
-  //
-  // The selection, step by step (ADR-0016):
-  //  1. Every page in the pool is a candidate. This claim's own searches
-  //     first, then the article's, then the rest, each in search order. No
-  //     score of this side's orders or cuts them (not the subject's mentions,
-  //     #39).
-  //  2. Only JEV's input ceiling keeps a candidate out, and what it keeps out
-  //     is counted and reported.
-  const pooled = pool.candidatesFor(queries);
-  const readable = pooled.filter((page) => page.text.trim().length > 0);
-  const { taken, overCap } = takeWithinBudget(readable);
+  return { reviews, verdict, reason, isFactCheckHit };
+}
 
-  trace.query = queries.join(" / ");
-  trace.found = pooled.length;
-  trace.unreadable = pooled.length - readable.length;
-  trace.overCap = overCap.length;
-  if (overCap.length > 0) {
+/**
+ * One claim, once JEV has said which of its candidates are about what it is
+ * about: the 信頼度 question on those sections, the grounds for the bubble,
+ * and the trace of where every candidate went.
+ */
+async function concludeClaim(params: {
+  claim: Claim;
+  /** The searches that were made with this claim in mind: its own, then the article's. */
+  queries: string[];
+  /** Every page in the pool, in this claim's order. */
+  pooled: PooledSource[];
+  lookup: FactCheckLookup;
+  selection: Selection;
+  searchFailed: boolean;
+  webByKey: Map<string, PooledSource>;
+  factByKey: Map<string, Evidence>;
+  ask: Ask;
+}): Promise<{
+  claimResult: ClaimResult;
+  evidences: Evidence[];
+  isFactCheckHit: boolean;
+}> {
+  const { claim, queries, pooled, lookup, selection, webByKey, factByKey, ask } = params;
+  const readable = pooled.filter((page) => page.text.trim().length > 0);
+
+  // Where this claim's candidates went (ADR-0018 step 8). "Nothing found" has
+  // several causes and they look identical on screen unless they are counted
+  // apart (ADR-0006). Every candidate that does not reach the 信頼度 question
+  // is counted here, with the reason: JEV judged it about something else
+  // (offSubject), it was over the budget (overCap), or its sections were
+  // judged unrelated (saidNothing). None is dropped without saying so.
+  const trace: EvidenceTrace = {
+    query: queries.join(" / "),
+    found: pooled.length,
+    offSubject: selection.offTarget.length,
+    unreadable: pooled.length - readable.length,
+    saidNothing: 0,
+    weak: 0,
+    used: 0,
+    overCap: selection.overCap.length,
+    unscreened: selection.unscreened.length,
+    origins: 0,
+  };
+  if (selection.overCap.length > 0) {
+    trace.overCapReason = `JEVが段1で主張の対象について述べていると判定したページのうち、段2の上限（1主張あたり見積もり${withCommas(SECTION_STAGE_TOKEN_BUDGET)}トークン）を超えた分。この主張の検索→記事全体の検索→ほかの主張の検索の順、各検索の順位の順で上限まで入れた（ADR-0018）。`;
+  }
+  console.info(
+    `Claim ${claim.id}: ${pooled.length} candidate pages; page stage: ${selection.offTarget.length} about something else (below ${PAGE_RELEVANCE_THRESHOLD}), ${selection.unscreened.length} unscreened; ${selection.overCap.length} over the section-stage budget; ${selection.asked.length} read section by section (ADR-0018).`
+  );
+  if (selection.overCap.length > 0) {
     console.info(
-      `Claim ${claim.id}: ${overCap.length} of ${readable.length} candidate pages were over the JEV budget and not asked about (ADR-0016).`
+      `Claim ${claim.id}: over the section-stage budget, in the claim's order (ADR-0018): ${selection.overCap.map((candidate) => candidate.url).join(" ")}`
     );
   }
+
+  // A section-stage question for this claim got no answer (ADR-0018 step 6):
+  // its material was not judged, so no 信頼度 is given on it (ADR-0003,
+  // ADR-0006).
+  if (selection.failure !== undefined) throw selection.failure;
+
   // What the reader is told about is the web search: the fact-check lookup
   // failing on its own leaves the pages to ask with.
-  lookupFailed = pool.searchFailed() && pooled.length === 0;
+  const lookupFailed = params.searchFailed && pooled.length === 0;
 
-  //  3. Each page gets its origin (one site, or the sites carrying the same
-  //     text) and whether its address is a primary source's.
-  //  4. The pages go in a fixed order that does not change from run to run:
-  //     primary sources first, then by origin, then by address.
-  //  5. They are cut into sections (ADR-0014); nothing is cut away.
-  type Collected = { page: OriginPage; factCheck?: Evidence; web?: PooledSource };
-  const collected: Collected[] = [
-    ...claimEvidences.map((item) => ({
-      page: { title: item.sourceTitle, url: item.sourceUrl, text: item.excerpt },
-      factCheck: item,
-    })),
-    ...taken.map((page) => ({
-      page: { title: page.title, url: page.url, text: page.text },
-      web: page,
-    })),
-  ];
-  const origins = originsOf(collected.map(({ page }) => page));
-  collected.forEach((item, i) => Object.assign(item.page, origins[i]));
+  // Each page that was read section by section gets its origin (one site, or
+  // the sites carrying the same text) and whether its address is a primary
+  // source's, and the pages go in the fixed order that does not change from
+  // run to run: primary sources first, then by origin, then by address
+  // (ADR-0016 steps 3–5, ADR-0018 step 7).
+  const asked = selection.asked;
+  const origins = originsOf(asked.map(({ candidate }) => candidate));
+  const pages: OriginPage[] = asked.map(({ candidate }, i) => ({
+    title: candidate.title,
+    url: candidate.url,
+    text: candidate.text,
+    ...origins[i],
+  }));
   const primaryOrigins = new Set(
-    collected.filter(({ page }) => page.primary).map(({ page }) => page.origin ?? page.url)
+    pages.filter((page) => page.primary).map((page) => page.origin ?? page.url)
   );
-  const ordered = collected
-    .slice()
-    .sort((a, b) => fixedOrder(a.page, b.page, primaryOrigins));
-  const sections = sectionsOf(ordered.map(({ page }) => page));
+  const order = asked
+    .map((_, i) => i)
+    .sort((a, b) => fixedOrder(pages[a], pages[b], primaryOrigins) || a - b);
 
-  if (typeof jev.ask !== "function") {
-    throw new Error("JEVに問いを送る手段がありません（ask が未実装）。");
-  }
-  const ask = jev.ask.bind(jev);
-
-  //  6. JEV says, section by section, which ones speak to the sentence.
-  //     Every section is asked; none is dropped on this side (ADR-0007).
-  const relevanceRequests = planRelevanceRequests({
-    original: claim.originalText,
-    sections,
-  });
-  const relevanceReplies = await Promise.all(
-    relevanceRequests.map((request) => ask(request.state, request.questions))
-  );
-
-  const relevance = new Map<number, number>();
-  relevanceReplies.forEach((answers, r) => {
-    relevanceRequests[r].sections.forEach((section, i) => {
-      const answer = answers[`relevant${i}`];
-      if (answer && answer.type === "noul" && typeof answer.noul === "number") {
-        relevance.set(section, answer.noul);
-      }
-    });
+  // Only the sections JEV judged to be about the claim's target (at or above
+  // the section stage's line) go on, in that order (ADR-0018 step 6).
+  // Unrelated material costs the next answer accuracy (docs.typesafe.ai/
+  // model-jaggedness: large state full of irrelevant detail). A section that
+  // says otherwise than the sentence is about the same thing, so it goes on:
+  // nothing contradicting is dropped.
+  const related: (Section & { relevance: number })[] = [];
+  order.forEach((i, at) => {
+    const page = pages[i];
+    for (const { text, relevance } of asked[i].sections) {
+      if (relevance < RELEVANCE_THRESHOLD) continue;
+      related.push({
+        page: at,
+        source: { title: page.title, url: page.url, text },
+        origin: page.origin,
+        primary: page.primary,
+        primaryKind: page.primaryKind,
+        relevance,
+      });
+    }
   });
 
-  //  7. Only the sections JEV judged related go on, in the fixed order of
-  //     step 4. Unrelated material costs the next answer accuracy
-  //     (docs.typesafe.ai/model-jaggedness: large state full of irrelevant
-  //     detail). A section that says otherwise than the sentence is about
-  //     the same thing, so it is related and goes on: nothing contradicting
-  //     is dropped here.
-  const related = sections
-    .map((section, index) => ({ section, index }))
-    .filter(({ index }) => (relevance.get(index) ?? 0) >= RELEVANCE_THRESHOLD);
-
-  //  8. The 信頼度 question, as worded before (ADR-0011), with those
-  //     sections as the sources, grouped by origin and each saying whether
-  //     it is a primary source. Whether that matters is JEV's to weigh. None
-  //     related: the same question with no sources.
+  // The 信頼度 question, as worded before (ADR-0011), with those sections as
+  // the sources, grouped by origin and each saying whether it is a primary
+  // source (ADR-0018 step 7). Whether that matters is JEV's to weigh. None
+  // related: the same question with no sources.
   const supportRequests = planSupportRequests({
     original: claim.originalText,
-    sections: related.map(({ section }) => section),
+    sections: related,
   });
   const supportReplies = await Promise.all(
     supportRequests.map((request) => ask(request.state, request.questions))
@@ -424,43 +500,46 @@ async function verifyClaim(params: {
       supportAnswers.push(answer.noul);
     }
   }
-  confidence = supportAnswers.length > 0 ? Math.max(...supportAnswers) : undefined;
+  const confidence = supportAnswers.length > 0 ? Math.max(...supportAnswers) : undefined;
 
   // The grounds in the bubble: the pages that hold a section judged related,
   // each with its most related section.
   const best = new Map<number, { text: string; relevance: number }>();
-  for (const { section, index } of related) {
-    const score = relevance.get(index) ?? 0;
+  for (const section of related) {
     const previous = best.get(section.page);
-    if (!previous || score > previous.relevance) {
-      best.set(section.page, { text: section.source.text, relevance: score });
+    if (!previous || section.relevance > previous.relevance) {
+      best.set(section.page, { text: section.source.text, relevance: section.relevance });
     }
   }
 
-  claimEvidences.splice(0, claimEvidences.length);
+  const evidences: Evidence[] = [];
   const usedOrigins = new Set<string>();
-  ordered.forEach(({ page: collectedPage, factCheck: review, web: page }, at) => {
+  order.forEach((i, at) => {
+    const page = pages[i];
+    const key = asked[i].candidate.key;
     const read = best.get(at);
-    if (read) usedOrigins.add(collectedPage.origin ?? collectedPage.url);
+    if (read) usedOrigins.add(page.origin ?? page.url);
+    const review = factByKey.get(key);
     if (review) {
-      if (read) claimEvidences.push(review);
+      if (read) evidences.push(review);
       return;
     }
-    if (!page) return;
+    const web = webByKey.get(key);
+    if (!web) return;
     if (!read) {
       trace.saidNothing++;
       return;
     }
     trace.used++;
-    claimEvidences.push({
+    evidences.push({
       id: `ev-${claim.id}-web-${at}`,
       claimId: claim.id,
-      sourceUrl: page.url,
-      sourceTitle: page.title,
-      publisher: page.siteName || page.author,
-      publishedAt: page.publishedAt,
+      sourceUrl: web.url,
+      sourceTitle: web.title,
+      publisher: web.siteName || web.author,
+      publishedAt: web.publishedAt,
       excerpt: read.text.slice(0, 350),
-      sourceType: mapDomainToSourceType(page.url),
+      sourceType: mapDomainToSourceType(web.url),
       confidence: read.relevance,
     });
   });
@@ -468,27 +547,25 @@ async function verifyClaim(params: {
 
   // No verdict is drawn from the pages: the screen shows the 信頼度 and
   // nothing else (ADR-0009, ADR-0011).
-  if (!isFactCheckHit) {
-    verdict = "INSUFFICIENT";
-    reason = lookupFailed
+  const verdict: ClaimVerdict = lookup.isFactCheckHit ? lookup.verdict : "INSUFFICIENT";
+  const reason = lookup.isFactCheckHit
+    ? lookup.reason
+    : lookupFailed
       ? "外部の確認サービスに接続できなかったため、渡せた資料だけで問いました。"
       : undefined;
-  }
-
-  const claimResult: ClaimResult = {
-    claim,
-    verdict,
-    reason,
-    evidence: claimEvidences,
-    confidence,
-    lookupFailed,
-    evidenceTrace: trace,
-  };
 
   return {
-    claimResult,
-    evidences: claimEvidences,
-    isFactCheckHit,
+    claimResult: {
+      claim,
+      verdict,
+      reason,
+      evidence: evidences,
+      confidence,
+      lookupFailed,
+      evidenceTrace: trace,
+    },
+    evidences,
+    isFactCheckHit: lookup.isFactCheckHit,
   };
 }
 
@@ -562,7 +639,7 @@ function mapChoiceToClaimVerdict(choice?: string): ClaimVerdict {
 }
 
 /**
- * The fixed order pages go to JEV in (ADR-0016, step 4): origins holding a
+ * The fixed order pages go to JEV in (ADR-0016, step 5): origins holding a
  * primary source first, then origin by origin, and within an origin primary
  * pages first, then by address. Strings are compared code unit by code unit
  * so the order is the same on every run and every machine. An origin's pages
@@ -605,4 +682,3 @@ function mapDomainToSourceType(url: string): SourceType {
   } catch {}
   return "unknown";
 }
-

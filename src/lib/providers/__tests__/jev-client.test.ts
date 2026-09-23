@@ -1,5 +1,9 @@
-import { describe, it, expect, afterEach, vi } from "vitest";
-import { HTTPJEVClient } from "@/lib/providers/jev/client";
+import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
+import {
+  HTTPJEVClient,
+  JEV_MAX_CONCURRENT_REQUESTS,
+  JEV_RETRY_STATUSES,
+} from "@/lib/providers/jev/client";
 
 /**
  * Where a real JEV is configured, its Atomic Judgment is the judgment.
@@ -134,5 +138,182 @@ describe("HTTPJEVClient", () => {
 
     expect(result.noul).toBe(0.98);
     expect(result.confidence).toBeGreaterThan(0.9);
+  });
+});
+
+/**
+ * ADR-0018: JEV is asked many more times than before, so a busy JEV (429,
+ * 5xx) is asked the same thing again the way Anthropic is (retry.ts: 2s, 4s,
+ * 8s or what retry-after asks, at most three times), and one run keeps only
+ * so many requests in flight at once.
+ */
+
+function busy(status: number, retryAfter: string | null = null) {
+  return {
+    ok: false,
+    status,
+    statusText: status === 429 ? "Too Many Requests" : "Service Unavailable",
+    headers: { get: (name: string) => (name === "retry-after" ? retryAfter : null) },
+    text: async () => `{"detail":"busy ${status}"}`,
+    json: async () => ({}),
+  };
+}
+
+function answeredNoul(noul = 0.7) {
+  return {
+    ok: true,
+    status: 200,
+    statusText: "OK",
+    headers: { get: () => null },
+    text: async () => "",
+    json: async () => ({ model: "jev-1.13.0", answers: { q: { type: "noul", noul } }, usage: {} }),
+  };
+}
+
+describe("HTTPJEVClient retries a busy JEV", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    globalThis.fetch = realFetch;
+    vi.restoreAllMocks();
+  });
+
+  it("retries 429 and every 5xx, and nothing else", () => {
+    expect(JEV_RETRY_STATUSES).toContain(429);
+    expect(JEV_RETRY_STATUSES).toContain(500);
+    expect(JEV_RETRY_STATUSES).toContain(529);
+    expect(JEV_RETRY_STATUSES).toContain(599);
+    expect(JEV_RETRY_STATUSES).not.toContain(422);
+    expect(JEV_RETRY_STATUSES).not.toContain(401);
+  });
+
+  it("asks again after a 429 and returns the answers, counting the retry", async () => {
+    const replies = [busy(429), answeredNoul(0.7)];
+    const fetchMock = vi.fn(async () => replies.shift()!);
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const jev = new HTTPJEVClient({ apiKey: "test-key" });
+    const pending = jev.ask({ page: {} }, { q: { type: "noul", instructions: "?" } });
+
+    // No retry-after: the first wait is 2 seconds.
+    await vi.advanceTimersByTimeAsync(1999);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1);
+
+    await expect(pending).resolves.toEqual({ q: { type: "noul", noul: 0.7 } });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(jev.retryCount).toBe(1);
+    expect(jev.failureCount).toBe(0);
+  });
+
+  it("reports a 503 that lasts through three retries as the failure it is", async () => {
+    const fetchMock = vi.fn(async () => busy(503));
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const jev = new HTTPJEVClient({ apiKey: "test-key" });
+    const outcome = expect(
+      jev.ask({ page: {} }, { q: { type: "noul", instructions: "?" } })
+    ).rejects.toThrow(/TypeSafe AI Jev request failed \(503 Service Unavailable\): .*busy 503/);
+
+    await vi.advanceTimersByTimeAsync(2000 + 4000 + 8000);
+
+    await outcome;
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+    expect(jev.retryCount).toBe(3);
+    expect(jev.failureCount).toBe(1);
+    expect(jev.lastError).toMatch(/503/);
+  });
+
+  it("waits as long as retry-after asks", async () => {
+    const replies = [busy(529, "5"), answeredNoul()];
+    const fetchMock = vi.fn(async () => replies.shift()!);
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const jev = new HTTPJEVClient({ apiKey: "test-key" });
+    const pending = jev.ask({ page: {} }, { q: { type: "noul", instructions: "?" } });
+
+    await vi.advanceTimersByTimeAsync(4999);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1);
+
+    await expect(pending).resolves.toBeDefined();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not ask again when the request itself was refused (422)", async () => {
+    const fetchMock = vi.fn(async () => ({
+      ...busy(422),
+      statusText: "Unprocessable Entity",
+      text: async () => '{"detail":[{"msg":"Field required"}]}',
+    }));
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const jev = new HTTPJEVClient({ apiKey: "test-key" });
+
+    await expect(
+      jev.ask({ page: {} }, { q: { type: "noul", instructions: "?" } })
+    ).rejects.toThrow(/422/);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(jev.retryCount).toBe(0);
+  });
+});
+
+describe("HTTPJEVClient keeps a limit on requests in flight", () => {
+  afterEach(() => {
+    globalThis.fetch = realFetch;
+    vi.restoreAllMocks();
+  });
+
+  it(`keeps at most ${JEV_MAX_CONCURRENT_REQUESTS} in flight by default, and the rest wait their turn in the order they were made`, async () => {
+    let inFlight = 0;
+    let most = 0;
+    const started: string[] = [];
+    const release: (() => void)[] = [];
+    globalThis.fetch = vi.fn(async (_url: unknown, init: { body?: string } = {}) => {
+      inFlight++;
+      most = Math.max(most, inFlight);
+      started.push(JSON.parse(init.body ?? "{}").state.n);
+      await new Promise<void>((resolve) => release.push(resolve));
+      inFlight--;
+      return answeredNoul();
+    }) as unknown as typeof fetch;
+
+    const jev = new HTTPJEVClient({ apiKey: "test-key" });
+    const total = JEV_MAX_CONCURRENT_REQUESTS + 5;
+    const pending = Array.from({ length: total }, (_, n) =>
+      jev.ask({ n: String(n) }, { q: { type: "noul", instructions: "?" } })
+    );
+
+    // Let every request that can start, start; then finish them one by one.
+    const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+    await settle();
+    expect(inFlight).toBe(JEV_MAX_CONCURRENT_REQUESTS);
+    while (release.length > 0) {
+      release.shift()!();
+      await settle();
+    }
+    await Promise.all(pending);
+
+    expect(most).toBe(JEV_MAX_CONCURRENT_REQUESTS);
+    expect(started).toEqual(Array.from({ length: total }, (_, n) => String(n)));
+  });
+
+  it("frees the turn of a request that failed", async () => {
+    let calls = 0;
+    globalThis.fetch = vi.fn(async () => {
+      calls++;
+      if (calls === 1) throw new Error("network down");
+      return answeredNoul();
+    }) as unknown as typeof fetch;
+
+    const jev = new HTTPJEVClient({ apiKey: "test-key", maxConcurrent: 1 });
+    const first = jev.ask({}, { q: { type: "noul", instructions: "?" } });
+    const second = jev.ask({}, { q: { type: "noul", instructions: "?" } });
+
+    await expect(first).rejects.toThrow("network down");
+    await expect(second).resolves.toEqual({ q: { type: "noul", noul: 0.7 } });
   });
 });

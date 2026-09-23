@@ -56,14 +56,22 @@ export interface JEVDeltaMeaningResult {
 }
 
 /**
+ * What a question says. The API takes a string, or structure: an object that
+ * holds the question in one field and the data it refers to in the others
+ * (docs.typesafe.ai/primitives/advanced, "Structured instructions").
+ */
+export type JEVInstructions = string | Record<string, unknown> | unknown[];
+
+/**
  * A question, in the shapes the API takes (see ADR-0007: the spec is JEV's,
  * https://api.typesafe.ai/openapi.json).
  */
 export type JEVQuestion =
   | {
       type: "noul";
-      instructions: string;
-      criteria?: { true?: string; false?: string };
+      instructions: JEVInstructions;
+      /** What a yes and a no mean (NoulCriteria). */
+      criteria?: { true?: JEVInstructions; false?: JEVInstructions };
     }
   | {
       type: "choice";
@@ -111,5 +119,7 @@ export interface JEVClient {
   failureCount?: number;
   /** The first failure's message, with anything credential-shaped removed. */
   lastError?: string;
+  /** How many times a busy JEV (429/5xx) was asked the same thing again. */
+  retryCount?: number;
   evaluateAtomicJudgment(req: JEVAtomicJudgmentRequest): Promise<JEVAtomicJudgmentResult>;
 }
