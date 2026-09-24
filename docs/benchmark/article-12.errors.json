@@ -1,0 +1,30 @@
+[
+ {
+  "id": "E1",
+  "sentence": "所在地は名古屋市中村区那古野2丁目23-3です。",
+  "kind": "(c) 所在地の取り違え",
+  "truth": "フリノバの所在地は愛知県名古屋市西区那古野2丁目23-3（〒451-0042）。中村区は運営会社の所在地。",
+  "source": "https://freelance-nova.com/access.html"
+ },
+ {
+  "id": "E2",
+  "sentence": "会員でなくても、平日と土曜の11時から17時までは予約なしで立ち寄れます。",
+  "kind": "(e) 数値（時刻）の誤り",
+  "truth": "会員登録なし・予約不要で利用できるのは平日・土曜の11:00〜15:00。",
+  "source": "https://freelance-nova.com/access.html"
+ },
+ {
+  "id": "E3",
+  "sentence": "2階はイベントや配信に使える多目的スペースで、50名ほどのイベントまで開けます。",
+  "kind": "(e) 数値の誤り",
+  "truth": "2階が対応できるのは25名程度のイベントやワークショップ。",
+  "source": "https://freelance-nova.com/facility.html"
+ },
+ {
+  "id": "E4",
+  "sentence": "案件の一覧に載る仕事は、急募も通常募集も会員だけが応募できます。",
+  "kind": "(d) 条件の誤り",
+  "truth": "急募案件は非会員でも応募でき、通常募集は会員限定。",
+  "source": "https://freelance-nova.com/portal/jobs.html"
+ }
+]
