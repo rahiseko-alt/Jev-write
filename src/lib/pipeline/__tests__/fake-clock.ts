@@ -1,5 +1,6 @@
 import type { Claim } from "@/types";
 import type { CallLimit, JEVAnswer, JEVQuestion } from "@/lib/providers";
+import type { ClaimQueryPlan } from "@/lib/providers/llm/search-queries";
 import type { Clock } from "@/lib/pipeline/time-budget";
 
 /**
@@ -114,8 +115,11 @@ export function fakeServices(params: {
   claims: Claim[];
   /** The article's queries. Default: one, 記事の検索語. */
   documentQueries?: string[];
-  /** Each claim's queries. Default: one of its own, `<id> 一次資料`. */
-  claimQueries?: (claim: Claim) => string[];
+  /**
+   * Each claim's queries, as a plain list or as ② writes them (with what the
+   * claim is about and the kind of fact). Default: one of its own, `<id> 一次資料`.
+   */
+  claimQueries?: (claim: Claim) => string[] | ClaimQueryPlan;
   /** What each search finds, in rank order. */
   pages: (query: string) => FakePage[];
   /** JEV's answers. Default: every section related (0.9), 信頼度 0.7. */

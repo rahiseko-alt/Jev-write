@@ -7,15 +7,50 @@ import {
   JEVAnswer,
   JEVQuestion,
 } from "./types";
-import { recordFailure } from "../diagnostics";
+import { recordFailure, recordRetry } from "../diagnostics";
 import { CallLimit, attemptSignal, stoppedByCaller } from "../call-limit";
+import { sendWithRetry } from "../retry";
 
+/**
+ * The replies that mean "busy, ask again" (ADR-0022). JEV's API reference
+ * says to retry 429 Too Many Requests and 529 Overloaded with backoff
+ * (docs.typesafe.ai/api, "Handling rate limits"); its SDKs retry 408, 429 and
+ * 500–599 by default (docs.typesafe.ai/sdk/javascript/api/interfaces/
+ * RetryPolicy). Any other status is an answer about the request itself and is
+ * not sent again. A request that got no reply in its own time (15 s), or no
+ * connection, is not sent again either, as with Anthropic (retry.ts).
+ */
+export const JEV_RETRY_STATUSES: number[] = [
+  408,
+  429,
+  ...Array.from({ length: 100 }, (_, i) => 500 + i),
+];
+
+/**
+ * The waits before sending again when JEV names none: the SDK's defaults,
+ * two retries, 500 ms doubled (RetryPolicy: maxRetries 2, backoffInitialMs
+ * 500). The SDK also takes a random part off each wait; that is left out, so
+ * nothing in a run depends on chance. A retry-after JEV sends is waited out
+ * instead (up to 60 s, retry.ts), and every wait ends at the stage's cut-off
+ * (ADR-0021).
+ */
+export const JEV_RETRY_BACKOFF_MS = [500, 1_000];
 
 export interface JEVClientOptions {
   apiUrl?: string;
   apiKey?: string;
   timeoutMs?: number;
 }
+
+/** One attempt's outcome: what retry.ts needs to decide, and the reply itself. */
+type Attempt = {
+  ok: boolean;
+  status: number;
+  statusText: string;
+  headers?: { get?: (name: string) => string | null } | null;
+  data?: unknown;
+  errorText?: string;
+};
 
 /**
  * Official TypeSafe AI Jev (System One) Client
@@ -35,6 +70,8 @@ export class HTTPJEVClient implements JEVClient {
   /** What went wrong with the real service during this run, for the reader. */
   failureCount = 0;
   lastError?: string;
+  /** How many times a busy JEV (429/529 and the like) was asked the same thing again. */
+  retryCount = 0;
   private apiUrl: string;
   private apiKey: string;
   private timeoutMs: number;
@@ -55,57 +92,76 @@ export class HTTPJEVClient implements JEVClient {
   }
 
   /**
-   * Send a systemone request to TypeSafe AI Jev. It ends after the client's
-   * own time for one request, or when the caller's stage runs out of time
-   * (ADR-0021), whichever comes first.
+   * Send a systemone request to TypeSafe AI Jev, and send it again while JEV
+   * answers that it is busy (JEV_RETRY_STATUSES). Each attempt ends after the
+   * client's own time for one request; the whole of it, retries and waits
+   * included, ends when the caller's stage runs out of time (ADR-0021).
    */
   private async callSystemOne(
     state: any,
     questions: Record<string, any>,
     limit: CallLimit = {}
   ): Promise<any> {
+    if (!this.apiKey) {
+      throw new Error(
+        "JEV API key is not configured (JEV_API_KEY / TYPESAFE_API_KEY)."
+      );
+    }
+
+    // If apiUrl is a base URL without /systemone, append /v1/systemone
+    let targetUrl = this.apiUrl;
+    if (!targetUrl.includes("/systemone") && !targetUrl.endsWith("/atomic-judgment")) {
+      targetUrl = targetUrl.replace(/\/$/, "") + "/v1/systemone";
+    }
+
+    // The API takes the state as a string, an object or an array; it is sent
+    // as written rather than flattened into a string.
+    const body = JSON.stringify({
+      model: 'jev-latest',
+      state,
+      questions,
+    });
+
+    const response = await sendWithRetry(() => this.attempt(targetUrl, body, limit), {
+      retryStatuses: JEV_RETRY_STATUSES,
+      backoffMs: JEV_RETRY_BACKOFF_MS,
+      signal: limit.signal,
+      onRetry: () => recordRetry(this),
+    });
+
+    if (!response.ok) {
+      throw new Error(
+        `TypeSafe AI Jev request failed (${response.status} ${response.statusText}): ${response.errorText ?? ""}`
+      );
+    }
+    return response.data;
+  }
+
+  /** One try: the request and its whole reply, within the time for one attempt. */
+  private async attempt(targetUrl: string, body: string, limit: CallLimit): Promise<Attempt> {
     const attempt = attemptSignal(this.timeoutMs, limit.signal);
 
     try {
-      const headers: Record<string, string> = {
-        "Content-Type": "application/json",
-      };
-      if (!this.apiKey) {
-        throw new Error(
-          "JEV API key is not configured (JEV_API_KEY / TYPESAFE_API_KEY)."
-        );
-      }
-      headers["Authorization"] = `Bearer ${this.apiKey}`;
-
-      // If apiUrl is a base URL without /systemone, append /v1/systemone
-      let targetUrl = this.apiUrl;
-      if (!targetUrl.includes("/systemone") && !targetUrl.endsWith("/atomic-judgment")) {
-        targetUrl = targetUrl.replace(/\/$/, "") + "/v1/systemone";
-      }
-
-      // The API takes the state as a string, an object or an array; it is sent
-      // as written rather than flattened into a string.
-      const statePayload = state;
-
       const response = await fetch(targetUrl, {
         method: "POST",
-        headers,
-        body: JSON.stringify({
-          model: 'jev-latest',
-          state: statePayload,
-          questions,
-        }),
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${this.apiKey}`,
+        },
+        body,
         signal: attempt.signal,
       });
 
+      const reply = {
+        ok: response.ok,
+        status: response.status,
+        statusText: response.statusText,
+        headers: response.headers,
+      };
       if (!response.ok) {
-        const errorText = await response.text().catch(() => "");
-        throw new Error(
-          `TypeSafe AI Jev request failed (${response.status} ${response.statusText}): ${errorText}`
-        );
+        return { ...reply, errorText: await response.text().catch(() => "") };
       }
-
-      return await response.json();
+      return { ...reply, data: await response.json() };
     } catch (err) {
       // The caller's time ran out: said as such, not as JEV timing out.
       if (stoppedByCaller(limit)) throw err;

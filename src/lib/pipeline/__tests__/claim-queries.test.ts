@@ -649,16 +649,14 @@ describe("資料の探し方（パイプライン、ADR-0015・0019）", () => {
     );
   });
 
-  it("点検で直した主張の問いも、③の上限の順（この主張の検索→記事全体の検索、各検索の順位）の先頭に来る（ADR-0016）", async () => {
+  it("点検で直した主張の問いで見つけたページも、③の判定の順（この主張の検索→記事全体の検索、各検索の順位）の先頭に来る（ADR-0016・0022）", async () => {
     vi.spyOn(console, "info").mockImplementation(() => {});
     vi.spyOn(console, "warn").mockImplementation(() => {});
-    // About 45,000 estimated tokens each: two fit in the 120,000 budget, the rest do not.
-    const long = (n: string) => `${n}。` + "い".repeat(30000);
-    const own: Page = { url: "https://z-own.example/p", title: "own", body: long("own") };
+    const own: Page = { url: "https://z-own.example/p", title: "own", body: "own の本文。" };
     const article: Page[] = [0, 1, 2, 3, 4].map((i) => ({
       url: `https://a-doc${i}.example/p`,
       title: `doc${i}`,
-      body: long(`doc${i}`),
+      body: `doc${i} の本文。`,
     }));
     // Only the query with the figure and the content taken out finds the claim's own page.
     const { options, asked } = pipelineFakes({
@@ -692,12 +690,12 @@ describe("資料の探し方（パイプライン、ADR-0015・0019）", () => {
         searched: "フリノバ 会員数",
       },
     ]);
-    // Asked about in the relevance question: the claim's own page first, then
-    // the article's first. In address order the article's pages would come first.
+    // Judged in the relevance question in the claim's order: its own page
+    // first, then the article's, by rank. In address order the article's
+    // pages would come first. Every one is judged; none is capped (ADR-0022).
     const relevance = asked.filter((call) => !("support" in call.questions));
-    const read = [...new Set(relevance.flatMap((call) => call.state.sources.map((s: any) => s.url)))].sort();
-    expect(read).toEqual([own.url, article[0].url].sort());
-    expect(trace).toMatchObject({ found: 6, overCap: 4 });
+    expect(relevance.map((call) => call.state.section.url)).toEqual([own.url, ...article.map((p) => p.url)]);
+    expect(trace).toMatchObject({ found: 6, overCap: 0 });
   });
 });
 

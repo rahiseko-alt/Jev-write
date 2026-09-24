@@ -216,7 +216,10 @@ describe("時間が足りるときは何も変わらない（ADR-0021）", () =>
       runOrchestrator(articleOf(claims), { ...fakes.options, clock, startedAt: 0 })
     );
 
-    expect(clock.now()).toBe(183_000);
+    // 183 s before ADR-0022; one second more now: the 60 pages' relevance
+    // requests (each asking all 29 claims) are more estimated tokens than
+    // JEV's 250,000 a second, so the last of them start a second later.
+    expect(clock.now()).toBe(184_000);
     expect(result.cutShort).toBeUndefined();
     expect(result.claims).toHaveLength(29);
     expect(result.claims.every((claim) => claim.confidence === 0.7)).toBe(true);
@@ -246,11 +249,13 @@ describe("段ごとの時間（ADR-0021）", () => {
     expect(byStage.search).toMatchObject({ durationMs: 4_000, startMs: 100_000, endMs: 152_000 });
     expect(byStage.pageFetch).toMatchObject({ durationMs: 20_000, startMs: 102_000, endMs: 162_000 });
     expect(byStage.factCheck).toMatchObject({ durationMs: 1_000, calls: 3, jevCalls: 0 });
+    // One relevance request per section (ADR-0022): the article's two pages
+    // and each claim's two, one section each.
     expect(byStage.relevanceJudging).toMatchObject({
       durationMs: 10_000,
       startMs: 163_000,
       endMs: 173_000,
-      jevCalls: 3,
+      jevCalls: 8,
       notStarted: 0,
       stopped: 0,
       cutoffMs: 245_000,
@@ -267,6 +272,8 @@ describe("長い入力でも締め切りまでに返り、途中までの結果�
     const warn = quiet();
     const clock = new FakeClock();
     const claims = claimsOf(40);
+    const first = `https://a.example/${encodeURIComponent("記事の検索語")}`;
+    const second = `https://b.example/${encodeURIComponent("記事の検索語")}`;
     const fakes = fakeServices({
       clock,
       claims,
@@ -279,13 +286,14 @@ describe("長い入力でも締め切りまでに返り、途中までの結果�
         search: 2_000,
         fetch: 3_000,
         factCheck: 1_000,
-        // Relevance starts at 211 s. Every third claim's would end at 251 s
-        // (stopped at 245 s); the next claim's 信頼度 would end at 281 s
+        // Relevance starts at 211 s, one request per section asking every
+        // claim (ADR-0022): the first page's is answered at 221 s, the
+        // second's would end at 251 s (stopped at 245 s). The 信頼度
+        // questions start at 245 s; every third claim's would end at 305 s
         // (stopped at 270 s).
         jev: (call) => {
-          const n = claimNumber(call);
-          if (isSupportCall(call)) return n % 3 === 2 ? 60_000 : 5_000;
-          return n % 3 === 1 ? 40_000 : 10_000;
+          if (isRelevanceCall(call)) return call.state.section.url === second ? 40_000 : 10_000;
+          return claimNumber(call) % 3 === 2 ? 60_000 : 5_000;
         },
       },
     });
@@ -303,28 +311,19 @@ describe("長い入力でも締め切りまでに返り、途中までの結果�
 
     for (const [i, claim] of result.claims.entries()) {
       const n = i + 1;
-      if (n % 3 === 1) {
-        // Relevance stopped: nothing judged, so no 信頼度 question and no number.
-        expect(claim.confidence).toBeUndefined();
-        expect(claim.reason).toBe("時間内に資料を判定できなかったため、確認できませんでした（時間切れ）。");
-        expect(claim.evidenceTrace?.unjudged).toEqual({
-          reason: TIME_UP,
-          sections: 2,
-          urls: [
-            `https://a.example/${encodeURIComponent("記事の検索語")}`,
-            `https://b.example/${encodeURIComponent("記事の検索語")}`,
-          ],
-        });
-        // Pages left unjudged did not "say nothing".
-        expect(claim.evidenceTrace?.saidNothing).toBe(0);
-      } else if (n % 3 === 2) {
+      // The second page was not judged by the cut-off: left, for every
+      // claim, with the reason. Not heard out is not "said nothing".
+      expect(claim.evidenceTrace?.unjudged).toEqual({ reason: TIME_UP, sections: 1, urls: [second] });
+      expect(claim.evidenceTrace?.saidNothing).toBe(0);
+      if (n % 3 === 2) {
         // The 信頼度 question stopped: no number, said so.
         expect(claim.confidence).toBeUndefined();
         expect(claim.reason).toBe("時間内に信頼度の判定が終わらなかったため、確認できませんでした（時間切れ）。");
-        expect(claim.evidenceTrace?.unjudged).toBeUndefined();
       } else {
+        // Asked with what was judged: the first page.
         expect(claim.confidence).toBe(0.7);
         expect(claim.reason).toBeUndefined();
+        expect(claim.evidence.map((item) => item.sourceUrl)).toEqual([first]);
       }
     }
 
@@ -333,7 +332,7 @@ describe("長い入力でも締め切りまでに返り、途中までの結果�
       reason: TIME_UP,
       stages: [
         { stage: "queryGeneration", notStarted: 0, stopped: 1, cutoffMs: 210_000 },
-        { stage: "relevanceJudging", notStarted: 0, stopped: 14, cutoffMs: 245_000 },
+        { stage: "relevanceJudging", notStarted: 0, stopped: 1, cutoffMs: 245_000 },
         { stage: "supportJudging", notStarted: 0, stopped: 13, cutoffMs: 270_000 },
       ],
     });
@@ -484,7 +483,7 @@ describe("締め切りの後は新しい仕事を始めない（ADR-0021）", ()
     late.dispose();
   });
 
-  it("関連の締め切りの後に関連の判定へ来た主張は、JEV に問いを送らず、時間切れとして記録して数値を出さない。ほかの主張は進む", async () => {
+  it("関連の締め切りの後に関連の判定が始まったら、JEV に問いを送らず、どの主張も時間切れとして記録して数値を出さない", async () => {
     const warn = quiet();
     const clock = new FakeClock();
     const claims = claimsOf(2);
@@ -496,6 +495,8 @@ describe("締め切りの後は新しい仕事を始めない（ADR-0021）", ()
       latency: { extraction: 10_000, claimQueries: 10_000, search: 1_000, fetch: 1_000, jev: 5_000 },
     });
     // claim-2's fact-check lookup ends at 121 s, after the relevance cut-off.
+    // The relevance judgment, one request per section for every claim
+    // (ADR-0022), starts once every lookup is done.
     const lookUp = fakes.options.factCheck.searchClaims;
     fakes.options.factCheck.searchClaims = async (query: string, language: string, limit: any) => {
       if (query.startsWith("claim-2")) await clock.sleep(99_000);
@@ -505,20 +506,18 @@ describe("締め切りの後は新しい仕事を始めない（ADR-0021）", ()
 
     const output = await clock.run(runFactPipeline(articleOf(claims), { ...fakes.options, budget }));
 
-    const relevance = fakes.calls.filter(isRelevanceCall);
-    expect(relevance.map(claimNumber)).toEqual([1]);
-    for (const call of relevance) expect(call.at).toBeLessThanOrEqual(lastStart("relevanceJudging", cutoffs));
+    expect(fakes.calls.filter(isRelevanceCall)).toEqual([]);
     // No 信頼度 question for a claim nothing could be judged for.
-    expect(fakes.calls.filter(isSupportCall).map(claimNumber)).toEqual([1]);
-
-    const [first, second] = output.claims;
-    expect(first.confidence).toBe(0.7);
-    expect(second.confidence).toBeUndefined();
-    expect(second.reason).toContain("時間切れ");
-    expect(second.evidenceTrace?.unjudged?.reason).toBe(TIME_UP);
-    expect(second.evidenceTrace?.unjudged?.sections).toBeGreaterThan(0);
+    expect(fakes.calls.filter(isSupportCall)).toEqual([]);
+    for (const claim of output.claims) {
+      expect(claim.confidence).toBeUndefined();
+      expect(claim.reason).toBe("時間内に資料を判定できなかったため、確認できませんでした（時間切れ）。");
+      // The article's two pages and each claim's two, one section each.
+      expect(claim.evidenceTrace?.unjudged?.reason).toBe(TIME_UP);
+      expect(claim.evidenceTrace?.unjudged?.sections).toBe(6);
+    }
     expect(budget.cutShort()).toEqual([
-      { stage: "relevanceJudging", notStarted: 1, stopped: 0, cutoffMs: 100_000 },
+      { stage: "relevanceJudging", notStarted: 6, stopped: 0, cutoffMs: 100_000 },
     ]);
     expect(warn.mock.calls.some((args) => String(args[0]).includes("Claim claim-2:"))).toBe(true);
     budget.dispose();
@@ -528,14 +527,14 @@ describe("締め切りの後は新しい仕事を始めない（ADR-0021）", ()
     quiet();
     const clock = new FakeClock();
     const claims = claimsOf(1);
-    // Four long pages (about 18,000 estimated tokens each): the sections go
-    // over JEV's 32k limit, so relevance is asked in several requests.
+    // Four long pages, several reading sections each: one relevance request
+    // per section (ADR-0022).
     const long: FakePage[] = [0, 1, 2, 3].map((i) => ({
       url: `https://site${i}.example/p`,
       title: `p${i}`,
       body: `ふるさと納税${i}。` + "い".repeat(12_000),
     }));
-    const first = (call: ServiceCall) => isRelevanceCall(call) && call.state.sources[0].url === long[0].url;
+    const first = (call: ServiceCall) => isRelevanceCall(call) && call.state.section.url === long[0].url;
     const fakes = fakeServices({
       clock,
       claims,
@@ -544,14 +543,12 @@ describe("締め切りの後は新しい仕事を始めない（ADR-0021）", ()
       answer: (call) =>
         Object.fromEntries(
           Object.keys(call.questions ?? {}).map((name) => {
-            const index = Number(name.replace("relevant", ""));
-            const noul =
-              name === "support" ? 0.7 : call.state.sources[index].url === long[0].url ? 0.9 : 0.1;
+            const noul = name === "support" ? 0.7 : call.state.section.url === long[0].url ? 0.9 : 0.1;
             return [name, { type: "noul", noul }];
           })
         ),
-      // The request that starts with the first page answers; the rest are
-      // still running at the relevance cut-off.
+      // The first page's requests answer; the rest are still running at the
+      // relevance cut-off.
       latency: { jev: (call) => (!isRelevanceCall(call) || first(call) ? 1_000 : 1_000_000) },
     });
     const budget = createTimeBudget({ clock, startedAt: 0 });
@@ -560,10 +557,9 @@ describe("締め切りの後は新しい仕事を始めない（ADR-0021）", ()
 
     const [claim] = output.claims;
     const relevance = fakes.calls.filter(isRelevanceCall);
-    expect(relevance.length).toBeGreaterThan(1);
     const answered = relevance.filter(first);
-    expect(answered).toHaveLength(1);
-    const allSections = relevance.reduce((sum, call) => sum + call.state.sources.length, 0);
+    expect(answered.length).toBeGreaterThan(1);
+    expect(relevance.length).toBeGreaterThan(answered.length);
     // Asked with what was judged and related: the first page, and only it.
     const [support] = fakes.calls.filter(isSupportCall);
     const sent = support.state.sources.flatMap((origin: any) => origin.sections.map((s: any) => s.url));
@@ -572,13 +568,13 @@ describe("締め切りの後は新しい仕事を始めない（ADR-0021）", ()
     expect(claim.evidence.map((item) => item.sourceUrl)).toEqual([long[0].url]);
     expect(claim.evidenceTrace?.unjudged).toEqual({
       reason: TIME_UP,
-      sections: allSections - answered[0].state.sources.length,
+      sections: relevance.length - answered.length,
       urls: [long[1].url, long[2].url, long[3].url],
     });
     // Pages not heard out did not "say nothing".
     expect(claim.evidenceTrace?.saidNothing).toBe(0);
     expect(budget.cutShort()).toEqual([
-      { stage: "relevanceJudging", notStarted: 0, stopped: relevance.length - 1, cutoffMs: 245_000 },
+      { stage: "relevanceJudging", notStarted: 0, stopped: relevance.length - answered.length, cutoffMs: 245_000 },
     ]);
     budget.dispose();
   });

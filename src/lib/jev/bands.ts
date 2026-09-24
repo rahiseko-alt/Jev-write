@@ -32,11 +32,12 @@ export const CAUTION_THRESHOLD = readThreshold("JEV_CAUTION_THRESHOLD", 0.5);
 export const FLAG_THRESHOLD = thresholdOf(process.env.NEXT_PUBLIC_JEV_FLAG_THRESHOLD, 0.8);
 
 /**
- * At or above this, a section of a page is judged to speak to the sentence
- * and goes into the 信頼度 question (ADR-0014). The starting point is the
- * official cookbook's relevance floor (docs.typesafe.ai/cookbooks/
- * classifying_rag_passages: `relevant_min` 0.45, "a starting point, not a
- * default"). `JEV_RELEVANCE_THRESHOLD` moves it without a code change.
+ * At or above this, a section of a page is judged to state a fact about the
+ * claim's aspect and goes into the 信頼度 question (ADR-0014, ADR-0022). The
+ * starting point is the official cookbook's relevance floor
+ * (docs.typesafe.ai/cookbooks/classifying_rag_passages: `relevant_min` 0.45,
+ * "a starting point, not a default"). `JEV_RELEVANCE_THRESHOLD` moves it
+ * without a code change; it is one fixed line for every run.
  */
 export const RELEVANCE_THRESHOLD = readThreshold("JEV_RELEVANCE_THRESHOLD", 0.45);
 

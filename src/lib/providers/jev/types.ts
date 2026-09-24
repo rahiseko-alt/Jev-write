@@ -63,7 +63,12 @@ export interface JEVDeltaMeaningResult {
 export type JEVQuestion =
   | {
       type: "noul";
-      instructions: string;
+      /**
+       * The question, or an object holding the question in one field and
+       * the data it refers to in others (docs.typesafe.ai/primitives/noul,
+       * "Structured instructions").
+       */
+      instructions: string | Record<string, string>;
       criteria?: { true?: string; false?: string };
     }
   | {
@@ -116,6 +121,8 @@ export interface JEVClient {
   failureCount?: number;
   /** The first failure's message, with anything credential-shaped removed. */
   lastError?: string;
+  /** How many times a busy JEV (429/529 and the like) was asked the same thing again. */
+  retryCount?: number;
   evaluateAtomicJudgment(
     req: JEVAtomicJudgmentRequest,
     limit?: CallLimit

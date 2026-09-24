@@ -138,12 +138,25 @@ export type EvidenceTrace = {
   /** How many became Evidence. */
   used: number;
   /**
-   * How many candidates were over JEV's input ceiling and not asked about
-   * (ADR-0016). Counted so none is dropped without saying so.
+   * How many candidates were left out before JEV judged them (ADR-0016 had a
+   * cap here). Since ADR-0022 no cap stands before JEV: every candidate is
+   * put to it, so this is 0 unless a candidate could not be put to JEV at all
+   * (larger than its input limit). Counted so none is dropped without saying so.
    */
   overCap?: number;
   /** How many independent origins (a site, or sites carrying the same text) the Evidence came from. */
   origins?: number;
+  /**
+   * What the relevance question asked about for this claim (ADR-0022): the
+   * aspect ② named for it, 「what it is about」の「kind of fact」. Absent when
+   * ② named none and extraction named no subject.
+   */
+  aspect?: string;
+  /**
+   * The claim's candidate sections (ADR-0022): how many there were, how many
+   * JEV judged, and how many it judged related (at or above the line).
+   */
+  sections?: { candidates: number; judged: number; related: number };
   /**
    * The candidates whose relevance JEV never judged for this claim because
    * the time ran out (ADR-0021): the reason, how many sections, and the
@@ -151,11 +164,19 @@ export type EvidenceTrace = {
    * every candidate was judged.
    */
   unjudged?: UnjudgedCandidates;
+  /**
+   * The candidates whose relevance could not be judged because JEV failed to
+   * answer the request, after its retries (ADR-0022): the failure, how many
+   * sections, and the pages holding them in the order they were due. Kept
+   * apart from `unjudged` (時間切れ): a service's failure is not the clock's
+   * (ADR-0006). Absent when there was none.
+   */
+  unanswered?: UnjudgedCandidates;
 };
 
-/** Sections of candidate pages left unjudged for one reason (ADR-0021). */
+/** Sections of candidate pages left unjudged for one reason (ADR-0021, ADR-0022). */
 export type UnjudgedCandidates = {
-  /** Why, in the reader's words: 時間切れ. */
+  /** Why, in the reader's words: 時間切れ, or JEV's failure. */
   reason: string;
   /** How many sections were left unjudged. */
   sections: number;
