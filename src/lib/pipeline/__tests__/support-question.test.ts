@@ -1,20 +1,17 @@
 import { describe, it, expect } from "vitest";
 import { runFactPipeline } from "@/lib/pipeline/fact-pipeline";
 import {
-  CANDIDATE_TOKEN_BUDGET,
-  pageTokens,
-  takeWithinBudget,
   REQUEST_TOKEN_BUDGET,
   SECTION_MAX_CHARS,
   STATE_TOKEN_BUDGET,
   SUPPORT_QUESTION,
   estimateTokens,
-  planRelevanceRequests,
   planSupportRequests,
-  relevanceQuestion,
+  readingSections,
   sectionsOf,
   splitSections,
 } from "@/lib/pipeline/support-question";
+import { planRelevanceRequests, prepareTargets } from "@/lib/pipeline/relevance-question";
 import { RELEVANCE_THRESHOLD } from "@/lib/jev/bands";
 import type { Claim } from "@/types";
 import type { JEVAnswer, JEVQuestion } from "@/lib/providers";
@@ -22,8 +19,9 @@ import type { JEVAnswer, JEVQuestion } from "@/lib/providers";
 /**
  * ADR-0011: every sentence is asked one question — is the sentence as
  * written backed by the sources — and the answer is the 信頼度 as returned.
- * ADR-0014: before it, JEV says section by section which parts of the pages
- * speak to the sentence, and only those go into that question.
+ * ADR-0014, ADR-0022: before it, JEV says section by section which parts of
+ * the pages state a fact about the sentence's aspect, and only those go into
+ * that question.
  */
 
 const ARTICLE = "前置きの一文。フリノバの会員は9月に142人に到達した。結びの一文。";
@@ -95,8 +93,8 @@ function fakes(pages: Page[], answer: Answerer) {
 
 /**
  * Answers as JEV would give them: the support question gets `support`, and
- * each section's relevance question gets `relevant(text)` for the section it
- * points at.
+ * the relevance question — one per claim, over one section — gets
+ * `relevant(text)` for the section in the state.
  */
 function answering(
   support: number | ((call: number) => number),
@@ -105,12 +103,10 @@ function answering(
   return (questions, call, state) => {
     const answers: Record<string, JEVAnswer> = {};
     for (const name of Object.keys(questions)) {
-      if (name === "support") {
-        answers[name] = { type: "noul", noul: typeof support === "number" ? support : support(call) };
-      } else {
-        const index = Number(name.replace("relevant", ""));
-        answers[name] = { type: "noul", noul: relevant(state.sources[index].text) };
-      }
+      answers[name] =
+        name === "support"
+          ? { type: "noul", noul: typeof support === "number" ? support : support(call) }
+          : { type: "noul", noul: relevant(state.section.text) };
     }
     return answers;
   };
@@ -122,11 +118,16 @@ const supportCalls = (calls: Call[]) => calls.filter((call) => "support" in call
 const sentUrls = (call: Call): string[] =>
   call.state.sources.flatMap((origin: any) => origin.sections.map((s: any) => s.url));
 
-describe("JEVへの問い（ADR-0011・ADR-0014）", () => {
-  it("1回目は節ごとに関連の Noul を1回のリクエストで問い、2回目は関連する節だけで信頼度を問う", async () => {
+/** Two parts of about 2,000 characters under headings: two reading sections. */
+function twoParts(first: string, second: string): string {
+  return `■一\n${first}${"あ".repeat(2000)}。\n■二\n${second}${"い".repeat(2000)}。\n`;
+}
+
+describe("JEVへの問い（ADR-0011・ADR-0014・ADR-0022）", () => {
+  it("関連は1節1回で主張ごとに問い、信頼度は関連ありの節だけで問う", async () => {
     const related = "フリノバの会員は9月に120人だった。";
     const unrelated = "この町の天気は晴れが多い。";
-    const body = `${related}\n■別の話題\n${"あ".repeat(300)}。\n■天気\n${unrelated}`;
+    const body = twoParts(related, unrelated);
     const { options, calls } = fakes(
       [{ url: "https://example.com/a", title: "フリノバのお知らせ", body }],
       answering(0.23, (text) => (text.includes("フリノバ") ? 0.9 : 0.1))
@@ -134,23 +135,18 @@ describe("JEVへの問い（ADR-0011・ADR-0014）", () => {
 
     const { claims } = await runFactPipeline(ARTICLE, options);
 
-    expect(calls).toHaveLength(2);
-    const [first, second] = calls;
+    const firsts = relevanceCalls(calls);
+    expect(firsts).toHaveLength(2);
+    // One section each, the claim asked in the question; nothing else in the state.
+    expect(firsts.map((call) => call.state.section.text).join("")).toBe(body);
+    for (const call of firsts) {
+      expect(Object.keys(call.state)).toEqual(["section"]);
+      expect(Object.keys(call.questions)).toEqual(["c1"]);
+      expect((call.questions.c1.instructions as Record<string, string>).claim).toBe(CLAIM.originalText);
+    }
 
-    // First: every section, one Noul each, nothing else asked.
-    expect(first.state.claim).toEqual({ original: CLAIM.originalText });
-    expect(first.state.article).toBeUndefined();
-    expect(first.state.sources.map((s: any) => s.text).join("")).toBe(body);
-    expect(first.state.sources.length).toBeGreaterThan(1);
-    expect(Object.keys(first.questions)).toHaveLength(first.state.sources.length);
-    first.state.sources.forEach((_: unknown, i: number) => {
-      expect(first.questions[`relevant${i}`]).toEqual({
-        type: "noul",
-        instructions: `sources[${i}] のこの節は、claim.original と同じ事柄について述べているか。`,
-      });
-    });
-
-    // Second: the same 信頼度 question, with the related section only.
+    // Then the same 信頼度 question, with the related section only.
+    const [second] = supportCalls(calls);
     expect(second.questions).toEqual({ support: SUPPORT_QUESTION });
     expect(SUPPORT_QUESTION.instructions).toBe(
       "記事の原文のこの文（claim.original）は、sources の内容で裏付けられているか。"
@@ -222,7 +218,7 @@ describe("JEVへの問い（ADR-0011・ADR-0014）", () => {
     expect(claims[0].confidence).toBe(0.05);
   });
 
-  it("入力上限を超える分量は、節を削らずに関連の問いを複数のリクエストに分ける", async () => {
+  it("長いページも節を削らずに全部を問い、どの関連の問いも JEV の入力上限に収まる", async () => {
     const pages: Page[] = Array.from({ length: 4 }, (_, i) => ({
       url: `https://example.com/${i}`,
       title: `フリノバ ${i}`,
@@ -233,7 +229,6 @@ describe("JEVへの問い（ADR-0011・ADR-0014）", () => {
     await runFactPipeline(ARTICLE, options);
 
     const firsts = relevanceCalls(calls);
-    expect(firsts.length).toBeGreaterThan(1);
     for (const call of firsts) {
       const questions = Object.values(call.questions);
       const cost = (q: JEVQuestion) => estimateTokens(JSON.stringify(q));
@@ -243,8 +238,13 @@ describe("JEVへの問い（ADR-0011・ADR-0014）", () => {
       expect(state + longest).toBeLessThanOrEqual(STATE_TOKEN_BUDGET);
       expect(state + all).toBeLessThanOrEqual(REQUEST_TOKEN_BUDGET);
     }
-    const sent = firsts.flatMap((call) => call.state.sources.map((s: any) => s.text)).join("");
-    expect(sent).toBe(pages.map((p) => p.body).join(""));
+    const sent = pages.map((page) =>
+      firsts
+        .filter((call) => call.state.section.url === page.url)
+        .map((call) => call.state.section.text)
+        .join("")
+    );
+    expect(sent).toEqual(pages.map((p) => p.body));
   });
 
   it("失敗したら数値を作らず、失敗として残す", async () => {
@@ -260,7 +260,7 @@ describe("JEVへの問い（ADR-0011・ADR-0014）", () => {
   });
 });
 
-describe("資料の選び方（ADR-0016）", () => {
+describe("資料の選び方（ADR-0016・ADR-0022）", () => {
   const reprinted = "厚生労働省は、受動喫煙の防止のための基準を定めている。".repeat(20);
 
   it("同じサイトのページと、本文がほぼ同じ転載は1つの出所にまとめ、一次資料かどうかを付けて、一次資料→出所→URLの順で渡す", async () => {
@@ -302,10 +302,10 @@ describe("資料の選び方（ADR-0016）", () => {
     await runFactPipeline(ARTICLE, options);
 
     const [relevance] = relevanceCalls(calls);
-    expect(relevance.state.sources.map((s: any) => s.url)).toEqual(["https://example.org/x"]);
+    expect(relevance.state.section.url).toBe("https://example.org/x");
   });
 
-  it("検索が返す順が変わっても、JEVに渡る資料と順番は同じ", async () => {
+  it("検索が返す順位が変わっても、判定される節の組と、信頼度の問いに渡る資料と順番は同じ", async () => {
     const pages: Page[] = [
       { url: "https://c.example/1", title: "c", body: "フリノバc。" },
       { url: "https://www.city.nagoya.jp/1", title: "市", body: "フリノバ市。" },
@@ -318,7 +318,9 @@ describe("資料の選び方（ADR-0016）", () => {
     await runFactPipeline(ARTICLE, first.options);
     await runFactPipeline(ARTICLE, second.options);
 
-    expect(second.calls.map((call) => call.state)).toEqual(first.calls.map((call) => call.state));
+    const judged = (calls: Call[]) => relevanceCalls(calls).map((call) => JSON.stringify(call)).sort();
+    expect(judged(second.calls)).toEqual(judged(first.calls));
+    expect(supportCalls(second.calls).map((call) => call.state)).toEqual(supportCalls(first.calls).map((call) => call.state));
     expect(sentUrls(supportCalls(first.calls)[0])).toEqual([
       "https://www.city.nagoya.jp/1",
       "https://a.example/1",
@@ -327,9 +329,8 @@ describe("資料の選び方（ADR-0016）", () => {
     ]);
   });
 
-  it("上限を超えた候補は関連の問いに入れず、その数を記録に出す", async () => {
-    expect(CANDIDATE_TOKEN_BUDGET).toBe(4 * STATE_TOKEN_BUDGET);
-    // About 45,000 estimated tokens each: two fit in 120,000, the rest do not.
+  it("上限で候補を落とさない: 長いページが続いても全部を関連の問いにかけ、overCap は 0", async () => {
+    // About 45,000 estimated tokens each: #80's cap (120,000 per claim) took two and left three out.
     const pages: Page[] = Array.from({ length: 5 }, (_, i) => ({
       url: `https://site${i}.example/p`,
       title: `p${i}`,
@@ -339,22 +340,11 @@ describe("資料の選び方（ADR-0016）", () => {
 
     const { claims } = await runFactPipeline(ARTICLE, options);
 
-    const asked = new Set(
-      relevanceCalls(calls).flatMap((call) => call.state.sources.map((s: any) => s.url))
-    );
-    expect([...asked]).toEqual(["https://site0.example/p", "https://site1.example/p"]);
-    expect(claims[0].evidenceTrace).toMatchObject({ found: 5, overCap: 3 });
-  });
-
-  it("上限に収まらない長いページがあっても、後ろの短いページは入れる", () => {
-    const long = { title: "long", url: "https://l.example", text: "あ".repeat(100) };
-    const short = { title: "short", url: "https://s.example", text: "あ" };
-    const budget = pageTokens(short) * 3;
-
-    const { taken, overCap } = takeWithinBudget([short, long, short], budget);
-
-    expect(taken).toEqual([short, short]);
-    expect(overCap).toEqual([long]);
+    const asked = new Set(relevanceCalls(calls).map((call) => call.state.section.url));
+    expect([...asked].sort()).toEqual(pages.map((p) => p.url).sort());
+    expect(claims[0].evidenceTrace).toMatchObject({ found: 5, overCap: 0 });
+    const sections = pages.reduce((sum, p) => sum + readingSections(p.body).length, 0);
+    expect(claims[0].evidenceTrace?.sections).toEqual({ candidates: sections, judged: sections, related: 0 });
   });
 });
 
@@ -404,26 +394,83 @@ describe("splitSections", () => {
   });
 });
 
-describe("planRelevanceRequests / planSupportRequests", () => {
-  it("収まる分量なら、関連の問いは1回にまとめる", () => {
-    const sections = sectionsOf([
-      { title: "a", url: "https://example.com/a", text: "短い本文。" },
-      { title: "b", url: "https://example.com/b", text: "もう一つの短い本文。" },
-    ]);
+describe("readingSections（ADR-0022: JEV が判定して読む節）", () => {
+  // Like the pages measured: a short heading line every ~300 characters.
+  const page = Array.from({ length: 24 }, (_, i) => `見出し${i}\n${"本文".repeat(140)}。\n`).join("");
 
-    const requests = planRelevanceRequests({ original: CLAIM.originalText, sections });
+  it("splitSections の節を読む順に 3,122字までつなぐ。つなぎ直すと本文に戻り、節の途中では切らない", () => {
+    const small = splitSections(page);
+    const joined = readingSections(page);
 
-    expect(requests).toHaveLength(1);
-    expect(requests[0].sections).toEqual([0, 1]);
-    expect(requests[0].questions).toEqual({
-      relevant0: relevanceQuestion(0),
-      relevant1: relevanceQuestion(1),
-    });
+    expect(small.length).toBe(24);
+    expect(joined.length).toBe(3);
+    expect(joined.join("")).toBe(page);
+    for (const section of joined) {
+      expect(Array.from(section).length).toBeLessThanOrEqual(SECTION_MAX_CHARS);
+    }
+    // Every joined section is whole small sections, in order.
+    let at = 0;
+    for (const section of joined) {
+      let rebuilt = "";
+      while (rebuilt.length < section.length) rebuilt += small[at++];
+      expect(rebuilt).toBe(section);
+    }
   });
 
-  it("節が無ければ関連の問いは立てず、信頼度の問いは sources を空にして1回立てる", () => {
-    expect(planRelevanceRequests({ original: CLAIM.originalText, sections: [] })).toEqual([]);
+  it("上限を超える1節はそのまま（splitSections が上限で切っている）。空の本文は節を作らない", () => {
+    expect(readingSections("")).toEqual([]);
+    const long = "か".repeat(1999) + "。";
+    expect(readingSections(long.repeat(3))).toEqual([long, long, long]);
+  });
 
+  it("sectionsOf はページごとの読む節を、ページの順に並べる", () => {
+    const sections = sectionsOf([
+      { title: "a", url: "https://example.com/a", text: page },
+      { title: "b", url: "https://example.com/b", text: "短い本文。" },
+    ]);
+    expect(sections.map((s) => s.page)).toEqual([0, 0, 0, 1]);
+  });
+});
+
+describe("planRelevanceRequests / planSupportRequests", () => {
+  const section = { title: "a", url: "https://example.com/a", text: "短い本文。" };
+
+  it("関連の問いは1節1回。その節を候補にする主張の問いを、1回にまとめる", () => {
+    const targets = prepareTargets([
+      { key: "c1", original: "一つ目の文。", aspect: "「フリノバ」の「数・規模・金額・割合」" },
+      { key: "c2", original: "二つ目の文。" },
+    ]);
+
+    const { requests, unaskable } = planRelevanceRequests(section, targets);
+
+    expect(unaskable).toEqual([]);
+    expect(requests).toHaveLength(1);
+    expect(requests[0].state).toEqual({ section });
+    expect(requests[0].keys).toEqual(["c1", "c2"]);
+    expect(requests[0].questions).toEqual({ c1: targets[0].question, c2: targets[1].question });
+    expect(requests[0].tokens).toBe(
+      estimateTokens(JSON.stringify({ section })) + targets[0].tokens + targets[1].tokens
+    );
+  });
+
+  it("問いが入力上限を超えるときだけ、同じ節のまま主張を分ける。節と1問で32kを超える主張は問えないと返す", () => {
+    const targets = prepareTargets(
+      Array.from({ length: 4 }, (_, i) => ({ key: `c${i}`, original: "文。".repeat(100 * (i + 1)) }))
+    );
+    const perQuestion = targets[1].tokens;
+
+    const { requests } = planRelevanceRequests(section, targets, { request: perQuestion * 2 + 50 });
+    expect(requests.length).toBeGreaterThan(1);
+    expect(requests.flatMap((request) => request.keys)).toEqual(["c0", "c1", "c2", "c3"]);
+    for (const request of requests) expect(request.state).toEqual({ section });
+
+    const stateCost = estimateTokens(JSON.stringify({ section }));
+    const tooLong = planRelevanceRequests(section, targets, { state: stateCost + targets[0].tokens });
+    expect(tooLong.unaskable).toEqual(["c1", "c2", "c3"]);
+    expect(tooLong.requests.flatMap((request) => request.keys)).toEqual(["c0"]);
+  });
+
+  it("節が無ければ、信頼度の問いは sources を空にして1回立てる", () => {
     const support = planSupportRequests({ original: CLAIM.originalText, sections: [] });
 
     expect(support).toHaveLength(1);

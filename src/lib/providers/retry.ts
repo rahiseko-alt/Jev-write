@@ -42,6 +42,11 @@ type RetryableResponse = {
 export interface RetryOptions {
   /** Statuses that mean "busy, ask again". */
   retryStatuses: number[];
+  /**
+   * The waits before each retry when the service names none; as many
+   * retries as there are waits. Without it, RETRY_BACKOFF_MS.
+   */
+  backoffMs?: number[];
   /** Called as the same request is sent again, so the run can say it retried. */
   onRetry?: (status: number, waitMs: number, attempt: number) => void;
   /**
@@ -52,22 +57,23 @@ export interface RetryOptions {
 }
 
 /**
- * Sends the request, and sends it again (up to MAX_RETRIES times) while the
- * service answers with one of the retry statuses. Returns the last response,
- * successful or not.
+ * Sends the request, and sends it again (up to MAX_RETRIES times, or once
+ * per wait in `backoffMs`) while the service answers with one of the retry
+ * statuses. Returns the last response, successful or not.
  */
 export async function sendWithRetry<R extends RetryableResponse>(
   send: () => Promise<R>,
   options: RetryOptions
 ): Promise<R> {
+  const backoff = options.backoffMs ?? RETRY_BACKOFF_MS;
   let response = await send();
-  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+  for (let attempt = 1; attempt <= backoff.length; attempt++) {
     if (response.ok || !options.retryStatuses.includes(response.status)) {
       return response;
     }
     const wait =
       parseRetryAfter(response.headers?.get?.("retry-after")) ??
-      RETRY_BACKOFF_MS[attempt - 1];
+      backoff[attempt - 1];
     await pause(wait, options.signal);
     if (options.signal?.aborted) throw stoppedError(options.signal);
     options.onRetry?.(response.status, wait, attempt);
